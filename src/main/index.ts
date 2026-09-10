@@ -1,4 +1,5 @@
 import { BrowserWindow, app } from 'electron'
+import { writeFileSync } from 'node:fs'
 
 import { context, initContext } from './context'
 import { registerIpcHandlers } from './ipc/register'
@@ -95,7 +96,9 @@ function runSmokeTestIfRequested(win: BrowserWindow): void {
         const parsed = JSON.parse(String(raw)) as Record<string, boolean>
         console.info('[smoke] 渲染层自检：', raw)
         const passed = Boolean(parsed['customElement'] && parsed['mounted'] && parsed['bridge'])
-        setTimeout(() => app.exit(passed ? 0 : 1), 300)
+        void captureIfRequested(win).finally(() => {
+          setTimeout(() => app.exit(passed ? 0 : 1), 300)
+        })
       })
       .catch((error: unknown) => {
         clearTimeout(timer)
@@ -103,4 +106,18 @@ function runSmokeTestIfRequested(win: BrowserWindow): void {
         app.exit(1)
       })
   })
+}
+
+/** 设了 STUDY_BOARD_SMOKE_SHOT 就把窗口截图存下来，方便在没人看屏幕时留个证据 */
+async function captureIfRequested(win: BrowserWindow): Promise<void> {
+  const target = process.env['STUDY_BOARD_SMOKE_SHOT']
+  if (!target) return
+  try {
+    await new Promise((resolve) => setTimeout(resolve, 700))
+    const image = await win.webContents.capturePage()
+    writeFileSync(target, image.toPNG())
+    console.info(`[smoke] 截图已保存：${target}`)
+  } catch (error) {
+    console.error('[smoke] 截图失败：', error)
+  }
 }

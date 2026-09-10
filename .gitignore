@@ -4,6 +4,7 @@ out/
 dist/
 release/
 .vite/
+.preview/
 
 # 打包与本地环境
 *.local

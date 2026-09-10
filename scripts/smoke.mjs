@@ -8,9 +8,13 @@
  * 用法：npm run smoke
  */
 import { spawn } from 'node:child_process'
+import { mkdirSync } from 'node:fs'
 import { createRequire } from 'node:module'
+import { dirname, resolve } from 'node:path'
+import { fileURLToPath } from 'node:url'
 
 const require = createRequire(import.meta.url)
+const root = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 
 // electron 包的入口在普通 Node 下导出的是二进制路径
 const electronPath = require('electron')
@@ -18,6 +22,13 @@ const electronPath = require('electron')
 const env = { ...process.env, STUDY_BOARD_SMOKE: '1' }
 // 某些环境（CI 容器、部分终端）会预设这个变量，会让 electron 退化成普通 Node
 delete env.ELECTRON_RUN_AS_NODE
+
+// 顺手截一张界面图，方便在没人盯着屏幕时确认渲染结果
+if (!env.STUDY_BOARD_SMOKE_SHOT) {
+  const shotDir = resolve(root, '.preview')
+  mkdirSync(shotDir, { recursive: true })
+  env.STUDY_BOARD_SMOKE_SHOT = resolve(shotDir, 'screenshot.png')
+}
 
 const TIMEOUT_MS = 60_000
 
