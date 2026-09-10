@@ -2,19 +2,22 @@ import {
   detectPortableMode,
   ensureDir,
   iconsCacheDir,
+  timetableFile,
   timetableImagesDir
 } from './paths'
 import type { AssetBuckets } from './services/assetProtocol'
 import { resolveNotesDir, SettingsStore } from './services/settings'
+import { TimetableStore } from './services/timetable'
 
 /**
  * 应用级单例上下文。
- * 只在这里持有「需要跨模块共享、且必须唯一」的东西：设置与资源目录。
+ * 只在这里持有「需要跨模块共享、且必须唯一」的东西：设置、资源目录、各类存储。
  */
 
 export interface AppContext {
   settings: SettingsStore
   buckets: AssetBuckets
+  timetable: TimetableStore
 }
 
 let current: AppContext | null = null
@@ -31,9 +34,15 @@ export function initContext(): AppContext {
   const portable = detectPortableMode()
   const settings = new SettingsStore(portable)
   const snapshot = settings.get()
+
+  const timetable = new TimetableStore(timetableFile(snapshot.portableMode), timetableImagesDir(snapshot.portableMode))
+  const swept = timetable.sweepOrphans()
+  if (swept > 0) console.info(`[timetable] 清理了 ${swept} 个无主的课表图片`)
+
   current = {
     settings,
-    buckets: buildBuckets(snapshot.portableMode, resolveNotesDir(snapshot))
+    buckets: buildBuckets(snapshot.portableMode, resolveNotesDir(snapshot)),
+    timetable
   }
   return current
 }

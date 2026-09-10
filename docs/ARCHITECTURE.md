@@ -130,20 +130,62 @@ notes_library/
 
 ## 六、课程表模型
 
-一个容易踩坑的点：**两种录入方式的数据必须同时保存**。
+一个容易踩坑的点：**两种录入方式的数据必须同时保存**。`mode` 是**视图开关**而不是数据归属——用户在两种模式之间来回切，表格里填过的字和上传过的图都还在。这个设计直接来自需求里「两种方式互为补充」这句。
 
-```ts
-interface TimetableData {
-  mode: 'table' | 'image'   // 只决定「展示哪个」
-  periodCount: number       // 节数，1–20
-  cells: Record<string, TimetableCell>  // 表格模式的内容，key = "行:列"
-  images: CourseImage[]     // 图片模式的内容
-}
+### 形状与内容分开放
+
+```
+config.json      →  mode / periodCount / weekdays        （形状）
+timetable.json   →  rows / cells / images                （内容）
+timetable_images/→  课表照片本体
 ```
 
-`mode` 是**视图开关**而不是数据归属。用户在两种模式之间来回切，表格里填过的字和上传过的图都还在。这个设计直接来自需求里「两种方式互为补充」这句。
+分开的好处：调整节数不会碰内容，改内容也不会覆盖形状。两边各有自己的写入路径和校验规则，不会出现「保存单元格的时候顺手把节数写回默认值」这种事故。
 
-节数从 11 改成 15 时，超出的行不删除、只是不展示；改回来内容还在。避免"手滑改了节数，数据没了"。
+节数从 11 改成 15 时，超出的行不删除、只是不展示；改回来内容还在。同理，`timetable.json` 里保存的「每节时间」也按节次索引存放，`buildRows()` 负责按当前节数补全成完整列表。
+
+### 单元格
+
+```ts
+interface TimetableCell {
+  courseName: string   // 课程名称
+  teacher: string      // 授课老师
+  location: string     // 授课位置
+  duration: string     // 持续时间，自由文本："45 分钟" / "1-2 节连上"
+  remark: string       // 备注
+}
+// key = "节次:列号"，列号 0 = 周一
+```
+
+`duration` 刻意做成自由文本而不是数值：现实里既有「45 分钟」这种单节，也有「1-2 节连上」这种跨节，用一个字符串兜住最省事。全空的单元格不落盘，等价于清空。
+
+### 照片导入链路
+
+Chromium 出于专利原因**不支持 HEIC/HEIF**，而苹果手机拍课表默认就是 HEIC，所以必须自己兜：
+
+```
+文件 → 是不是 HEIF？
+        ├─ 是 → libheif-js（WASM 内联在 JS 里）解码 → RGBA → 纯 JS PNG 编码
+        └─ 否 → 原字节
+     → Electron nativeImage 解码（Chromium 负责，质量和性能都好）
+     → 长边超过 2400px 就等比缩小（手机直出 4000px，课表只要看得清字）
+     → PNG 源保持 PNG（截图转 JPEG 会糊字），照片类转 JPEG q88
+     → 落盘 + 建索引
+```
+
+几个刻意的选择：
+
+- **WASM 用 `wasm-bundle` 变体**：WASM 以 base64 内联在 JS 里，运行时不需要再去磁盘找 `.wasm` 文件——打包成 asar 之后照样能跑，也不会因为系统升级失效。代价是约 2MB，且**懒加载**（`require` 放在函数里），不用 HEIF 的人不付这份启动成本。
+- **PNG 编码器自己写**（`src/main/services/png.ts`）：`nativeImage.createFromBitmap` 的字节序按平台而异，不可靠；先转成 PNG 再交给 `nativeImage` 是最可预测的路子。只用 Node 内置 zlib，零依赖。
+- **失败要降级而不是报死**：如果 `nativeImage` 读不了某个格式，就原样保留原始字节；只有 HEIF 解码失败才真的拒绝（因为渲染不出来）。
+- **单张失败不影响其它**：逐张处理，失败原因带着原文件名回传给界面，用户知道哪张为什么没进来。
+
+### 交互
+
+- **悬停预览**：鼠标停 170ms 后浮出信息卡，显示该格的完整内容；编辑弹层打开时不弹，避免两层浮层叠在一起。
+- **双击编辑**：就地弹表单，`Ctrl/⌘ + Enter` 保存、`Esc` 取消、单行输入里回车即存。
+- **键盘可达**：单元格 `tabindex=0` 且 `role=button`，回车 / 空格同样能打开编辑。
+- 浮层全部是 `position: fixed` + `div` 手写实现，不用原生 `<dialog>` 或 Popover API——后者在较早的 Chromium 上行为有差异，与「不依赖会随系统升级而变的东西」这条硬约束冲突。
 
 ---
 

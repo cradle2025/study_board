@@ -81,6 +81,11 @@ export function timetableImagesDir(portable: boolean): string {
   return join(dataRoot(portable), 'timetable_images')
 }
 
+/** 课表内容（每节时间、单元格、图片索引） */
+export function timetableFile(portable: boolean): string {
+  return join(dataRoot(portable), 'timetable.json')
+}
+
 export function iconsCacheDir(portable: boolean): string {
   return join(dataRoot(portable), 'icons_cache')
 }

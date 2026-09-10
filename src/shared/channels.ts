@@ -32,9 +32,9 @@ export const CHANNELS = {
   /* 课程表 */
   TIMETABLE_GET: 'timetable:get',
   TIMETABLE_SAVE: 'timetable:save',
+  TIMETABLE_SET_CELL: 'timetable:set-cell',
   TIMETABLE_ADD_IMAGES: 'timetable:add-images',
   TIMETABLE_REMOVE_IMAGE: 'timetable:remove-image',
-  TIMETABLE_READ_IMAGE: 'timetable:read-image',
 
   /* 网站门户 */
   PORTAL_LIST: 'portal:list',

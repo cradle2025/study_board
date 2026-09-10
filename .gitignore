@@ -5,6 +5,8 @@ dist/
 release/
 .vite/
 .preview/
+# electron-vite 会把配置转译成临时文件，别提交
+electron.vite.config.*.mjs
 
 # 打包与本地环境
 *.local

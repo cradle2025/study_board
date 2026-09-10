@@ -19,7 +19,10 @@ import type {
   PortalSite,
   PortalSiteInput,
   SettingsPatch,
-  TimetableData
+  TimetableData,
+  TimetableImageImportResult,
+  TimetableSaveInput,
+  TimetableSetCellInput
 } from '@shared/types'
 
 /**
@@ -84,8 +87,11 @@ const api = {
 
   timetable: {
     get: () => invoke<TimetableData>(CHANNELS.TIMETABLE_GET),
-    save: (data: TimetableData) => invoke<TimetableData>(CHANNELS.TIMETABLE_SAVE, data),
-    addImages: (paths: string[]) => invoke<TimetableData>(CHANNELS.TIMETABLE_ADD_IMAGES, paths),
+    save: (input: TimetableSaveInput) => invoke<TimetableData>(CHANNELS.TIMETABLE_SAVE, input),
+    setCell: (input: TimetableSetCellInput) =>
+      invoke<TimetableData>(CHANNELS.TIMETABLE_SET_CELL, input),
+    addImages: (paths: string[]) =>
+      invoke<TimetableImageImportResult>(CHANNELS.TIMETABLE_ADD_IMAGES, paths),
     removeImage: (id: string) => invoke<TimetableData>(CHANNELS.TIMETABLE_REMOVE_IMAGE, id)
   },
 

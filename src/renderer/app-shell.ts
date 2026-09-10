@@ -1,6 +1,7 @@
 import type { AppInfo, AppSettings } from '@shared/types'
 
 import { bridge, formatError, toast, unwrap } from './lib/ipc'
+import { escapeHtml } from './lib/html'
 import { applyTheme, watchSystemTheme } from './lib/theme'
 import { createHomeView } from './views/home-view'
 import { createNotesView } from './views/notes-view'
@@ -217,11 +218,4 @@ export class AppShell extends HTMLElement {
   }
 }
 
-export function escapeHtml(value: string): string {
-  return value
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#39;')
-}
+export { escapeHtml }

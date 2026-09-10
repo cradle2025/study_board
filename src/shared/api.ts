@@ -15,7 +15,10 @@ import type {
   PortalSite,
   PortalSiteInput,
   SettingsPatch,
-  TimetableData
+  TimetableData,
+  TimetableImageImportResult,
+  TimetableSaveInput,
+  TimetableSetCellInput
 } from './types'
 
 /**
@@ -61,8 +64,9 @@ export interface StudyBoardApi {
 
   timetable: {
     get(): Promise<IpcResult<TimetableData>>
-    save(data: TimetableData): Promise<IpcResult<TimetableData>>
-    addImages(paths: string[]): Promise<IpcResult<TimetableData>>
+    save(input: TimetableSaveInput): Promise<IpcResult<TimetableData>>
+    setCell(input: TimetableSetCellInput): Promise<IpcResult<TimetableData>>
+    addImages(paths: string[]): Promise<IpcResult<TimetableImageImportResult>>
     removeImage(id: string): Promise<IpcResult<TimetableData>>
   }
 

@@ -123,11 +123,16 @@ export interface TimetableCell {
 
 export interface CourseImage {
   id: string
-  /** 相对 timetableImages 目录的文件名（HEIF 已转码为 png） */
+  /** 相对 timetableImages 目录的文件名（HEIF 已转码为 png，超大图已等比缩放） */
   fileName: string
   /** 用户上传时的原始文件名，用于展示 */
   sourceName: string
   addedAt: string
+  /** 落盘后的实际像素尺寸 */
+  width: number
+  height: number
+  /** 落盘体积（字节），用于界面提示 */
+  bytes: number
 }
 
 export interface TimetableData {
@@ -138,6 +143,34 @@ export interface TimetableData {
   /** key 形如 "1:0"，表示第 1 节、第 0 列（周一） */
   cells: Record<string, TimetableCell>
   images: CourseImage[]
+}
+
+/**
+ * 课表「形状」与「内容」分开存：
+ *  - mode / periodCount / weekdays 属于展示形状，落在 config.json（设置）里；
+ *  - rows / cells / images 属于录入内容，落在 timetable.json 里。
+ * 这样切换节数不会碰内容，改内容也不会覆盖形状。
+ */
+export interface TimetableSaveInput {
+  mode?: TimetableMode
+  periodCount?: number
+  weekdays?: string[]
+  rows?: PeriodRow[]
+}
+
+export interface TimetableSetCellInput {
+  /** 形如 "3:2" */
+  key: string
+  /** null 表示清空该单元格 */
+  cell: TimetableCell | null
+}
+
+export interface TimetableImageImportResult {
+  timetable: TimetableData
+  /** 成功导入的张数 */
+  added: number
+  /** 逐张失败的原因（原文件名 + 原因），全部成功时为空数组 */
+  errors: string[]
 }
 
 /* ------------------------------------------------------------------ 网站门户 */
