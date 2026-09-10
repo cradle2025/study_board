@@ -1,0 +1,24 @@
+# 统一换行符：仓库里一律用 LF，检出时也保持 LF
+# （Windows 上如果本地需要 CRLF，请自行配置 core.autocrlf）
+* text=auto eol=lf
+
+*.md text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf
+
+# 二进制资源不要做任何换行处理
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.webp binary
+*.ico binary
+*.icns binary
+*.dmg binary
+*.exe binary
+*.zip binary
+*.wasm binary
+*.db binary
+
+# lock 文件在 diff 里折叠，但不要忽略
+package-lock.json -diff linguist-generated

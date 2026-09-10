@@ -23,6 +23,7 @@
     "typecheck": "tsc --noEmit -p tsconfig.node.json && tsc --noEmit -p tsconfig.web.json",
     "verify": "npm run typecheck && npm run build",
     "smoke": "node scripts/smoke.mjs",
+    "icon": "node scripts/make-icon.mjs",
     "package:win": "npm run build && electron-builder --win --config electron-builder.yml",
     "package:mac": "npm run build && electron-builder --mac --config electron-builder.yml",
     "package:all": "npm run build && electron-builder --win --mac --config electron-builder.yml",
