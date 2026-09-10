@@ -1,0 +1,129 @@
+import { app } from 'electron'
+import { dirname, isAbsolute, join, normalize, resolve, sep } from 'node:path'
+import { mkdirSync, existsSync, writeFileSync, rmSync } from 'node:fs'
+
+import type { AppPaths } from '@shared/types'
+
+/**
+ * 所有本地路径的唯一出口。
+ *
+ * 设计要点：
+ *  - 默认全部落在系统标准用户目录（Windows 的 %APPDATA%、macOS 的 Application Support），
+ *    避免安装到 Program Files / /Applications 后没有写权限；
+ *  - 「便携模式」把数据放到可执行文件同级目录，方便塞进 U 盘；
+ *  - 任何来自渲染层的相对路径都必须经过 safeJoin 校验，禁止路径穿越。
+ */
+
+let cachedUserDataOverride: string | null = null
+
+export function setUserDataOverride(dir: string | null): void {
+  cachedUserDataOverride = dir
+}
+
+export function userDataRoot(): string {
+  return cachedUserDataOverride ?? app.getPath('userData')
+}
+
+/** 便携模式下的数据根目录：可执行文件同级的 study-board-data */
+export function portableRoot(): string {
+  return join(dirname(app.getPath('exe')), 'study-board-data')
+}
+
+export function dataRoot(portable: boolean): string {
+  return portable && app.isPackaged ? portableRoot() : userDataRoot()
+}
+
+export function ensureDir(dir: string): string {
+  mkdirSync(dir, { recursive: true })
+  return dir
+}
+
+/**
+ * 便携模式的判定不能依赖配置文件（配置文件本身就在数据目录里，会死循环）。
+ * 因此改为看标记：可执行文件同级的 study-board-data 目录里存在
+ * portable.flag 或 config.json，就当便携模式启动。
+ */
+export function detectPortableMode(): boolean {
+  if (!app.isPackaged) return false
+  const root = portableRoot()
+  return existsSync(join(root, 'portable.flag')) || existsSync(join(root, 'config.json'))
+}
+
+/** 写入便携模式标记文件 */
+export function writePortableFlag(portable: boolean): void {
+  const root = portableRoot()
+  const flag = join(root, 'portable.flag')
+  if (portable) {
+    ensureDir(root)
+    writeFileSync(flag, 'portable\n', 'utf-8')
+  } else if (existsSync(flag)) {
+    rmSync(flag, { force: true })
+  }
+}
+
+export function configFile(portable: boolean): string {
+  return join(dataRoot(portable), 'config.json')
+}
+
+export function secretsFile(portable: boolean): string {
+  return join(dataRoot(portable), 'secrets.bin')
+}
+
+export function databaseFile(portable: boolean): string {
+  return join(dataRoot(portable), 'study-board.db')
+}
+
+export function defaultNotesLibraryDir(portable: boolean): string {
+  return join(dataRoot(portable), 'notes_library')
+}
+
+export function timetableImagesDir(portable: boolean): string {
+  return join(dataRoot(portable), 'timetable_images')
+}
+
+export function iconsCacheDir(portable: boolean): string {
+  return join(dataRoot(portable), 'icons_cache')
+}
+
+export function tempDir(portable: boolean): string {
+  return join(dataRoot(portable), 'temp')
+}
+
+export function resolveAppPaths(portable: boolean, notesLibraryDir: string): AppPaths {
+  return {
+    userData: dataRoot(portable),
+    notesLibrary: notesLibraryDir,
+    database: databaseFile(portable),
+    timetableImages: timetableImagesDir(portable),
+    iconsCache: iconsCacheDir(portable)
+  }
+}
+
+/**
+ * 把不受信任的相对路径安全地拼到 base 下。
+ * 拒绝绝对路径、盘符、`..` 穿越，以及 Windows 下的 UNC 前缀。
+ */
+export function safeJoin(base: string, relative: string): string {
+  if (typeof relative !== 'string' || relative.length === 0) {
+    throw new Error('路径不能为空')
+  }
+  if (relative.includes('\0')) {
+    throw new Error('路径包含非法字符')
+  }
+  if (isAbsolute(relative) || /^[a-zA-Z]:/.test(relative) || relative.startsWith('\\\\')) {
+    throw new Error(`拒绝绝对路径：${relative}`)
+  }
+
+  const normalizedBase = resolve(normalize(base))
+  const target = resolve(normalizedBase, relative)
+
+  if (target !== normalizedBase && !target.startsWith(normalizedBase + sep)) {
+    throw new Error(`路径越界：${relative}`)
+  }
+  return target
+}
+
+/** 生成一个不依赖外部库的 uuid，用于所有实体 id */
+export function newId(): string {
+  return crypto.randomUUID()
+}

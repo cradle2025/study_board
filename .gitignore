@@ -1,0 +1,33 @@
+# 依赖与构建产物
+node_modules/
+out/
+dist/
+release/
+.vite/
+
+# 打包与本地环境
+*.local
+.env
+.env.*
+!.env.example
+
+# 日志
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# 编辑器与系统
+.idea/
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.json
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# 测试与缓存
+coverage/
+*.tsbuildinfo
+.eslintcache

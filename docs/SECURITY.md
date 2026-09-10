@@ -1,0 +1,198 @@
+# 安全说明
+
+本文档描述本项目的安全模型、已落地的措施，以及**你可以自己验证**的方式。
+
+---
+
+## 威胁模型
+
+我们在防什么：
+
+| 场景 | 目标 |
+| --- | --- |
+| 端口被暴露到局域网/公网 | 应用**从不监听任何端口** |
+| 渲染层被注入的脚本拿到系统权限 | 渲染层没有 Node 能力，只能调白名单接口 |
+| 界面被诱导加载远程内容 | 禁止导航、禁止新窗口、CSP 只允许本地资源 |
+| 笔记库里的恶意文件名导致越权读写 | 所有路径必须过 `safeJoin` 校验 |
+| API Key / Token 泄漏 | 用系统钥匙串加密存储，且永不回读给界面 |
+| 依赖供应链风险 | 生产依赖尽量少，且优先纯 JS 实现 |
+
+不在防什么：
+
+- 用户本机已经被完全控制（恶意软件、键盘记录器）—— 这超出应用边界
+- 用户主动把自己的 API Key 贴给别人
+
+---
+
+## 一、网络暴露
+
+**这是最重要的一条：应用不监听任何 TCP/UDP 端口。**
+
+前后端通信走 Electron 的进程间通信（IPC），不启动 HTTP 服务，因此不存在"端口没绑到 127.0.0.1"这种问题。
+
+### 自己验证
+
+应用运行时执行：
+
+```bash
+# Windows
+netstat -ano | findstr LISTENING | findstr <StudyBoard 的 PID>
+
+# macOS
+lsof -nP -iTCP -sTCP:LISTEN | grep -i studyboard
+```
+
+预期结果：**没有任何输出**。
+
+也可以直接按 PID 看该进程持有的所有监听端口：
+
+```bash
+# macOS / Linux
+lsof -nP -p <PID> | grep LISTEN
+```
+
+### 出网方向
+
+应用出网只有三种情况，全部由主进程发起，**渲染层永远发不出网络请求**（CSP `connect-src 'self'`）：
+
+1. 用户在「网站门户」点击某个学习网站 → 交给系统默认浏览器打开
+2. 用户主动使用 AI 助手 → 请求用户自己配置的接口地址
+3. 用户主动开启 Notion 同步 → 请求 Notion 官方 API
+
+没有遥测、没有崩溃上报、没有自动更新回传、没有访问任何本项目自己的服务器（项目也没有服务器）。
+
+---
+
+## 二、渲染层隔离
+
+`BrowserWindow` 的 `webPreferences` 里这几项是**不可协商的底线**，任何 PR 都不应修改：
+
+```ts
+sandbox: true,                    // 渲染进程沙箱
+contextIsolation: true,           // 隔离 preload 与页面上下文
+nodeIntegration: false,           // 页面拿不到 Node
+nodeIntegrationInWorker: false,
+nodeIntegrationInSubFrames: false,
+webSecurity: true,                // 同源策略照常生效
+allowRunningInsecureContent: false,
+```
+
+打包后 `devTools: false`，避免终端用户被诱导打开控制台执行脚本。
+
+---
+
+## 三、IPC 安全
+
+所有 IPC 都经过 `src/main/ipc/index.ts` 的统一封装：
+
+1. **通道白名单**：通道名必须登记在 `src/shared/channels.ts`，否则注册时直接抛错。
+2. **来源校验**：只接受来自 `file://` 或 `localhost` 开发服务器的调用，其它 frame 一律拒绝。
+3. **异常收敛**：主进程异常被转换成 `{ ok: false, error }`，不泄漏堆栈给渲染层。
+4. **入参校验**：每个处理器都把入参当不可信数据处理 —— 枚举值白名单、数值范围收敛、路径必须是绝对路径且校验合法协议。
+
+`preload` 侧同样受限：
+
+- 不暴露 `ipcRenderer` 本体，只暴露具名方法
+- 通道名在 preload 里写死，渲染层无法拼接
+- 事件订阅必须在白名单内
+
+`src/shared/api.ts` 里显式声明了渲染层可见的全部能力 —— 想加新能力，必须先改这个文件，等于强制过一次评审。
+
+---
+
+## 四、内容安全策略（CSP）
+
+生产环境：
+
+```
+default-src 'none';
+script-src 'self';
+style-src 'self' 'unsafe-inline';
+img-src 'self' data: blob: sb-asset:;
+font-src 'self' data:;
+connect-src 'self';
+media-src 'self' sb-asset:;
+object-src 'none';
+frame-src 'none';
+child-src 'none';
+worker-src 'self' blob:;
+base-uri 'none';
+form-action 'none'
+```
+
+`connect-src 'self'` 是关键：**渲染层发不出任何外部请求**。
+
+CSP 通过 `index.html` 里的 `%CSP%` 占位符在构建时注入，开发和生产用同一份页面源文件，只是策略不同 —— 避免出现"开发时能跑、打包后才发现被 CSP 拦住"的情况。
+
+`script-src` 在生产环境**不含** `'unsafe-inline'`。
+
+---
+
+## 五、本地资源访问
+
+界面需要显示笔记库里的图片，但又不能给页面任意读文件的能力。方案是自定义协议：
+
+```
+sb-asset://<bucket>/<相对路径>
+```
+
+- 只有三个 bucket：`notes`、`timetable`、`icon`
+- 每个 bucket 锁死在自己的目录里，路径经过 `safeJoin` 校验
+- `safeJoin` 拒绝：绝对路径、盘符、`..` 穿越、UNC 前缀、`\0`
+- 只读不写，永远不出网
+
+见 `src/main/paths.ts` 与 `src/main/services/assetProtocol.ts`。
+
+---
+
+## 六、密钥存储
+
+- AI Key 与 Notion Token **不写进 `config.json`**
+- 使用 Electron `safeStorage`（Windows DPAPI / macOS Keychain）加密后存入独立的 `secrets.bin`
+- 界面只能读到一个布尔值（是否已配置），**永远不回读密钥原文**
+- 设置页的密钥输入框在保存后立即清空
+
+> 状态：`secrets.bin` 与 `safeStorage` 链路已在架构中定义，具体实现在「笔记拓展」阶段落地。
+
+---
+
+## 七、外链处理
+
+- 渲染层不能自行导航（`will-navigate` 被拦截）
+- 不能开新窗口（`setWindowOpenHandler` 返回 `deny`）
+- 不允许挂载 `<webview>`
+- 只有 `https:` / `http:` / `mailto:` 三种协议会被交给系统浏览器；URL 必须能被正确解析，且非 `mailto:` 时必须有主机名
+
+所有链接都走系统默认浏览器打开，**应用内不承载任何第三方页面**。
+
+---
+
+## 八、依赖与兼容性
+
+- **生产依赖只有 7 个**，且全部是纯 JS / WASM，没有原生模块（`.node`）
+- 没有原生模块意味着：不需要 `electron-rebuild`，也不会有 ABI 不匹配导致的安全补丁无法及时更新
+- 版本全部锁在 `package-lock.json`，CI 与本地构建环境一致
+
+### 自查命令
+
+```bash
+npm run audit:prod      # 只扫生产依赖的已知漏洞
+npm ls --omit=dev       # 看生产依赖树
+```
+
+---
+
+## 九、已知限制
+
+诚实列出来：
+
+1. **macOS 安装包未签名/未公证**。首次打开需要右键 → 打开。这不影响本地数据安全，但意味着无法验证安装包来源 —— 请只从本仓库的 Releases 页下载。
+2. **笔记库目录由用户指定**。如果把笔记库设成某个敏感目录，应用就有那个目录的读写权限。默认位置是安全的，改目录时请自行确认。
+3. **AI / Notion 功能会把内容发到第三方**。这是功能本身决定的，只有你主动触发时才会发生，且接口地址由你自己配置。
+4. **便携模式**会把数据放在程序同级目录，如果程序装在共享位置，注意文件权限。
+
+---
+
+## 十、报告安全问题
+
+请不要开公开 Issue。通过仓库的 Security 面板提交私密报告，或发邮件给维护者。我们会尽快回应，并在修复后于 CHANGELOG 中致谢（如果你愿意署名）。

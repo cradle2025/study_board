@@ -1,0 +1,51 @@
+{
+  "name": "study-board",
+  "version": "0.1.0",
+  "description": "学习看板 —— 离线的课程表 + 课程笔记看板，数据全部保存在本地，不联网也能用",
+  "keywords": [
+    "electron",
+    "timetable",
+    "notes",
+    "obsidian",
+    "study",
+    "offline-first"
+  ],
+  "license": "MIT",
+  "private": false,
+  "main": "./out/main/index.js",
+  "engines": {
+    "node": ">=20.19.0"
+  },
+  "scripts": {
+    "dev": "electron-vite dev",
+    "preview": "electron-vite preview",
+    "build": "electron-vite build",
+    "typecheck": "tsc --noEmit -p tsconfig.node.json && tsc --noEmit -p tsconfig.web.json",
+    "verify": "npm run typecheck && npm run build",
+    "smoke": "node scripts/smoke.mjs",
+    "package:win": "npm run build && electron-builder --win --config electron-builder.yml",
+    "package:mac": "npm run build && electron-builder --mac --config electron-builder.yml",
+    "package:all": "npm run build && electron-builder --win --mac --config electron-builder.yml",
+    "package:dir": "npm run build && electron-builder --dir --config electron-builder.yml",
+    "audit:prod": "npm audit --omit=dev"
+  },
+  "dependencies": {
+    "chokidar": "^5.0.0",
+    "docx": "^9.7.1",
+    "gray-matter": "^4.0.3",
+    "libheif-js": "^1.23.2",
+    "markdown-it": "^15.0.1",
+    "sql.js": "^1.14.2",
+    "turndown": "^7.2.4"
+  },
+  "devDependencies": {
+    "@types/markdown-it": "^14.2.0",
+    "@types/node": "^24.13.4",
+    "@types/sql.js": "^1.4.11",
+    "@types/turndown": "^5.0.6",
+    "electron": "^44.3.0",
+    "electron-vite": "^5.0.0",
+    "typescript": "^7.0.2",
+    "vite": "^7.3.6"
+  }
+}

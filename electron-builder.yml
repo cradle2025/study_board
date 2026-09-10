@@ -1,0 +1,69 @@
+appId: io.github.studyboard.app
+productName: StudyBoard
+copyright: Copyright © 2026 study-board contributors
+
+directories:
+  output: release/${version}
+  buildResources: build
+
+files:
+  - out/**
+  - package.json
+  - '!**/*.{map,md,ts}'
+  - '!**/{.eslintrc,.editorconfig,.gitignore,.github}'
+
+# 依赖不打包进 asar，但运行时不需要任何原生模块（sql.js / libheif-js 均为纯 JS/WASM）
+asar: true
+asarUnpack:
+  - resources/**
+
+# 供主进程读取版本号等信息
+extraMetadata:
+  main: out/main/index.js
+
+win:
+  target:
+    - target: nsis
+      arch:
+        - x64
+  icon: build/icon.ico
+  artifactName: StudyBoard-${version}-win-${arch}-setup.${ext}
+  requestedExecutionLevel: asInvoker
+
+nsis:
+  oneClick: false
+  perMachine: false
+  allowElevation: false
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: true
+  createStartMenuShortcut: true
+  shortcutName: StudyBoard
+  deleteAppDataOnUninstall: false
+  runAfterFinish: true
+
+mac:
+  target:
+    - target: dmg
+      arch:
+        - arm64
+        - x64
+  icon: build/icon.icns
+  category: public.app-category.education
+  artifactName: StudyBoard-${version}-mac-${arch}.${ext}
+  hardenedRuntime: true
+  gatekeeperAssess: false
+  entitlements: build/entitlements.mac.plist
+  entitlementsInherit: build/entitlements.mac.plist
+  extendInfo:
+    NSHumanReadableCopyright: Copyright © 2026 study-board contributors
+
+dmg:
+  title: StudyBoard ${version}
+  artifactName: StudyBoard-${version}-mac-${arch}.${ext}
+  contents:
+    - x: 140
+      y: 220
+    - x: 400
+      y: 220
+      type: link
+      path: /Applications
