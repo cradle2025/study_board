@@ -90,6 +90,11 @@ export function iconsCacheDir(portable: boolean): string {
   return join(dataRoot(portable), 'icons_cache')
 }
 
+/** 网站门户（快捷方式列表） */
+export function portalFile(portable: boolean): string {
+  return join(dataRoot(portable), 'portal.json')
+}
+
 export function tempDir(portable: boolean): string {
   return join(dataRoot(portable), 'temp')
 }

@@ -21,16 +21,24 @@ import { encodePng } from './services/png'
  *  - basic     只验证能起来（默认）
  *  - timetable 额外验证课程表：写入单元格、跑一次真实的图片导入链路、
  *              切到图片模式确认 sb-asset 协议与 CSP 都放行，最后截图
+ *  - portal    额外验证网站门户：内置站点、图标走 sb-asset、增删改隐藏全链路
+ *
+ * 门户场景**不测图标抓取**：那需要真实网络，在无网的 CI 里会让自检变成随机失败。
+ * 图标文件由本文件直接造好写进图标目录，测的是「图标能不能显示出来」这条链路，
+ * 而不是「能不能从外网抓下来」——后者本来就该由人点一下按钮确认。
  */
 
-export type SmokeScenario = 'basic' | 'timetable'
+export type SmokeScenario = 'basic' | 'timetable' | 'portal'
 
 export function smokeEnabled(): boolean {
   return process.env['STUDY_BOARD_SMOKE'] === '1'
 }
 
 export function smokeScenario(): SmokeScenario {
-  return process.env['STUDY_BOARD_SMOKE_SCENARIO'] === 'timetable' ? 'timetable' : 'basic'
+  const value = process.env['STUDY_BOARD_SMOKE_SCENARIO']
+  if (value === 'timetable') return 'timetable'
+  if (value === 'portal') return 'portal'
+  return 'basic'
 }
 
 /**
@@ -119,6 +127,18 @@ async function seedTimetable(): Promise<void> {
   if (image.width > 2400) throw new Error('图片没有被等比缩放')
 }
 
+/**
+ * 门户测试数据：给内置站点塞一张真图标。
+ *
+ * 目的是验证「图标目录 → sb-asset 协议 → CSP → <img> 显示」这条链路，
+ * 这一步跟「从外网抓」是两件事，只有前者适合放进自动化自检。
+ */
+function seedPortal(): void {
+  const { portal } = context()
+  const fileName = portal.writeIcon(makeTestPng(64, 64))
+  portal.setIcon('builtin-mooc', fileName)
+}
+
 /* ------------------------------------------------------------------ 渲染层自检 */
 
 /**
@@ -134,6 +154,22 @@ const PROBE_HELPERS = `
       const el = document.querySelector(selector)
       if (el) return el
       if (Date.now() > deadline) return null
+      await wait(100)
+    }
+  }
+  const waitForCount = async (selector, count, timeout = 15000) => {
+    const deadline = Date.now() + timeout
+    for (;;) {
+      if (document.querySelectorAll(selector).length === count) return true
+      if (Date.now() > deadline) return false
+      await wait(100)
+    }
+  }
+  const waitForGone = async (text, timeout = 15000) => {
+    const deadline = Date.now() + timeout
+    for (;;) {
+      if (!document.body.textContent.includes(text)) return true
+      if (Date.now() > deadline) return false
       await wait(100)
     }
   }
@@ -226,14 +262,110 @@ const TIMETABLE_PROBE = `(async () => {
   })
 })()`
 
+const PORTAL_PROBE = `(async () => {
+  ${PROBE_HELPERS}
+  const nav = await waitFor('[data-route="portal"]')
+  if (!nav) return JSON.stringify({ error: '导航未就绪' })
+  nav.click()
+
+  // 注意：只能等「站点都画出来了」，不能只等容器出现——
+  // 容器是先建好、数据后到的，等容器等于什么都没等（课表探针踩过同样的坑）
+  const renderedInTime = await waitForCount('.sb-portal__item', 3)
+  if (!renderedInTime) return JSON.stringify({ error: '内置站点未渲染' })
+
+  const builtins = document.querySelectorAll('.sb-portal__item').length
+  const hasMooc = document.body.textContent.includes('中国大学 MOOC')
+  const hasBilibili = document.body.textContent.includes('哔哩哔哩')
+
+  // 图标走的是 sb-asset://icon/<file>，naturalWidth 只有真的加载成功才不为 0。
+  // 这一步同时验证了图标目录在资源桶里、自定义协议注册成功、CSP 放行了这个协议。
+  const icon = document.querySelector('.sb-portal__img')
+  if (icon && !icon.complete) {
+    await new Promise((resolve) => {
+      icon.addEventListener('load', resolve, { once: true })
+      icon.addEventListener('error', resolve, { once: true })
+      setTimeout(resolve, 3000)
+    })
+  }
+  const iconWidth = icon ? icon.naturalWidth : 0
+  const letters = document.querySelectorAll('.sb-portal__letter').length
+
+  // 光看 DOM 结构看不出布局塌掉：格子必须真的有尺寸，
+  // 编辑态的操作条也必须真的占位（曾有过 flex 写错、整条被压成 0 高度的情况）
+  const firstTile = document.querySelector('.sb-portal__item')
+  const tileRect = firstTile ? firstTile.getBoundingClientRect() : { width: 0, height: 0 }
+  const actions = firstTile ? firstTile.querySelector('.sb-portal__actions') : null
+  const actionsHeight = actions ? actions.getBoundingClientRect().height : 0
+  const layoutOk = tileRect.width >= 100 && tileRect.height >= 60 && actionsHeight > 0
+
+  // —— 新增：走真实的表单链路（填表 → 保存 → 列表刷新）
+  document.querySelector('[data-action="add"]').click()
+  const nameInput = await waitFor('.sb-modal__card--form [data-field="name"]')
+  const urlInput = document.querySelector('.sb-modal__card--form [data-field="url"]')
+  const iconCheck = document.querySelector('.sb-modal__card--form [data-field="fetchIcon"]')
+  const saveBtn = document.querySelector('.sb-modal__card--form [data-role="save"]')
+  if (!nameInput || !urlInput || !saveBtn) return JSON.stringify({ error: '添加表单未挂载' })
+  // 关掉「抓取图标」：自检环境可能没有网络，不能让这一步变成随机失败
+  if (iconCheck) iconCheck.checked = false
+  nameInput.value = '测试站点'
+  urlInput.value = 'example.com'
+  saveBtn.click()
+
+  const addedInTime = await waitForCount('.sb-portal__item', 4)
+  const addedText = document.body.textContent.includes('测试站点')
+  const addedHost = document.body.textContent.includes('example.com')
+  // 网址没带协议，应该被自动补成 https
+  const lastTile = document.querySelectorAll('.sb-portal__item')[3]
+  const addedHref = lastTile ? lastTile.querySelector('[data-act="open"]').getAttribute('title') : ''
+  const urlOk = addedHref === 'https://example.com/'
+
+  // —— 删除：新增的站点排在最后，点它的 ✕
+  if (lastTile) lastTile.querySelector('[data-act="remove"]').click()
+  const removedInTime = await waitForCount('.sb-portal__item', 3)
+  const removedText = await waitForGone('测试站点')
+
+  // —— 隐藏内置站点：内置的删不掉，只能隐藏，隐藏后要能从概览页看不出来。
+  // 刻意挑第二个（B站）而不是第一个：第一个带着图标，留着它才能验证
+  // 「首页的快捷启动也能把图标显示出来」
+  const target = document.querySelectorAll('.sb-portal__item')[1]
+  if (target) target.querySelector('[data-act="hide"]').click()
+  await waitFor('.sb-portal__item--hidden')
+  const hiddenCount = document.querySelectorAll('.sb-portal__item--hidden').length
+  // 内置站点的删除按钮应该是禁用的
+  const removeDisabled = target ? target.querySelector('[data-act="remove"]').disabled : false
+
+  // —— 概览页复查：隐藏的那个不该出现在首页快捷启动里
+  document.querySelector('[data-route="home"]').click()
+  await waitFor('[data-role="portal-slot"]')
+  const homeTiles = await waitForCount('[data-role="portal-slot"] .sb-portal__item', 2)
+  const homeIcons = document.querySelectorAll('[data-role="portal-slot"] .sb-portal__img').length
+
+  return JSON.stringify({
+    builtins, hasMooc, hasBilibili, iconWidth, letters,
+    addedInTime, addedText, addedHost, urlOk, addedHref,
+    removedInTime, removedText, hiddenCount, removeDisabled, homeTiles, homeIcons,
+    renderedInTime, tileW: Math.round(tileRect.width), tileH: Math.round(tileRect.height),
+    actionsHeight: Math.round(actionsHeight),
+    builtinsOk: builtins === 3 && hasMooc && hasBilibili,
+    layoutOk,
+    // 3 个内置站点里 1 个被塞了图标，其余 2 个回退到色块首字
+    iconOk: iconWidth > 0 && letters === 2,
+    addOk: addedInTime && addedText && addedHost && urlOk,
+    deleteOk: removedInTime && removedText,
+    hideOk: hiddenCount === 1 && removeDisabled,
+    homeOk: homeTiles && homeIcons === 1
+  })
+})()`
+
 /* ------------------------------------------------------------------ 主流程 */
 
 export function runSmokeTestIfRequested(win: BrowserWindow): void {
   if (!smokeEnabled()) return
 
   const scenario = smokeScenario()
-  const probe = scenario === 'timetable' ? TIMETABLE_PROBE : BASIC_PROBE
-  const timeoutMs = scenario === 'timetable' ? 30_000 : 20_000
+  const probe =
+    scenario === 'timetable' ? TIMETABLE_PROBE : scenario === 'portal' ? PORTAL_PROBE : BASIC_PROBE
+  const timeoutMs = scenario === 'basic' ? 20_000 : 30_000
 
   const timer = setTimeout(() => {
     console.error(`[smoke] 超时：渲染层 ${timeoutMs / 1000} 秒内未完成自检`)
@@ -284,7 +416,17 @@ export function runSmokeTestIfRequested(win: BrowserWindow): void {
                   parsed['imageOk'] &&
                   parsed['imageFitsOk']
               )
-            : Boolean(parsed['customElement'] && parsed['mounted'] && parsed['bridge'])
+            : scenario === 'portal'
+              ? Boolean(
+                  parsed['builtinsOk'] &&
+                    parsed['layoutOk'] &&
+                    parsed['iconOk'] &&
+                    parsed['addOk'] &&
+                    parsed['deleteOk'] &&
+                    parsed['hideOk'] &&
+                    parsed['homeOk']
+                )
+              : Boolean(parsed['customElement'] && parsed['mounted'] && parsed['bridge'])
 
         if (scenario === 'timetable') {
           // 自检结束时停在图片模式，先留一张图；再切回表格模式，留第二张
@@ -302,6 +444,9 @@ export function runSmokeTestIfRequested(win: BrowserWindow): void {
             )
             .catch(() => undefined)
           await captureIfRequested(win, 'timetable-table.png')
+        } else if (scenario === 'portal') {
+          // 自检收尾停在概览页（正好能同时看到首页的门户格子）
+          await captureIfRequested(win, 'portal-home.png')
         } else {
           await captureIfRequested(win, 'screenshot.png')
         }
@@ -321,8 +466,9 @@ export function runSmokeTestIfRequested(win: BrowserWindow): void {
  */
 export async function prepareSmokeDataIfRequested(): Promise<void> {
   if (!smokeEnabled()) return
-  if (smokeScenario() !== 'timetable') return
-  await seedTimetable()
+  const scenario = smokeScenario()
+  if (scenario === 'timetable') await seedTimetable()
+  else if (scenario === 'portal') seedPortal()
 }
 
 /** 截图落到 STUDY_BOARD_SMOKE_SHOT 所在目录下 */

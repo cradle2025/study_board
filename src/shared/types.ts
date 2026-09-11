@@ -190,10 +190,14 @@ export interface PortalSite {
 }
 
 export interface PortalSiteInput {
+  /** 传入表示更新已有站点；不传表示新建 */
   id?: string
   name: string
   url: string
+  /** 只接受 #rrggbb，不传则由主机名推导 */
   color?: string
+  /** 仅对内置站点有意义：内置站点删不掉，只能隐藏 */
+  hidden?: boolean
 }
 
 /* ------------------------------------------------------------------ 课程卡片 */

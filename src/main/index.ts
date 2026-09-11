@@ -1,7 +1,7 @@
 import { BrowserWindow, app } from 'electron'
 
 import { benchEnabled, prepareBenchDataIfRequested, runBenchIfRequested } from './bench'
-import { context, initContext, sweepTimetableOrphans } from './context'
+import { context, initContext, sweepOrphanFiles } from './context'
 import { registerIpcHandlers } from './ipc/register'
 import { mark } from './metrics'
 import { installAssetProtocol } from './services/assetProtocol'
@@ -63,7 +63,7 @@ if (!app.requestSingleInstanceLock()) {
       win.once('ready-to-show', () => {
         mark('window:ready-to-show')
         // 首屏显示之后的空闲时间再做清理，不跟首屏抢
-        sweepTimetableOrphans()
+        sweepOrphanFiles()
       })
 
       if (smokeEnabled()) runSmokeTestIfRequested(win)

@@ -6,11 +6,12 @@ import { mark } from './lib/perf'
 import { applyTheme, watchSystemTheme } from './lib/theme'
 import { createHomeView } from './views/home-view'
 import { createNotesView } from './views/notes-view'
+import { createPortalView } from './views/portal-view'
 import { createSettingsView } from './views/settings-view'
 import { createStudyView } from './views/study-view'
 import { createTimetableEditorView } from './views/timetable-editor-view'
 
-export type RouteId = 'home' | 'timetable' | 'study' | 'notes' | 'settings'
+export type RouteId = 'home' | 'timetable' | 'portal' | 'study' | 'notes' | 'settings'
 
 export interface ViewContext {
   getSettings(): AppSettings
@@ -49,6 +50,13 @@ const ROUTES: readonly RouteDef[] = [
     group: '模块一',
     icon: '▦',
     factory: createTimetableEditorView
+  },
+  {
+    id: 'portal',
+    label: '网站门户',
+    group: '模块二',
+    icon: '◎',
+    factory: createPortalView
   },
   {
     id: 'study',

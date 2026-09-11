@@ -1,5 +1,6 @@
-import { createTimetableController, type TimetableController } from '../components/timetable-controller'
 import type { ViewContext, ViewInstance } from '../app-shell'
+import { createPortalController } from '../components/portal-controller'
+import { createTimetableController, type TimetableController } from '../components/timetable-controller'
 
 /**
  * 概览页。
@@ -33,11 +34,12 @@ export function createHomeView(ctx: ViewContext): ViewInstance {
     <section class="sb-section">
       <div class="sb-section__head">
         <h2 class="sb-section__title">网站门户</h2>
-        <span class="sb-badge">模块二</span>
+        <span class="sb-badge" data-role="portal-meta">模块二</span>
       </div>
-      <div class="sb-card sb-empty" data-role="portal-slot">
-        慕课 / B站 / 知网 快捷入口 —— 开发中。
+      <div class="sb-toolbar sb-toolbar--right">
+        <button class="sb-btn" type="button" data-action="manage-portal">管理站点</button>
       </div>
+      <div data-role="portal-slot"></div>
     </section>
 
     <section class="sb-section">
@@ -53,6 +55,19 @@ export function createHomeView(ctx: ViewContext): ViewInstance {
 
   const slot = element.querySelector<HTMLElement>('[data-role="timetable-slot"]')
   const meta = element.querySelector<HTMLElement>('[data-role="timetable-meta"]')
+  const portalSlot = element.querySelector<HTMLElement>('[data-role="portal-slot"]')
+  const portalMeta = element.querySelector<HTMLElement>('[data-role="portal-meta"]')
+
+  // 概览页只做快捷启动（不可编辑），管理动作都放在「网站门户」页
+  const portal = createPortalController({
+    editable: false,
+    onData(list) {
+      if (!portalMeta) return
+      const shown = list.filter((site) => !site.hidden).length
+      portalMeta.textContent = `${shown} 个站点`
+    }
+  })
+  portalSlot?.appendChild(portal.grid.element)
 
   const controller: TimetableController = createTimetableController({
     editable: true,
@@ -74,6 +89,10 @@ export function createHomeView(ctx: ViewContext): ViewInstance {
     .querySelector('[data-action="edit-timetable"]')
     ?.addEventListener('click', () => ctx.navigate('timetable'))
 
+  element
+    .querySelector('[data-action="manage-portal"]')
+    ?.addEventListener('click', () => ctx.navigate('portal'))
+
   // 概览页只读展示课表，一旦有数据就补一句空态提示
   const emptyHint = document.createElement('p')
   emptyHint.className = 'sb-hint sb-ttpanel__hint'
@@ -86,9 +105,11 @@ export function createHomeView(ctx: ViewContext): ViewInstance {
     async onEnter() {
       await controller.load()
       emptyHint.hidden = !controller.panel.isEmpty()
+      await portal.load()
     },
     dispose() {
       controller.dispose()
+      portal.dispose()
     }
   }
 }

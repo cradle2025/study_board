@@ -2,10 +2,12 @@ import {
   detectPortableMode,
   ensureDir,
   iconsCacheDir,
+  portalFile,
   timetableFile,
   timetableImagesDir
 } from './paths'
 import type { AssetBuckets } from './services/assetProtocol'
+import { PortalStore } from './services/portal'
 import { resolveNotesDir, SettingsStore } from './services/settings'
 import { TimetableStore } from './services/timetable'
 
@@ -18,6 +20,7 @@ export interface AppContext {
   settings: SettingsStore
   buckets: AssetBuckets
   timetable: TimetableStore
+  portal: PortalStore
 }
 
 let current: AppContext | null = null
@@ -35,26 +38,36 @@ export function initContext(): AppContext {
   const settings = new SettingsStore(portable)
   const snapshot = settings.get()
 
-  const timetable = new TimetableStore(timetableFile(snapshot.portableMode), timetableImagesDir(snapshot.portableMode))
+  // 课表图片与门户图标各用一个目录：这样「清理孤儿文件」是各自独立的一件事，
+  // 不会出现某一侧的清理逻辑误删另一侧正在使用的文件
+  const timetable = new TimetableStore(
+    timetableFile(snapshot.portableMode),
+    timetableImagesDir(snapshot.portableMode)
+  )
+  const portal = new PortalStore(portalFile(snapshot.portableMode), iconsCacheDir(snapshot.portableMode))
 
   current = {
     settings,
     buckets: buildBuckets(snapshot.portableMode, resolveNotesDir(snapshot)),
-    timetable
+    timetable,
+    portal
   }
   return current
 }
 
 /**
- * 清理「有文件但没记录」的孤儿课表图片。
+ * 清理「有文件但没记录」的孤儿文件（课表图片、门户图标）。
  *
  * 刻意**不放在启动路径上**：它是纯清理工作，不影响首屏能否显示，
- * 却要在课表图片目录里做一次目录遍历。放到窗口显示之后再跑，
+ * 却要做目录遍历。放到窗口显示之后再跑，
  * 启动阶段就只做「读出必要数据」这一件事。
  */
-export function sweepTimetableOrphans(): void {
-  const swept = context().timetable.sweepOrphans()
-  if (swept > 0) console.info(`[timetable] 清理了 ${swept} 个无主的课表图片`)
+export function sweepOrphanFiles(): void {
+  const sweptImages = context().timetable.sweepOrphans()
+  if (sweptImages > 0) console.info(`[timetable] 清理了 ${sweptImages} 个无主的课表图片`)
+
+  const sweptIcons = context().portal.sweepOrphans()
+  if (sweptIcons > 0) console.info(`[portal] 清理了 ${sweptIcons} 个无主的站点图标`)
 }
 
 export function context(): AppContext {

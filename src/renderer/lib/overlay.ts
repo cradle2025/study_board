@@ -133,6 +133,67 @@ export function showFloating(options: FloatingOptions): FloatingHandle {
   return { element, close }
 }
 
+/* ------------------------------------------------------------------ 模态卡片 */
+
+export interface ModalCardOptions {
+  /** 加在卡片上的额外 class，用于调整宽度等 */
+  className?: string
+  /** 关闭前的钩子，返回 false 可阻止关闭 */
+  onBeforeClose?: () => boolean
+  onClose?: () => void
+}
+
+export interface ModalCardHandle {
+  /** 卡片本体，调用方自己往里填内容 */
+  card: HTMLElement
+  close(): void
+}
+
+/**
+ * 居中模态框的骨架：只负责遮罩、Esc、点遮罩关闭，内容由调用方填。
+ *
+ * 抽这一层是因为「确认框」和「新增站点表单」需要的是同一套行为：
+ * 都要挂在 body 上、都要 Esc 关闭、关完都要把空浮层容器摘掉。
+ * 各写一份的话，漏掉 `scheduleLayerCleanup()` 这种事迟早会发生。
+ */
+export function openModalCard(options: ModalCardOptions = {}): ModalCardHandle {
+  const host = ensureLayer()
+  const backdrop = document.createElement('div')
+  backdrop.className = 'sb-modal'
+
+  const card = document.createElement('div')
+  card.className = options.className ? `sb-modal__card ${options.className}` : 'sb-modal__card'
+  card.setAttribute('role', 'dialog')
+  card.setAttribute('aria-modal', 'true')
+  backdrop.appendChild(card)
+
+  let closed = false
+  const close = (): void => {
+    if (closed) return
+    if (options.onBeforeClose && options.onBeforeClose() === false) return
+    closed = true
+    document.removeEventListener('keydown', onKeyDown, true)
+    backdrop.remove()
+    scheduleLayerCleanup()
+    options.onClose?.()
+  }
+
+  function onKeyDown(event: KeyboardEvent): void {
+    if (event.key !== 'Escape') return
+    event.preventDefault()
+    close()
+  }
+
+  backdrop.addEventListener('click', (event) => {
+    if (event.target === backdrop) close()
+  })
+  // Esc 走捕获阶段：表单里的输入框可能自己吞掉按键
+  document.addEventListener('keydown', onKeyDown, true)
+
+  host.appendChild(backdrop)
+  return { card, close }
+}
+
 /* ------------------------------------------------------------------ 确认框 */
 
 export interface ConfirmOptions {
@@ -146,24 +207,20 @@ export interface ConfirmOptions {
 /** 居中确认框。返回用户是否点了「确定」。 */
 export function confirmAction(options: ConfirmOptions): Promise<boolean> {
   return new Promise((resolve) => {
-    const host = ensureLayer()
-    const backdrop = document.createElement('div')
-    backdrop.className = 'sb-modal'
-    backdrop.innerHTML = `
-      <div class="sb-modal__card" role="dialog" aria-modal="true">
-        <div class="sb-modal__title"></div>
-        <p class="sb-modal__message"></p>
-        <div class="sb-modal__actions">
-          <button class="sb-btn" type="button" data-role="cancel"></button>
-          <button class="sb-btn" type="button" data-role="confirm"></button>
-        </div>
+    const modal = openModalCard()
+    modal.card.innerHTML = `
+      <div class="sb-modal__title"></div>
+      <p class="sb-modal__message"></p>
+      <div class="sb-modal__actions">
+        <button class="sb-btn" type="button" data-role="cancel"></button>
+        <button class="sb-btn" type="button" data-role="confirm"></button>
       </div>
     `
 
-    const titleEl = backdrop.querySelector<HTMLElement>('.sb-modal__title')
-    const messageEl = backdrop.querySelector<HTMLElement>('.sb-modal__message')
-    const cancelBtn = backdrop.querySelector<HTMLButtonElement>('[data-role="cancel"]')
-    const confirmBtn = backdrop.querySelector<HTMLButtonElement>('[data-role="confirm"]')
+    const titleEl = modal.card.querySelector<HTMLElement>('.sb-modal__title')
+    const messageEl = modal.card.querySelector<HTMLElement>('.sb-modal__message')
+    const cancelBtn = modal.card.querySelector<HTMLButtonElement>('[data-role="cancel"]')
+    const confirmBtn = modal.card.querySelector<HTMLButtonElement>('[data-role="confirm"]')
 
     if (titleEl) titleEl.textContent = options.title
     if (messageEl) {
@@ -182,16 +239,12 @@ export function confirmAction(options: ConfirmOptions): Promise<boolean> {
       if (settled) return
       settled = true
       document.removeEventListener('keydown', onKeyDown, true)
-      backdrop.remove()
-      scheduleLayerCleanup()
+      modal.close()
       resolve(value)
     }
 
     function onKeyDown(event: KeyboardEvent): void {
-      if (event.key === 'Escape') {
-        event.preventDefault()
-        finish(false)
-      } else if (event.key === 'Enter') {
+      if (event.key === 'Enter') {
         event.preventDefault()
         finish(true)
       }
@@ -199,12 +252,8 @@ export function confirmAction(options: ConfirmOptions): Promise<boolean> {
 
     cancelBtn?.addEventListener('click', () => finish(false))
     confirmBtn?.addEventListener('click', () => finish(true))
-    backdrop.addEventListener('click', (event) => {
-      if (event.target === backdrop) finish(false)
-    })
     document.addEventListener('keydown', onKeyDown, true)
 
-    host.appendChild(backdrop)
     confirmBtn?.focus()
   })
 }

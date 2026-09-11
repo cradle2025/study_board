@@ -40,8 +40,8 @@ export const CHANNELS = {
   PORTAL_LIST: 'portal:list',
   PORTAL_UPSERT: 'portal:upsert',
   PORTAL_DELETE: 'portal:delete',
+  /* 图标字节不走 IPC，而是通过 sb-asset://icon/<file> 读，与课表图片同一套机制 */
   PORTAL_FETCH_ICON: 'portal:fetch-icon',
-  PORTAL_READ_ICON: 'portal:read-icon',
 
   /* 课程卡片 */
   CARDS_LIST: 'cards:list',
