@@ -1,5 +1,6 @@
-import MarkdownIt from 'markdown-it'
 import TurndownService from 'turndown'
+
+import { markdownToHtml } from '@shared/markdown'
 
 /**
  * Markdown ↔ HTML 的互转。
@@ -8,46 +9,13 @@ import TurndownService from 'turndown'
  * 富文本模式显示的是它转出来的 HTML，存盘时再转回去。
  * 两份数据各存一份看着省事，但一旦不一致，用户根本无从判断哪份是对的。
  *
- * 两个刻意的配置：
+ * Markdown → HTML 那半边的解析器**不在这里**：它被导出功能复用了，
+ * 所以搬到了 `@shared/markdown`，两处共用同一份配置。
+ * 这一侧只负责反向的 HTML → Markdown（只有编辑器需要）。
  *
- * 1. `html: true` —— 安全**不靠**过滤 HTML 来实现，靠的是 CSP。
- *    渲染层的 CSP 里 `script-src 'self'`（生产环境不含 unsafe-inline），
- *    内联脚本和内联事件处理器根本不会执行；`img-src` 也不放行外域，
- *    所以 `<img src="http://…">` 连请求都发不出去。
- *    用黑名单去洗 HTML 是洗不干净的，分层防御才靠谱。
- *
- * 2. `breaks: true` —— 单个换行也算换行。标准 Markdown 里单换行会被合并成一行，
- *    但笔记场景下用户就是习惯一行一件事，而且 Obsidian 默认也是这个行为。
- *    既然笔记库要能直接当 Obsidian 库用，行为就得跟它对齐。
+ * `html: true` 的安全性说明见 `@shared/markdown` —— 靠 CSP 与分层防御，
+ * 而不是过滤 HTML。
  */
-
-const md = new MarkdownIt({
-  html: true,
-  linkify: true,
-  breaks: true,
-  typographer: false
-})
-
-/**
- * linkify 会自动把 `www.xxx.com` 变成链接，但也会把一些本不是链接的东西
- * （比如 `1.2.3` 这样的版本号）识别成链接。校验一下协议：
- * 只允许 http/https/mailto，其余的一律还原成纯文本。
- */
-const defaultLinkOpen =
-  md.renderer.rules['link_open'] ??
-  ((tokens, idx, options, _env, self) => self.renderToken(tokens, idx, options))
-
-md.renderer.rules['link_open'] = (tokens, idx, options, env, self) => {
-  const token = tokens[idx]
-  const href = String(token?.attrGet('href') ?? '')
-  if (!/^(https?:|mailto:|#)/i.test(href)) {
-    // 不认识的协议：原样输出文本，不给它变成可点的链接
-    token?.attrSet('href', '#')
-  }
-  token?.attrSet('target', '_blank')
-  token?.attrSet('rel', 'noreferrer noopener')
-  return defaultLinkOpen(tokens, idx, options, env, self)
-}
 
 const turndown = new TurndownService({
   headingStyle: 'atx',
@@ -178,9 +146,9 @@ turndown.addRule('underline', {
   replacement: (content) => (content.trim().length > 0 ? `**${content}**` : '')
 })
 
-export function markdownToHtml(source: string): string {
-  return md.render(source)
-}
+// 转发给「Markdown → HTML」搬到 shared 之后的新位置，让编辑器这边的
+// 调用点（richtext-editor）不用关心它到底住在哪一层
+export { markdownToHtml }
 
 export function htmlToMarkdown(html: string): string {
   const out = turndown.turndown(html)
@@ -193,5 +161,5 @@ export function htmlToMarkdown(html: string): string {
  * 比如往笔记里插入 AI 生成的内容时，需要 HTML 而不是完整页面。
  */
 export function markdownFragmentToHtml(source: string): string {
-  return md.render(source)
+  return markdownToHtml(source)
 }

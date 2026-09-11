@@ -1,6 +1,7 @@
 import { BrowserWindow, app } from 'electron'
 import {
   appendFileSync,
+  existsSync,
   mkdtempSync,
   readFileSync,
   readdirSync,
@@ -9,10 +10,14 @@ import {
   writeFileSync
 } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { dirname, join } from 'node:path'
+import { dirname, extname, join } from 'node:path'
+import { inflateRawSync } from 'node:zlib'
+
+import { EXPORT_EXTENSIONS } from '@shared/limits'
+import type { ExportFormat } from '@shared/types'
 
 import { context } from './context'
-import { setUserDataOverride } from './paths'
+import { ensureDir, setUserDataOverride, tempDir } from './paths'
 import { encodePng } from './services/png'
 
 /**
@@ -36,6 +41,8 @@ import { encodePng } from './services/png'
  *              工具栏命令、md ↔ 富文本来回切换、切换前自动备份
  *  - sync      额外验证笔记库文件监听：外部新增 / 改动 / 删除能不能被认出来、
  *              自己写盘会不会造成事件回环、外部改动撞上未保存内容时会不会先问一句
+ *  - export    额外验证笔记导出：导出菜单挂得上、md / html / docx / pdf
+ *              四种产物都能落到磁盘，而且**内容对得上**
  *
  * 门户场景**不测图标抓取**：那需要真实网络，在无网的 CI 里会让自检变成随机失败。
  * 图标文件由本文件直接造好写进图标目录，测的是「图标能不能显示出来」这条链路，
@@ -44,9 +51,13 @@ import { encodePng } from './services/png'
  * sync 场景也刻意**不测「换个真编辑器」**：这里直接往磁盘上写文件，
  * 那正是任何外部程序最终做的事——Obsidian 保存、VS Code 保存、记事本保存，
  * 落到文件系统层面都是同一件事。测 IPC 之外那条真实路径才有意义。
+ *
+ * export 场景**不弹保存对话框**：对话框是系统的，自动化点不了它。
+ * 改为直接给 `targetPath`，落在一个临时目录里——这正是对话框之后
+ * 主进程会走的那条写入路径，同时让「产物到底对不对」可以被硬断言。
  */
 
-export type SmokeScenario = 'basic' | 'timetable' | 'portal' | 'cards' | 'notes' | 'sync'
+export type SmokeScenario = 'basic' | 'timetable' | 'portal' | 'cards' | 'notes' | 'sync' | 'export'
 
 export function smokeEnabled(): boolean {
   return process.env['STUDY_BOARD_SMOKE'] === '1'
@@ -59,6 +70,7 @@ export function smokeScenario(): SmokeScenario {
   if (value === 'cards') return 'cards'
   if (value === 'notes') return 'notes'
   if (value === 'sync') return 'sync'
+  if (value === 'export') return 'export'
   return 'basic'
 }
 
@@ -248,6 +260,58 @@ function seedPortal(): void {
   const { portal } = context()
   const fileName = portal.writeIcon(makeTestPng(64, 64))
   portal.setIcon('builtin-mooc', fileName)
+}
+
+/**
+ * 导出测试用的标记文本。
+ *
+ * 故意做成一眼能认出来的怪字符串：断言是「产物里包含它」，
+ * 而这个串不可能被格式转换自己造出来。
+ */
+const EXPORT_MARKER = '导出标记 MK-7f3a'
+const EXPORT_NOTE_TITLE = '导出自检'
+
+/**
+ * 导出测试数据。
+ *
+ * 正文把四种格式各自最容易走样的东西各放一份：标题（docx 里得是真正的
+ * 标题样式而不是加粗大字）、行内代码与代码块（等宽 + 底纹）、
+ * 表格（docx 里最复杂的结构）、引用、列表、分隔线。
+ * 只放一段纯文本的话，导出一份只有一段话的文档也能全绿。
+ */
+function seedExport(): void {
+  const { notes } = context()
+  notes.create(
+    EXPORT_NOTE_TITLE,
+    [
+      '# 一级标题',
+      '',
+      `正文段落，带 **加粗**、*斜体* 和 \`行内代码\`，还有 ${EXPORT_MARKER}。`,
+      '',
+      '## 二级标题',
+      '',
+      '- 列表项一',
+      '- 列表项二',
+      '',
+      '1. 有序项一',
+      '2. 有序项二',
+      '',
+      '> 引用一段话',
+      '',
+      '```js',
+      'const answer = 42',
+      '```',
+      '',
+      '| 科目 | 分数 |',
+      '| --- | --- |',
+      '| 高等数学 | 92 |',
+      '',
+      '---',
+      '',
+      '最后一段。',
+      ''
+    ].join('\n')
+  )
 }
 
 /* ------------------------------------------------------------------ 渲染层自检 */
@@ -515,6 +579,80 @@ const EXTERNAL_APPEND_2 = '外部追加的第二段。'
 const EXTERNAL_APPEND_3 = '外部追加的第三段。'
 
 /** 打开那篇笔记，并验明「自己写盘不会引起事件回环」 */
+/**
+ * 导出探针。
+ *
+ * 一次测两件事：
+ *  1. **界面上的导出菜单**——点得开、四种格式齐全、Esc 关得掉；
+ *  2. **四种格式真能导出**——明确给 targetPath，绕开系统保存对话框
+ *     （对话框是操作系统的，自动化点不了）。
+ *
+ * 产物本身对不对交给主进程去磁盘上验，这里只把路径带回来。
+ * 收尾刻意把菜单重新打开，好让截图里能看到它长什么样。
+ */
+function exportProbe(dir: string): string {
+  return `(async () => {
+  ${PROBE_HELPERS}
+  const dir = ${JSON.stringify(dir)}
+  const base = ${JSON.stringify(EXPORT_NOTE_TITLE)}
+  const want = ['md', 'html', 'docx', 'pdf']
+
+  const nav = await waitFor('[data-route="notes"]')
+  if (!nav) return JSON.stringify({ error: '导航未就绪' })
+  nav.click()
+
+  const listed = await window.studyBoard.notes.list()
+  const note = listed.ok ? listed.data.find((n) => n.title === base) : null
+  if (!note) return JSON.stringify({ error: '列表里找不到那篇导出自检笔记' })
+
+  const item = await waitFor('[data-role="list"] [data-note="' + note.id + '"]')
+  if (!item) return JSON.stringify({ error: '笔记列表里没有那一篇' })
+  item.click()
+  // 等编辑器真的挂上，别在 open() 还没走完时就去点导出
+  await waitFor('[data-role="stage"] .cm-editor', 8000)
+
+  const trigger = await waitFor('[data-action="export"]')
+  if (!trigger) return JSON.stringify({ error: '找不到导出按钮' })
+  trigger.click()
+
+  const first = await waitFor('.sb-menu [data-format]', 5000)
+  if (!first) return JSON.stringify({ error: '导出菜单没弹出来' })
+
+  const items = Array.from(document.querySelectorAll('.sb-menu [data-format]'))
+  const formats = items.map((el) => el.getAttribute('data-format'))
+  const labels = items.map((el) => (el.textContent || '').trim())
+
+  document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
+  let closed = false
+  for (let i = 0; i < 40; i += 1) {
+    if (!document.querySelector('.sb-menu')) { closed = true; break }
+    await wait(50)
+  }
+
+  const results = {}
+  for (const format of want) {
+    const res = await window.studyBoard.exporter.note({
+      noteId: note.id,
+      format: format,
+      targetPath: dir + '/' + base + '.' + format
+    })
+    results[format] = res.ok ? (res.data.filePath || '') : ('ERR: ' + res.error)
+  }
+
+  trigger.click()
+  await waitFor('.sb-menu [data-format]', 5000)
+
+  return JSON.stringify({
+    menuOk: formats.length === 4 && want.every((f) => formats.indexOf(f) >= 0) && closed,
+    formats: formats,
+    labels: labels,
+    closed: closed,
+    results: results,
+    noteId: note.id
+  })
+})()`
+}
+
 const SYNC_OPEN_PROBE = `(async () => {
   ${PROBE_HELPERS}
   const nav = await waitFor('[data-route="notes"]')
@@ -906,6 +1044,15 @@ export function runSmokeTestIfRequested(win: BrowserWindow): void {
   if (!smokeEnabled()) return
 
   const scenario = smokeScenario()
+
+  // 导出场景要把四种产物写到一个**我们能去检查**的目录里。
+  // 放 tempDir 下面而不是笔记库里面：笔记库里多出来的文件会参与对账，
+  // 断言时容易把「导出的产物」和「笔记」混在一起看
+  const exportDir =
+    scenario === 'export'
+      ? ensureDir(join(tempDir(context().settings.get().portableMode), 'export-check'))
+      : ''
+
   const probe =
     scenario === 'timetable'
       ? TIMETABLE_PROBE
@@ -915,9 +1062,19 @@ export function runSmokeTestIfRequested(win: BrowserWindow): void {
           ? CARDS_PROBE
           : scenario === 'notes'
             ? NOTES_PROBE
-            : BASIC_PROBE
-  // sync 场景要在主进程与渲染层之间来回走好几趟，比别的场景长得多
-  const timeoutMs = scenario === 'basic' ? 20_000 : scenario === 'sync' ? 70_000 : 35_000
+            : scenario === 'export'
+              ? exportProbe(exportDir)
+              : BASIC_PROBE
+  // sync 要在主进程与渲染层之间来回走好几趟；export 要跑一次 Packer
+  // 再起一个隐藏窗口打印 PDF，都比纯界面自检慢得多
+  const timeoutMs =
+    scenario === 'basic'
+      ? 20_000
+      : scenario === 'sync'
+        ? 70_000
+        : scenario === 'export'
+          ? 60_000
+          : 35_000
 
   const timer = setTimeout(() => {
     console.error(`[smoke] 超时：渲染层 ${timeoutMs / 1000} 秒内未完成自检`)
@@ -1016,6 +1173,13 @@ export function runSmokeTestIfRequested(win: BrowserWindow): void {
                         // 界面说自己存了不算数，磁盘上真有一份对得上的文件才算
                         verifyNoteOnDisk()
                     )
+                  : scenario === 'export'
+                  ? Boolean(
+                      parsed['menuOk'] &&
+                        // 同理：导出接口说成功了不算数，四种产物都得在磁盘上
+                        // 对得上内容才算
+                        verifyExportOutputs(parsed['results'])
+                    )
                   : Boolean(parsed['customElement'] && parsed['mounted'] && parsed['bridge'])
 
         if (scenario === 'timetable') {
@@ -1054,6 +1218,9 @@ export function runSmokeTestIfRequested(win: BrowserWindow): void {
         } else if (scenario === 'notes') {
           // 收尾停在 Markdown 模式，留一张带编辑器与工具栏的截图
           await captureIfRequested(win, 'notes.png')
+        } else if (scenario === 'export') {
+          // 收尾时导出菜单是开着的，截图里能同时看到编辑器与菜单
+          await captureIfRequested(win, 'export.png')
         } else {
           await captureIfRequested(win, 'screenshot.png')
         }
@@ -1079,6 +1246,7 @@ export async function prepareSmokeDataIfRequested(): Promise<void> {
   else if (scenario === 'cards') seedCards()
   else if (scenario === 'notes') seedNotes()
   else if (scenario === 'sync') seedNotes()
+  else if (scenario === 'export') seedExport()
 }
 
 /**
@@ -1176,6 +1344,145 @@ function verifyExternalNote(): boolean {
 
   console.info(`[smoke] 外部笔记对账通过：新增认得出、id 捡得回、删除不掉队`)
   return true
+}
+
+/* ---------------------------------------------------------------- 导出产物 */
+
+/**
+ * 从 zip（docx 本质就是 zip）里取一个条目的文本。
+ *
+ * 为什么要自己解这一步：只验「文件头是 PK」的话，一个空壳 zip 也能过，
+ * 那这条自检就白做了。docx 的正文全在 `word/document.xml` 里，
+ * 解出来看一眼才知道内容到底写进去没有。
+ *
+ * 走**中央目录**而不是顺序扫本地头：本地头里的压缩大小可能写 0
+ * （用 data descriptor 的写法），中央目录里的一定准。
+ */
+function readZipEntry(zip: Buffer, wanted: string): string | null {
+  try {
+    // EOCD 签名在末尾 22 字节处，后面还可能跟一段注释，所以往前后各留一点余量
+    let eocd = -1
+    const floor = Math.max(0, zip.length - 22 - 0xffff)
+    for (let i = zip.length - 22; i >= floor; i -= 1) {
+      if (zip.readUInt32LE(i) === 0x06054b50) {
+        eocd = i
+        break
+      }
+    }
+    if (eocd < 0) return null
+
+    const count = zip.readUInt16LE(eocd + 10)
+    let offset = zip.readUInt32LE(eocd + 16)
+
+    for (let i = 0; i < count; i += 1) {
+      if (offset + 46 > zip.length || zip.readUInt32LE(offset) !== 0x02014b50) return null
+      const method = zip.readUInt16LE(offset + 10)
+      const compressedSize = zip.readUInt32LE(offset + 20)
+      const nameLength = zip.readUInt16LE(offset + 28)
+      const extraLength = zip.readUInt16LE(offset + 30)
+      const commentLength = zip.readUInt16LE(offset + 32)
+      const localOffset = zip.readUInt32LE(offset + 42)
+      const name = zip.toString('utf-8', offset + 46, offset + 46 + nameLength)
+
+      if (name === wanted) {
+        const localNameLength = zip.readUInt16LE(localOffset + 26)
+        const localExtraLength = zip.readUInt16LE(localOffset + 28)
+        const start = localOffset + 30 + localNameLength + localExtraLength
+        const data = zip.subarray(start, start + compressedSize)
+        if (method === 0) return data.toString('utf-8')
+        if (method === 8) return inflateRawSync(data).toString('utf-8')
+        return null
+      }
+      offset += 46 + nameLength + extraLength + commentLength
+    }
+    return null
+  } catch {
+    return null
+  }
+}
+
+/**
+ * 导出产物验收：四种格式都要落到磁盘，而且**内容对得上**。
+ *
+ * 断言是按「能证明这件事真的发生了」来挑的，不是挑最好写的：
+ *  - md：文件开头就是 `# 一级标题` —— 证明 frontmatter 确实被剥掉了；
+ *  - html：是完整文档、带 CSP、表格还在 —— 证明样式与安全头都进了产物；
+ *  - docx：解出 `word/document.xml`，里面有标记文本、有真正的 `Heading1`
+ *    样式、有 `w:tbl`。**只验 PK 文件头等于没验**；
+ *  - pdf：头 `%PDF-`、尾 `%%EOF`、体积像话。
+ */
+function verifyExportOutputs(raw: unknown): boolean {
+  if (!raw || typeof raw !== 'object') {
+    console.error('[smoke] 渲染层没有返回导出结果')
+    return false
+  }
+
+  const results = raw as Partial<Record<ExportFormat, string>>
+  const formats: ExportFormat[] = ['md', 'html', 'docx', 'pdf']
+  let ok = true
+
+  for (const format of formats) {
+    const path = results[format]
+    if (!path || !existsSync(path)) {
+      console.error(`[smoke] ${format} 没有落盘：${path || '（渲染层返回了空路径）'}`)
+      ok = false
+      continue
+    }
+    if (extname(path).slice(1).toLowerCase() !== EXPORT_EXTENSIONS[format]) {
+      console.error(`[smoke] ${format} 产物的扩展名不对：${path}`)
+      ok = false
+      continue
+    }
+
+    const buffer = readFileSync(path)
+    if (buffer.length < 200) {
+      console.error(`[smoke] ${format} 产物只有 ${buffer.length} 字节，多半是空的`)
+      ok = false
+      continue
+    }
+
+    if (format === 'md') {
+      const text = buffer.toString('utf-8')
+      if (!text.startsWith('# 一级标题') || !text.includes(EXPORT_MARKER)) {
+        console.error('[smoke] md 产物内容不对：开头不是正文，或者标记文本丢了')
+        ok = false
+      }
+    } else if (format === 'html') {
+      const text = buffer.toString('utf-8')
+      if (
+        !text.startsWith('<!DOCTYPE html') ||
+        !text.includes('Content-Security-Policy') ||
+        !text.includes('<h1') ||
+        !text.includes('<table>') ||
+        !text.includes(EXPORT_MARKER)
+      ) {
+        console.error('[smoke] html 产物内容不对')
+        ok = false
+      }
+    } else if (format === 'docx') {
+      const xml = readZipEntry(buffer, 'word/document.xml') ?? ''
+      if (!xml.includes(EXPORT_MARKER)) {
+        console.error('[smoke] docx 里找不到正文标记，内容没写进去')
+        ok = false
+      } else if (!xml.includes('Heading1')) {
+        console.error('[smoke] docx 里的标题没套用标题样式，退化成了普通段落')
+        ok = false
+      } else if (!xml.includes('w:tbl')) {
+        console.error('[smoke] docx 里没有表格')
+        ok = false
+      }
+    } else {
+      const head = buffer.subarray(0, 5).toString('latin1')
+      const tail = buffer.subarray(Math.max(0, buffer.length - 64)).toString('latin1')
+      if (head !== '%PDF-' || !tail.includes('%%EOF')) {
+        console.error('[smoke] pdf 产物不是一份完整的 PDF')
+        ok = false
+      }
+    }
+  }
+
+  if (ok) console.info('[smoke] 四种导出产物都在磁盘上，且内容对得上')
+  return ok
 }
 
 /* --------------------------------------------------- 文件监听（双向同步） */

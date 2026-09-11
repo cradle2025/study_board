@@ -12,9 +12,10 @@
  *   npm run smoke:cards      课程卡片端到端：翻转 + 课表带过课程 + 自动建笔记
  *   npm run smoke:notes      笔记编辑器端到端：双模式切换 + 工具栏 + md 往返
  *   npm run smoke:sync       笔记库文件监听：外部新增/改动/删除 + 冲突追问
+ *   npm run smoke:export     笔记导出：md / html / docx / pdf 四种产物落到磁盘
  *   npm run bench            性能与内存基准，报告打到 stdout 并写入 .preview/
  *
- * 三者都跑在系统临时目录里，不会碰你真实的学习数据。
+ * 它们都跑在系统临时目录里，不会碰你真实的学习数据。
  */
 import { spawn } from 'node:child_process'
 import { mkdirSync, writeFileSync } from 'node:fs'
@@ -30,7 +31,7 @@ const electronPath = require('electron')
 
 const requested = process.argv[2] ?? ''
 const bench = requested === 'bench'
-const scenario = ['timetable', 'portal', 'cards', 'notes', 'sync'].includes(requested)
+const scenario = ['timetable', 'portal', 'cards', 'notes', 'sync', 'export'].includes(requested)
   ? requested
   : 'basic'
 const label = bench ? 'bench' : scenario

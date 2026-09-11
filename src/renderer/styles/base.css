@@ -1619,6 +1619,50 @@ h4 {
   pointer-events: none;
 }
 
+/* ---------------------------------------------------------------- 下拉菜单 */
+
+/* 挂在浮层容器里的轻量菜单。定位由 overlay.ts 的 showFloating 负责，
+   这里只管长相；z-index 也不用写——父级 .sb-layer 已经压住了整页 */
+.sb-menu {
+  position: fixed;
+  min-width: 184px;
+  padding: 4px;
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-md);
+  background: var(--bg-surface);
+  box-shadow: var(--shadow-md);
+}
+
+.sb-menu__item {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 18px;
+  width: 100%;
+  padding: 7px 10px;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: none;
+  color: var(--text-primary);
+  font: inherit;
+  font-size: 13px;
+  line-height: 1.5;
+  text-align: left;
+  cursor: pointer;
+}
+
+.sb-menu__item:hover,
+.sb-menu__item:focus-visible {
+  background: var(--bg-hover);
+}
+
+/* 右侧那列小字：写扩展名与一句用途，省得用户去猜 */
+.sb-menu__hint {
+  color: var(--text-tertiary);
+  font-size: 11px;
+  white-space: nowrap;
+}
+
 /* ---------------------------------------------------------------- 确认框 */
 
 .sb-modal {

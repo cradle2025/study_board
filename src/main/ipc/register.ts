@@ -1,4 +1,5 @@
 import { registerCardsHandlers } from './cards'
+import { registerExportHandlers } from './export'
 import { assertAllChannelsRegistered } from './index'
 import { registerNotesHandlers } from './notes'
 import { registerPendingHandlers } from './pending'
@@ -18,6 +19,7 @@ export function registerIpcHandlers(): void {
   registerPortalHandlers()
   registerNotesHandlers()
   registerCardsHandlers()
+  registerExportHandlers()
 
   // 尚未实现的模块统一挂占位，等对应模块落地后从这里「顶掉」即可
   registerPendingHandlers()

@@ -57,3 +57,23 @@ export const MAX_NOTE_BYTES = 2 * 1024 * 1024
 export const MAX_NOTE_FILE_BYTES = 200
 /** 读笔记文件时用于提取 frontmatter 的头部字节数 */
 export const NOTE_HEAD_BYTES = 4096
+
+/* ------------------------------------------------------------------ 导出 */
+
+/**
+ * 导出格式 → 文件扩展名。
+ *
+ * 主进程用它做两件事：拼保存对话框的过滤器、校验渲染层给的目标路径
+ * （扩展名必须与格式对得上，否则一个「导出 pdf」的请求就能写出任意文件名）。
+ * 渲染层也要靠它显示「导出为 .docx」这类文案，所以放 shared。
+ */
+export const EXPORT_EXTENSIONS = {
+  md: 'md',
+  html: 'html',
+  docx: 'docx',
+  pdf: 'pdf'
+} as const
+
+/** 单篇笔记导出的等待上限：PDF 要起一个隐藏窗口，比另外三种慢得多 */
+export const EXPORT_TIMEOUT_MS = 30_000
+

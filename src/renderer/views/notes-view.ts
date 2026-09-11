@@ -1,12 +1,12 @@
-import { MAX_NOTE_BYTES } from '@shared/limits'
-import type { LibraryChangedEvent, NoteMeta } from '@shared/types'
+import { EXPORT_EXTENSIONS, MAX_NOTE_BYTES } from '@shared/limits'
+import type { ExportFormat, LibraryChangedEvent, NoteMeta } from '@shared/types'
 
 import type { ViewContext, ViewInstance } from '../app-shell'
 import { MODE_HINT, MODE_LABEL, type EditorHandle, type EditorMode } from '../lib/editor/commands'
 import { createEditorToolbar } from '../lib/editor/toolbar'
 import { escapeHtml } from '../lib/html'
 import { bridge, formatError, toast, unwrap } from '../lib/ipc'
-import { confirmAction } from '../lib/overlay'
+import { confirmAction, showFloating } from '../lib/overlay'
 
 /**
  * 笔记页。
@@ -30,6 +30,19 @@ import { confirmAction } from '../lib/overlay'
  */
 
 const AUTOSAVE_DELAY = 800
+
+/**
+ * 导出格式清单。
+ *
+ * 按「离原始内容越近越靠前」排：.md 是原文本身，.docx 是最常拿来交作业的。
+ * 四种格式一屏放得下，不需要再分组或折叠。
+ */
+const EXPORT_ITEMS: ReadonlyArray<{ format: ExportFormat; label: string }> = [
+  { format: 'md', label: 'Markdown 原文' },
+  { format: 'html', label: '网页' },
+  { format: 'docx', label: 'Word 文档' },
+  { format: 'pdf', label: 'PDF 文档' }
+]
 
 export function createNotesView(ctx: ViewContext): ViewInstance {
   const element = document.createElement('div')
@@ -57,6 +70,7 @@ export function createNotesView(ctx: ViewContext): ViewInstance {
             <input class="sb-input sb-notes__title" data-role="title" type="text" maxlength="80" aria-label="笔记标题" />
             <div class="sb-toolbar">
               <span class="sb-badge" data-role="meta"></span>
+              <button class="sb-btn sb-btn--ghost" type="button" data-action="export">导出</button>
               <button class="sb-btn sb-btn--ghost" type="button" data-action="rename">重命名</button>
               <button class="sb-btn sb-btn--ghost" type="button" data-action="delete">删除</button>
             </div>
@@ -409,6 +423,65 @@ export function createNotesView(ctx: ViewContext): ViewInstance {
     setStatus('已从磁盘刷新')
   }
 
+  /* ---------------------------------------------------------------- 导出 */
+
+  /**
+   * 点「导出」弹出来的格式菜单。
+   *
+   * 选完立刻关掉：菜单里点一下、保存对话框紧接着就弹出来，
+   * 菜单还挂在那儿只会挡住对话框。
+   */
+  function openExportMenu(anchor: HTMLElement): void {
+    if (!activeId) return
+    const menu = showFloating({ className: 'sb-menu', anchor: anchor.getBoundingClientRect() })
+    menu.element.innerHTML = EXPORT_ITEMS.map(
+      (item) => `
+        <button class="sb-menu__item" type="button" data-format="${item.format}">
+          <span>${escapeHtml(item.label)}</span>
+          <span class="sb-menu__hint">.${EXPORT_EXTENSIONS[item.format]}</span>
+        </button>
+      `
+    ).join('')
+
+    menu.element.addEventListener('click', (event) => {
+      const format = (event.target as HTMLElement | null)?.closest<HTMLElement>('[data-format]')
+        ?.dataset['format'] as ExportFormat | undefined
+      if (!format) return
+      menu.close()
+      void runExport(format)
+    })
+  }
+
+  async function runExport(format: ExportFormat): Promise<void> {
+    const noteId = activeId
+    if (!noteId) return
+
+    // 导出读的是磁盘上那份文件，所以先把编辑器里还没落盘的内容写下去。
+    // 少了这一步，用户刚敲的一段话会在「导出成功」的提示里凭空消失
+    await flush()
+    setStatus('导出中…')
+    try {
+      const result = await unwrap(bridge().exporter.note({ noteId, format }))
+      if (result.cancelled || !result.filePath) {
+        setStatus('')
+        return
+      }
+      const path = result.filePath
+      setStatus('已导出')
+      // 导出十有八九是为了把文件发给别人，顺手把目录打开能省一步找文件
+      const reveal = await confirmAction({
+        title: '导出完成',
+        message: `已保存到：\n${path}`,
+        confirmText: '打开所在文件夹',
+        cancelText: '知道了'
+      })
+      if (reveal) await unwrap(bridge().app.revealPath(path))
+    } catch (error) {
+      setStatus('')
+      toast(`导出失败：${formatError(error)}`, 'error')
+    }
+  }
+
   /* ---------------------------------------------------------------- 事件 */
 
   // app-shell 每次切路由都会重建视图，所以退订是必须的：
@@ -461,6 +534,10 @@ export function createNotesView(ctx: ViewContext): ViewInstance {
     } catch (error) {
       toast(`新建失败：${formatError(error)}`, 'error')
     }
+  })
+
+  element.querySelector('[data-action="export"]')?.addEventListener('click', (event) => {
+    openExportMenu(event.currentTarget as HTMLElement)
   })
 
   element.querySelector('[data-action="rename"]')?.addEventListener('click', async () => {

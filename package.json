@@ -28,6 +28,7 @@
     "smoke:cards": "node scripts/smoke.mjs cards",
     "smoke:notes": "node scripts/smoke.mjs notes",
     "smoke:sync": "node scripts/smoke.mjs sync",
+    "smoke:export": "node scripts/smoke.mjs export",
     "bench": "node scripts/smoke.mjs bench",
     "bench:compare": "node scripts/compare-bench.mjs",
     "icon": "node scripts/make-icon.mjs",
@@ -62,7 +63,6 @@
     "@types/turndown": "^5.0.6",
     "electron": "^44.3.0",
     "electron-vite": "^5.0.0",
-    "markdown-it": "^15.0.1",
     "turndown": "^7.2.4",
     "typescript": "^7.0.2",
     "vite": "^7.3.6"

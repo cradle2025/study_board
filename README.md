@@ -46,7 +46,8 @@
 - 外部改动文件，界面自动刷新；界面里改，文件自动写回
 
 **笔记拓展**
-- 一键导出为 **PDF / Word / Markdown**
+- 一键导出为 **Markdown / 网页 / Word / PDF** 四种格式，导出的都是正文本身
+  （不含应用自己的簿记字段），标题进文件属性而不是正文里多顶一个标题
 - 与 **Obsidian** 天然互通；可选接入 **Notion** 做双向同步
 - 接 **AI** 助手：按课程主题整理资料并写入笔记，写入方式（自己粘贴 / AI 直接写入）由你决定，且**不会改动你已有内容**
 
@@ -129,6 +130,7 @@ npm run smoke:portal      # 网站门户端到端：内置站点 + 图标显示 
 npm run smoke:cards       # 课程卡片端到端：翻转 + 从课表带过课程 + 自动建笔记
 npm run smoke:notes       # 笔记编辑器端到端：双模式切换 + 工具栏 + md 往返
 npm run smoke:sync        # 笔记库文件监听：外部新增/改动/删除/改名 + 冲突追问
+npm run smoke:export      # 笔记导出：md / html / docx / pdf 四种产物落到磁盘
 npm run bench             # 性能与内存基准，报告打到 stdout 并写入 .preview/
 npm run bench:compare     # 对比两组基准报告（取中位数，并给出区间）
 npm run icon              # 重新生成应用图标（纯脚本绘制，无图像库依赖）
@@ -160,6 +162,12 @@ npm run package:mac  # 打 macOS dmg     -> release/<版本>/
 > 图标文件由测试自己造好写进图标目录，测的是「图标能不能显示出来」这条链路。
 > `smoke:sync` 同理：它不启动真的 Obsidian，因为那些编辑器保存文件落到
 > 文件系统层面跟这里做的是同一件事。
+>
+> `smoke:export` 会点开导出菜单确认四种格式都在、Esc 能关掉，然后把四种产物
+> 各导一份到一个临时目录，**再去磁盘上验内容**：md 开头必须是正文（证明
+> frontmatter 被剥掉了）、html 得是带 CSP 的完整文档、docx 要解出
+> `word/document.xml` 确认里面真有 `Heading1` 样式与表格、pdf 得是完整的
+> 一页 A4。只验「文件存在、体积不为 0」等于没验——空壳 zip 也是合法 docx。
 
 改动渲染路径或存储层之后，建议跑一次 `npm run bench` 确认没有退化。
 测量方法、本次优化的实测数据、以及「试过但决定不做」的项，
