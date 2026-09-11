@@ -24,13 +24,15 @@ import { encodePng } from './services/png'
  *  - portal    额外验证网站门户：内置站点、图标走 sb-asset、增删改隐藏全链路
  *  - cards     额外验证课程卡片：翻转、从课表带过课程、建卡片自动建笔记、
  *              「记笔记」跳转、笔记落盘成 Obsidian 认得的文件
+ *  - notes     额外验证双模式编辑器：CodeMirror 与 TipTap 的按需加载、
+ *              工具栏命令、md ↔ 富文本来回切换、切换前自动备份
  *
  * 门户场景**不测图标抓取**：那需要真实网络，在无网的 CI 里会让自检变成随机失败。
  * 图标文件由本文件直接造好写进图标目录，测的是「图标能不能显示出来」这条链路，
  * 而不是「能不能从外网抓下来」——后者本来就该由人点一下按钮确认。
  */
 
-export type SmokeScenario = 'basic' | 'timetable' | 'portal' | 'cards'
+export type SmokeScenario = 'basic' | 'timetable' | 'portal' | 'cards' | 'notes'
 
 export function smokeEnabled(): boolean {
   return process.env['STUDY_BOARD_SMOKE'] === '1'
@@ -41,6 +43,7 @@ export function smokeScenario(): SmokeScenario {
   if (value === 'timetable') return 'timetable'
   if (value === 'portal') return 'portal'
   if (value === 'cards') return 'cards'
+  if (value === 'notes') return 'notes'
   return 'basic'
 }
 
@@ -199,6 +202,28 @@ function seedCards(): void {
 }
 
 /**
+ * 笔记编辑器测试数据。
+ *
+ * 内容是刻意挑的：标题、加粗、行内代码、列表各来一个——
+ * 这些正好是「Markdown 转 HTML 再转回 Markdown」这一圈里最容易走样的几种。
+ */
+function seedNotes(): void {
+  const { notes } = context()
+  notes.create(
+    '编辑器自检',
+    [
+      '# 一级标题',
+      '',
+      '正文段落，带 **加粗** 和 `行内代码`。',
+      '',
+      '- 列表项一',
+      '- 列表项二',
+      ''
+    ].join('\n')
+  )
+}
+
+/**
  * 门户测试数据：给内置站点塞一张真图标。
  *
  * 目的是验证「图标目录 → sb-asset 协议 → CSP → <img> 显示」这条链路，
@@ -352,6 +377,111 @@ const TIMETABLE_PROBE = `(async () => {
   })
 })()`
 
+const NOTES_PROBE = `(async () => {
+  ${PROBE_HELPERS}
+  const nav = await waitFor('[data-route="notes"]')
+  if (!nav) return JSON.stringify({ error: '导航未就绪' })
+  nav.click()
+
+  const listed = await waitForCount('.sb-notes__item', 1)
+  if (!listed) return JSON.stringify({ error: '笔记列表为空' })
+  document.querySelector('.sb-notes__item').click()
+
+  // 编辑器是动态 import 进来的：这里等它真的挂上，顺便验证
+  // 「按需加载的 chunk 在 file:// + CSP 下能不能加载成功」
+  const cmReady = await waitFor('.cm-editor', 20000)
+  if (!cmReady) return JSON.stringify({ error: 'Markdown 编辑器没挂上' })
+
+  // 标题输入框被填上，才说明笔记内容真的读出来并灌进编辑器了
+  const loaded = await waitForValue('[data-role="title"]', '编辑器自检')
+  if (!loaded) return JSON.stringify({ error: '笔记内容未载入' })
+  await wait(300)
+
+  const initialText = document.querySelector('.cm-content').textContent
+  const initialOk = initialText.includes('一级标题') && initialText.includes('列表项一')
+
+  // —— 把光标移到文档末尾，再用工具栏插一条分隔线。
+  // 从外面模拟键盘输入到 contenteditable 里太脆弱，走工具栏命令既可靠，
+  // 又顺带把「点了按钮到底生不生效」测了；插在末尾则不会破坏原有结构
+  const content = document.querySelector('.cm-content')
+  const cursorRange = document.createRange()
+  cursorRange.selectNodeContents(content)
+  cursorRange.collapse(false)
+  const selection = window.getSelection()
+  selection.removeAllRanges()
+  selection.addRange(cursorRange)
+  content.focus()
+  // 给 CodeMirror 一点时间把 DOM 选区同步成内部光标位置，
+  // 不然它还以为光标在文档开头，内容就插到最前面去了
+  await wait(250)
+
+  const hrButton = document.querySelector('.sb-editorbar [data-command="hr"]')
+  if (!hrButton) return JSON.stringify({ error: '工具栏没渲染' })
+  hrButton.click()
+  const appended = await waitForText('[data-role="status"]', '已保存', 8000)
+  const textAfterHr = document.querySelector('.cm-content').textContent
+  const hrOk = textAfterHr.includes('---')
+  // 插在末尾 ⇒ 第一行还是原来那个标题。这是「光标真的移到末尾了」的证据
+  const firstLine = document.querySelector('.cm-line').textContent
+  const h1Kept = firstLine.includes('# 一级标题')
+
+  // 下划线在 Markdown 模式下该是禁用的——Markdown 表达不了它，
+  // 与其假装支持再在存盘时丢掉，不如直接不给点
+  const underlineDisabled = document.querySelector(
+    '.sb-editorbar [data-command="underline"]'
+  ).disabled
+
+  // —— 切到富文本：会先弹确认框（提示格式转换可能退化），确认后还要备份
+  document.querySelector('[data-mode="richtext"]').click()
+  const modal = await waitFor('.sb-modal [data-role="confirm"]')
+  if (!modal) return JSON.stringify({ error: '切模式没有弹出确认框' })
+  modal.click()
+
+  const rtReady = await waitFor('.sb-rt__body', 20000)
+  if (!rtReady) return JSON.stringify({ error: '富文本编辑器没挂上' })
+  await wait(400)
+
+  const richHtml = document.querySelector('.sb-rt__body').innerHTML
+  // 转换结果的检验点：标题变 h1、加粗变 strong、行内代码变 code、列表变 ul
+  const convertOk =
+    richHtml.includes('<h1') &&
+    richHtml.includes('<strong>') &&
+    richHtml.includes('<code>') &&
+    richHtml.includes('<ul>')
+
+  // 富文本模式下，下划线该是可用的（这正是富文本存在的意义）
+  const underlineEnabled = !document.querySelector(
+    '.sb-editorbar [data-command="underline"]'
+  ).disabled
+
+  // —— 在富文本里插一张表格，再切回 Markdown 看它有没有变成 GFM 表格语法
+  document.querySelector('.sb-editorbar [data-command="table"]').click()
+  const tableMade = await waitFor('.sb-rt__body table')
+  const savedAfterTable = await waitForText('[data-role="status"]', '已保存', 8000)
+
+  // 切回 Markdown 不需要确认（往富文本切才需要，因为那一步才开始可能丢格式）
+  document.querySelector('[data-mode="markdown"]').click()
+  const backToCm = await waitFor('.cm-editor', 20000)
+  await wait(500)
+  const backText = document.querySelector('.cm-content').textContent
+  // GFM 表格的样子：至少要有一行 | 分隔符
+  const roundTripOk = backText.includes('|') && backText.includes('一级标题')
+  const backHead = backText.slice(0, 160)
+  const afterHrHead = textAfterHr.slice(0, 160)
+
+  return JSON.stringify({
+    initialOk, hrOk, h1Kept, appended, underlineDisabled, convertOk,
+    afterHrHead, backHead,
+    underlineEnabled, tableMade: Boolean(tableMade), savedAfterTable, roundTripOk,
+    richTags: ['h1', 'strong', 'code', 'ul'].filter((t) => richHtml.includes('<' + t)),
+    editorOk: initialOk && hrOk && h1Kept && appended,
+    toolbarOk: underlineDisabled && underlineEnabled,
+    convertCheck: convertOk,
+    tableOk: Boolean(tableMade) && savedAfterTable,
+    roundTrip: backToCm && roundTripOk
+  })
+})()`
+
 const CARDS_PROBE = `(async () => {
   ${PROBE_HELPERS}
   const nav = await waitFor('[data-route="study"]')
@@ -474,18 +604,19 @@ const CARDS_PROBE = `(async () => {
   const target = Array.from(document.querySelectorAll('.sb-notes__item'))
     .find((el) => el.querySelector('.sb-notes__item-title').textContent.trim() === expectedTitle)
   let typedOk = false
+  let editorMounted = false
   if (target) {
     target.click()
-    // 必须等标题被填上——那才说明笔记真的读出来了。
-    // 只等 [data-role="body"] 会立刻命中（它一直在 DOM 里，只是被 hidden 藏着），
-    // 这时往里写的内容会被随后到达的 open() 覆盖掉
+    // 编辑器是动态加载的，得等它挂上；标题被填上才说明内容真的读出来了
+    editorMounted = Boolean(await waitFor('.cm-editor', 20000))
     const loaded = await waitForValue('[data-role="title"]', expectedTitle)
-    const body = document.querySelector('[data-role="body"]')
-    if (loaded && body) {
-      body.value = '# 第一章\\n\\n自动建的笔记也应该能直接写。'
-      body.dispatchEvent(new Event('input', { bubbles: true }))
-      const saved = await waitForText('[data-role="status"]', '已保存')
-      typedOk = saved
+    if (editorMounted && loaded) {
+      // 用工具栏插一张表：既证明编辑器能用，又给磁盘校验留了个好认的记号
+      const tableButton = document.querySelector('.sb-editorbar [data-command="table"]')
+      if (tableButton) {
+        tableButton.click()
+        typedOk = await waitForText('[data-role="status"]', '已保存', 8000)
+      }
     }
   }
 
@@ -503,7 +634,7 @@ const CARDS_PROBE = `(async () => {
   return JSON.stringify({
     flipped, flippedBack, backText, frontOk, options, pickerOk,
     carriedName, carriedTeacher, carriedOk, addedInTime, addedText,
-    listItems, autoNoteOk, typedOk, jumpedTitle, jumpOk,
+    listItems, autoNoteOk, typedOk, editorMounted, jumpedTitle, jumpOk,
     nameFont, teacherFont, bodyFont, scoreFont, gapBeforeRule, faceOverflow, typoOk,
     cardW: Math.round(cardRect.width), cardH: Math.round(cardRect.height),
     longNameLines, longOverflow, longNameOk, accentText, badgeColor, contrastOk,
@@ -621,7 +752,9 @@ export function runSmokeTestIfRequested(win: BrowserWindow): void {
         ? PORTAL_PROBE
         : scenario === 'cards'
           ? CARDS_PROBE
-          : BASIC_PROBE
+          : scenario === 'notes'
+            ? NOTES_PROBE
+            : BASIC_PROBE
   const timeoutMs = scenario === 'basic' ? 20_000 : 35_000
 
   const timer = setTimeout(() => {
@@ -683,7 +816,15 @@ export function runSmokeTestIfRequested(win: BrowserWindow): void {
                       parsed['hideOk'] &&
                       parsed['homeOk']
                   )
-                : scenario === 'cards'
+                  : scenario === 'notes'
+                  ? Boolean(
+                      parsed['editorOk'] &&
+                        parsed['toolbarOk'] &&
+                        parsed['convertCheck'] &&
+                        parsed['tableOk'] &&
+                        parsed['roundTrip']
+                    )
+                  : scenario === 'cards'
                   ? Boolean(
                       parsed['flipOk'] &&
                         parsed['frontOk'] &&
@@ -732,6 +873,9 @@ export function runSmokeTestIfRequested(win: BrowserWindow): void {
             )
             .catch(() => undefined)
           await captureIfRequested(win, 'cards.png')
+        } else if (scenario === 'notes') {
+          // 收尾停在 Markdown 模式，留一张带编辑器与工具栏的截图
+          await captureIfRequested(win, 'notes.png')
         } else {
           await captureIfRequested(win, 'screenshot.png')
         }
@@ -755,6 +899,7 @@ export async function prepareSmokeDataIfRequested(): Promise<void> {
   if (scenario === 'timetable') await seedTimetable()
   else if (scenario === 'portal') seedPortal()
   else if (scenario === 'cards') seedCards()
+  else if (scenario === 'notes') seedNotes()
 }
 
 /**
@@ -784,9 +929,11 @@ function verifyNoteOnDisk(): boolean {
   try {
     const raw = readFileSync(join(notes.dir, target), 'utf-8')
     const hasFrontmatter = raw.startsWith('---\n') && raw.includes('id:')
-    const hasBody = raw.includes('自动建的笔记也应该能直接写')
+    // 探针在界面上插了一张表，磁盘上就该出现 GFM 表格语法。
+    // 这一条同时证明了「编辑器写的内容确实落到了文件里」
+    const hasBody = raw.includes('| 列 1 |')
     if (!hasFrontmatter || !hasBody) {
-      console.error('[smoke] 笔记文件内容不符合预期：', JSON.stringify(raw.slice(0, 240)))
+      console.error('[smoke] 笔记文件内容不符合预期：', JSON.stringify(raw.slice(0, 260)))
       return false
     }
     console.info(`[smoke] 笔记文件校验通过：${target}（${Buffer.byteLength(raw, 'utf-8')} 字节）`)

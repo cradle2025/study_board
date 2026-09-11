@@ -26,6 +26,7 @@
     "smoke:timetable": "node scripts/smoke.mjs timetable",
     "smoke:portal": "node scripts/smoke.mjs portal",
     "smoke:cards": "node scripts/smoke.mjs cards",
+    "smoke:notes": "node scripts/smoke.mjs notes",
     "bench": "node scripts/smoke.mjs bench",
     "bench:compare": "node scripts/compare-bench.mjs",
     "icon": "node scripts/make-icon.mjs",
@@ -38,16 +39,30 @@
   "dependencies": {
     "chokidar": "^5.0.0",
     "docx": "^9.7.1",
-    "libheif-js": "^1.23.2",
-    "markdown-it": "^15.0.1",
-    "turndown": "^7.2.4"
+    "libheif-js": "^1.23.2"
   },
   "devDependencies": {
+    "@codemirror/autocomplete": "^6.20.3",
+    "@codemirror/commands": "^6.11.0",
+    "@codemirror/lang-markdown": "^6.5.2",
+    "@codemirror/language": "^6.12.4",
+    "@codemirror/search": "^6.7.2",
+    "@codemirror/state": "^6.7.4",
+    "@codemirror/view": "^6.43.11",
+    "@lezer/highlight": "^1.2.3",
+    "@tiptap/core": "^3.31.3",
+    "@tiptap/extension-highlight": "^3.31.3",
+    "@tiptap/extension-table": "^3.31.3",
+    "@tiptap/extension-text-align": "^3.31.3",
+    "@tiptap/pm": "^3.31.3",
+    "@tiptap/starter-kit": "^3.31.3",
     "@types/markdown-it": "^14.2.0",
     "@types/node": "^24.13.4",
     "@types/turndown": "^5.0.6",
     "electron": "^44.3.0",
     "electron-vite": "^5.0.0",
+    "markdown-it": "^15.0.1",
+    "turndown": "^7.2.4",
     "typescript": "^7.0.2",
     "vite": "^7.3.6"
   }

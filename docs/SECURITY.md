@@ -190,19 +190,39 @@ sb-asset://<bucket>/<相对路径>
 
 ## 八、依赖与兼容性
 
-- **生产依赖只有 5 个**，且全部是纯 JS / WASM，没有原生模块（`.node`）
+- **生产依赖只有 3 个**，且全部是纯 JS / WASM，没有原生模块（`.node`）
 
   | 包 | 用途 | 状态 |
   | --- | --- | --- |
   | `libheif-js` | HEIF/HEIC 解码（WASM 内联，懒加载） | 已在使用 |
-  | `markdown-it` | Markdown → HTML | 待「笔记编辑器」接入 |
-  | `turndown` | HTML → Markdown | 待「笔记编辑器」接入 |
   | `docx` | 生成 Word 文档 | 待「导出」接入 |
   | `chokidar` | 笔记库文件监听 | 待「双向同步」接入 |
 
-  刻意**没有**引入的：`js-yaml`（frontmatter 只用到「键值对 + 小数组」，
-  自己实现约 100 行，完整 YAML 规范在这里全是攻击面）、`gray-matter`（同上）、
-  任何原生模块、任何前端框架。
+#### 为什么编辑器那一大堆包不在这个表里
+
+CodeMirror 与 TipTap 加起来会拉进六十多个包，但它们**全部在 `devDependencies`**。
+判断依据是构建配置本身：
+
+```
+main     → externalizeDepsPlugin()  → 依赖被外部化，运行时从 node_modules 读 ⇒ 必须在 dependencies
+preload  → externalizeDepsPlugin()  → 同上
+renderer → （没有这个插件）          → 所有 import 被 vite 打包进 bundle ⇒ 运行时不需要 node_modules
+```
+
+渲染层产物是自包含的，这一点**验证过而不是推断的**：把 `@codemirror`、`@tiptap`、
+`@lezer`、`prosemirror-*`、`markdown-it`、`turndown` 全部从 `node_modules` 里移走，
+笔记编辑器照样跑通——说明代码确实都在 bundle 里。
+
+不这么分的话，`electron-builder` 会把这些包**再打一份**进安装包，
+白白多出十几 MB。这条区分对「运行时依赖越少越好」这条硬约束是实打实的。
+
+#### 刻意**没有**引入的
+
+`js-yaml` 与 `gray-matter`（frontmatter 只用到「键值对 + 小数组」，
+自己实现约 100 行，完整 YAML 规范在这里全是攻击面）、
+`turndown-plugin-gfm`（表格规则本身有缺陷，见
+[ARCHITECTURE.md 第十四节](./ARCHITECTURE.md)，自己写反而更准）、
+任何原生模块、任何前端框架。
 
 - 没有原生模块意味着：不需要 `electron-rebuild`，也不会有 ABI 不匹配导致的安全补丁无法及时更新
 - 版本全部锁在 `package-lock.json`，CI 与本地构建环境一致

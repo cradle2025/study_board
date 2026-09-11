@@ -116,7 +116,8 @@ const api = {
     create: (title: string) => invoke<NoteDoc>(CHANNELS.NOTES_CREATE, title),
     remove: (id: string) => invoke<null>(CHANNELS.NOTES_DELETE, id),
     rename: (payload: { id: string; title: string }) =>
-      invoke<NoteDoc>(CHANNELS.NOTES_RENAME, payload)
+      invoke<NoteDoc>(CHANNELS.NOTES_RENAME, payload),
+    backup: (id: string) => invoke<string>(CHANNELS.NOTES_BACKUP, id)
   },
 
   exporter: {

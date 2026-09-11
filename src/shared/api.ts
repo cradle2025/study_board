@@ -91,6 +91,8 @@ export interface StudyBoardApi {
     create(title: string): Promise<IpcResult<NoteDoc>>
     remove(id: string): Promise<IpcResult<null>>
     rename(payload: { id: string; title: string }): Promise<IpcResult<NoteDoc>>
+    /** 备份一篇笔记，返回备份文件的相对路径 */
+    backup(id: string): Promise<IpcResult<string>>
   }
 
   exporter: {

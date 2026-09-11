@@ -28,6 +28,20 @@
   --color-danger: #d64545;
   --color-success: #2f9e6f;
   --color-warning: #b7791f;
+
+  /* Markdown 编辑器的高亮配色。
+     走 CSS 变量而不是给 CodeMirror 换 HighlightStyle 实例：
+     后者要配 Compartment 重建编辑器，而这里本质上只是换个颜色 */
+  --md-strong: #1b1e23;
+  --md-em: #4a5568;
+  --md-code: #b03a5b;
+  --md-code-bg: #f2f4f8;
+  --md-heading: #2f5cd6;
+  --md-quote: #6b7280;
+  --md-link: #2f5cd6;
+  --md-marker: #9aa3b2;
+  --md-dim: #9aa3b2;
+  --md-mark: #fff2a8;
 }
 
 html[data-theme='light'] {
@@ -59,6 +73,17 @@ html[data-theme='dark'] {
   --color-accent-soft: #23305c;
   /* 深色底上必须换成更亮的蓝，否则强调色文字几乎糊在背景里（2.8:1 → 6.6:1） */
   --color-accent-text: #9dbaff;
+
+  --md-strong: #f0f2f5;
+  --md-em: #c3cad6;
+  --md-code: #ff9db4;
+  --md-code-bg: #2a2e36;
+  --md-heading: #9dbaff;
+  --md-quote: #98a1b0;
+  --md-link: #9dbaff;
+  --md-marker: #6b7482;
+  --md-dim: #6b7482;
+  --md-mark: #5c4a1f;
 }
 
 * {
@@ -1301,12 +1326,52 @@ h4 {
   font-weight: 600;
 }
 
-.sb-notes__body {
-  min-height: 46vh;
-  font-family: var(--font-mono);
-  font-size: 13px;
-  line-height: 1.7;
-  resize: vertical;
+.sb-notes__modebar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+/* Markdown / 富文本 二选一 */
+.sb-modeswitch {
+  display: inline-flex;
+  padding: 2px;
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-sm);
+  background: var(--bg-subtle);
+}
+
+.sb-modeswitch__item {
+  padding: 4px 12px;
+  border: 0;
+  border-radius: calc(var(--radius-sm) - 1px);
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 12.5px;
+  cursor: pointer;
+  transition: background 0.12s ease, color 0.12s ease;
+}
+
+.sb-modeswitch__item:hover {
+  color: var(--text-primary);
+}
+
+.sb-modeswitch__item--on {
+  background: var(--bg-surface);
+  color: var(--color-accent-text);
+  font-weight: 600;
+  box-shadow: var(--shadow-sm);
+}
+
+/* 编辑区：高度写死，两种编辑器的滚动都在自己内部发生，页面本身不跳 */
+.sb-notes__stage {
+  height: 52vh;
+  min-height: 300px;
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-md);
+  background: var(--bg-surface);
+  overflow: hidden;
 }
 
 .sb-notes__foot {
@@ -1314,6 +1379,244 @@ h4 {
   align-items: center;
   justify-content: space-between;
   gap: 10px;
+}
+
+/* ---------------------------------------------------------------- 工具栏 */
+
+.sb-editorbar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  padding: 5px 6px;
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-md);
+  background: var(--bg-subtle);
+}
+
+.sb-editorbar__group {
+  display: inline-flex;
+  gap: 1px;
+}
+
+.sb-editorbar__group + .sb-editorbar__group {
+  padding-left: 7px;
+  border-left: 1px solid var(--border-default);
+}
+
+.sb-editorbar__btn {
+  min-width: 30px;
+  height: 28px;
+  padding: 0 6px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1;
+  cursor: pointer;
+  transition: background 0.12s ease, color 0.12s ease;
+}
+
+.sb-editorbar__btn:hover:not(:disabled) {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+.sb-editorbar__btn--on {
+  background: var(--color-accent-soft);
+  color: var(--color-accent-text);
+}
+
+/* 禁用态用「很淡 + 斜线提示」而不是直接消失：
+   位置不变，用户不会觉得工具栏在跳，也能看出是模式不支持而不是坏了 */
+.sb-editorbar__btn:disabled {
+  opacity: 0.28;
+  cursor: not-allowed;
+}
+
+.sb-editorbar__btn:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: -2px;
+}
+
+/* ---------------------------------------------------- Markdown 编辑器 */
+
+.sb-md {
+  height: 100%;
+}
+
+.sb-md .cm-editor {
+  height: 100%;
+  background: transparent;
+  color: var(--text-primary);
+}
+
+.sb-md .cm-editor.cm-focused {
+  outline: none;
+}
+
+.sb-md .cm-scroller {
+  font-family: var(--font-mono);
+}
+
+.sb-md .cm-gutters {
+  border-right: 1px solid var(--border-default);
+  background: var(--bg-subtle);
+  color: var(--text-tertiary);
+  font-size: 11px;
+}
+
+.sb-md .cm-activeLine {
+  background: var(--bg-hover);
+}
+
+.sb-md .cm-activeLineGutter {
+  background: var(--bg-hover);
+}
+
+.sb-md .cm-selectionBackground,
+.sb-md .cm-content ::selection {
+  background: var(--color-accent-soft) !important;
+}
+
+.sb-md .cm-cursor {
+  border-left-color: var(--color-accent);
+}
+
+/* ------------------------------------------------------ 富文本编辑器 */
+
+.sb-rt {
+  height: 100%;
+  overflow: auto;
+}
+
+.sb-rt__body {
+  min-height: 100%;
+  padding: 16px 20px;
+  outline: none;
+  font-size: 14px;
+  line-height: 1.8;
+  color: var(--text-primary);
+}
+
+/* TipTap 没有内置占位符，但「空的时候显示一句话」用纯 CSS 就够，
+   不必为它再引一个 extension-placeholder 包 */
+.sb-rt-placeholder .sb-rt__body::before {
+  content: attr(data-placeholder);
+  float: left;
+  height: 0;
+  color: var(--text-tertiary);
+  pointer-events: none;
+}
+
+.sb-rt__body > * + * {
+  margin-top: 0.7em;
+}
+
+.sb-rt__body h1,
+.sb-rt__body h2,
+.sb-rt__body h3 {
+  line-height: 1.4;
+  color: var(--text-primary);
+}
+
+.sb-rt__body h1 {
+  margin-top: 1.1em;
+  font-size: 1.5em;
+}
+
+.sb-rt__body h2 {
+  margin-top: 1em;
+  font-size: 1.3em;
+}
+
+.sb-rt__body h3 {
+  margin-top: 0.9em;
+  font-size: 1.12em;
+}
+
+.sb-rt__body ul,
+.sb-rt__body ol {
+  padding-left: 1.5em;
+}
+
+.sb-rt__body blockquote {
+  margin: 0;
+  padding: 2px 0 2px 12px;
+  border-left: 3px solid var(--border-strong);
+  color: var(--text-secondary);
+}
+
+.sb-rt__body code {
+  padding: 1px 4px;
+  border-radius: 3px;
+  background: var(--md-code-bg);
+  color: var(--md-code);
+  font-family: var(--font-mono);
+  font-size: 0.9em;
+}
+
+.sb-rt__body pre {
+  padding: 12px 14px;
+  border-radius: var(--radius-sm);
+  background: var(--md-code-bg);
+  overflow: auto;
+}
+
+.sb-rt__body pre code {
+  padding: 0;
+  background: transparent;
+  color: var(--text-primary);
+}
+
+.sb-rt__body mark {
+  padding: 1px 2px;
+  border-radius: 2px;
+  background: var(--md-mark);
+  color: inherit;
+}
+
+.sb-rt__body a {
+  color: var(--md-link);
+  text-decoration: underline;
+}
+
+.sb-rt__body hr {
+  border: 0;
+  border-top: 1px solid var(--border-default);
+}
+
+/* 表格：Word 的主要功能之一，边框得看得清 */
+.sb-rt__body table {
+  width: 100%;
+  border-collapse: collapse;
+  table-layout: fixed;
+}
+
+.sb-rt__body th,
+.sb-rt__body td {
+  position: relative;
+  padding: 6px 9px;
+  border: 1px solid var(--border-strong);
+  vertical-align: top;
+  text-align: left;
+}
+
+.sb-rt__body th {
+  background: var(--bg-subtle);
+  font-weight: 600;
+}
+
+/* 光标落在表格里时，给当前单元格一点提示，否则很难看出选中了哪一格 */
+.sb-rt__body .selectedCell::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: var(--color-accent-soft);
+  opacity: 0.55;
+  pointer-events: none;
 }
 
 /* ---------------------------------------------------------------- 确认框 */

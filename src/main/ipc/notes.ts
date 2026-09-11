@@ -31,6 +31,8 @@ export function registerNotesHandlers(): void {
     return context().notes.rename(input.id, String(input.title ?? ''))
   })
 
+  handle<unknown, string>(CHANNELS.NOTES_BACKUP, (id) => context().notes.backup(id))
+
   handle<unknown, null>(CHANNELS.NOTES_DELETE, (id) => {
     const noteId = String(id ?? '')
     const ctx = context()

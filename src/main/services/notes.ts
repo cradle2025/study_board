@@ -1,14 +1,17 @@
 import {
+  closeSync,
+  copyFileSync,
   existsSync,
   mkdirSync,
+  openSync,
   readFileSync,
   readdirSync,
+  readSync,
   renameSync,
   rmSync,
   statSync,
   writeFileSync
 } from 'node:fs'
-import { openSync, readSync, closeSync } from 'node:fs'
 import { basename, extname, join, parse as parsePath } from 'node:path'
 
 import { MAX_NOTE_BYTES, MAX_NOTE_FILE_BYTES, MAX_NOTE_TITLE, NOTE_HEAD_BYTES } from '@shared/limits'
@@ -401,6 +404,32 @@ export class NotesStore {
 
     delete this.#index.notes[meta.id]
     this.#persistIndex()
+  }
+
+  /**
+   * 备份一篇笔记，返回备份文件的相对路径。
+   *
+   * 用在「切到富文本模式」这种**可能改变文件格式**的操作之前：
+   * md 表达不了的东西（合并单元格、文字颜色）在互转时会退化，
+   * 与其到时候跟用户说「抱歉丢了一点」，不如先把原文件留一份。
+   * 备份放在 .study-board/backups 里，紧挨着笔记库，用户自己也能翻到。
+   */
+  backup(id: unknown): string {
+    const meta = this.find(id)
+    if (!meta) throw new Error('笔记不存在')
+
+    const source = safeJoin(this.#dir, meta.fileName)
+    const dir = ensureDir(join(this.#dir, INDEX_DIR, 'backups'))
+    const stamp = new Date().toISOString().replace(/[:.]/g, '-')
+    const target = join(dir, `${stamp}__${basename(meta.fileName)}`)
+    try {
+      copyFileSync(source, target)
+    } catch (error) {
+      throw new Error(
+        `备份失败：${error instanceof Error ? error.message : String(error)}`
+      )
+    }
+    return `${INDEX_DIR}/backups/${basename(target)}`
   }
 
   /** 让设置页能创建目录，同时保证 .study-board 索引目录存在 */

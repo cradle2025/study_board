@@ -127,6 +127,7 @@ npm run smoke             # 冒烟测试：起真实窗口，自检主进程 / p
 npm run smoke:timetable   # 课程表端到端：写入单元格 + 图片导入 + 渲染 + 截图
 npm run smoke:portal      # 网站门户端到端：内置站点 + 图标显示 + 增删改隐藏
 npm run smoke:cards       # 课程卡片端到端：翻转 + 从课表带过课程 + 自动建笔记
+npm run smoke:notes       # 笔记编辑器端到端：双模式切换 + 工具栏 + md 往返
 npm run bench             # 性能与内存基准，报告打到 stdout 并写入 .preview/
 npm run bench:compare     # 对比两组基准报告（取中位数，并给出区间）
 npm run icon              # 重新生成应用图标（纯脚本绘制，无图像库依赖）
@@ -143,6 +144,10 @@ npm run package:mac  # 打 macOS dmg     -> release/<版本>/
 > `smoke:cards` 除了界面，还会**去磁盘上把自动创建的那篇 .md 翻出来验一遍**，
 > 并验证「外部编辑器丢进来的笔记能被认出来、外部删掉的不会留在列表里」。
 > 界面说自己存好了不算数。
+>
+> `smoke:notes` 会走一遍「Markdown 打字 → 切富文本 → 插表格 → 切回 Markdown」，
+> 断言内容完整往返，并验证 Markdown 模式下下划线按钮是禁用的、
+> 切换前确实生成了备份文件。
 
 > `smoke:portal` **不测图标抓取**——那需要真实网络，会让自检在无网环境变成随机失败。
 > 图标文件由测试自己造好写进图标目录，测的是「图标能不能显示出来」这条链路。
