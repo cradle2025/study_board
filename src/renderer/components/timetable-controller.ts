@@ -2,7 +2,8 @@ import type { TimetableCell, TimetableData } from '@shared/types'
 
 import { bridge, formatError, toast, unwrap } from '../lib/ipc'
 import { confirmAction } from '../lib/overlay'
-import { createTimetablePanel, type TimetablePanelHandle } from './timetable-panel'
+import { markLimited } from '../lib/perf'
+import { createTimetablePanel, type RenderHint, type TimetablePanelHandle } from './timetable-panel'
 
 /**
  * 课表的读写控制器。
@@ -36,16 +37,21 @@ export function createTimetableController(options: TimetableControllerOptions): 
   // 面板在下面才创建，但 apply 会被面板自己的回调用到，所以先声明后赋值
   let panel: TimetablePanelHandle
 
-  const apply = (next: TimetableData): TimetableData => {
+  const apply = (next: TimetableData, hint?: RenderHint): TimetableData => {
     data = next
-    panel.render(next)
+    panel.render(next, hint)
     options.onData?.(next)
     return next
   }
 
   async function load(): Promise<TimetableData | null> {
     try {
-      return apply(await unwrap(bridge().timetable.get()))
+      markLimited('sb:tt:load:start')
+      const snapshot = await unwrap(bridge().timetable.get())
+      markLimited('sb:tt:load:ipc-done')
+      const applied = apply(snapshot)
+      markLimited('sb:tt:load:rendered')
+      return applied
     } catch (error) {
       toast(`${prefix}加载失败：${formatError(error)}`, 'error')
       return null
@@ -57,7 +63,8 @@ export function createTimetableController(options: TimetableControllerOptions): 
 
     async onSaveCell(key: string, cell: TimetableCell | null): Promise<void> {
       try {
-        apply(await unwrap(bridge().timetable.setCell({ key, cell })))
+        // 一次只动一个格子，告诉面板走单格重绘而不是整表重建
+        apply(await unwrap(bridge().timetable.setCell({ key, cell })), { kind: 'cell', key })
         toast(cell ? '已保存' : '已清空', 'success')
       } catch (error) {
         toast(`保存失败：${formatError(error)}`, 'error')

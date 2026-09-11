@@ -63,6 +63,28 @@ function isBlankCell(cell: TimetableCell): boolean {
   )
 }
 
+/** 两个单元格内容是否完全一致——用来跳过「值没变却照样重写一遍文件」 */
+function sameCell(left: TimetableCell | undefined, right: TimetableCell): boolean {
+  if (!left) return false
+  return (
+    left.courseName === right.courseName &&
+    left.teacher === right.teacher &&
+    left.location === right.location &&
+    left.duration === right.duration &&
+    left.remark === right.remark
+  )
+}
+
+function sameRows(left: readonly PeriodRow[], right: readonly PeriodRow[]): boolean {
+  if (left.length !== right.length) return false
+  for (let i = 0; i < left.length; i += 1) {
+    const a = left[i]
+    const b = right[i]
+    if (!a || !b || a.index !== b.index || a.start !== b.start || a.end !== b.end) return false
+  }
+  return true
+}
+
 function sanitizeCell(raw: unknown): TimetableCell {
   const input = (raw ?? {}) as Record<string, unknown>
   return {
@@ -174,13 +196,19 @@ export class TimetableStore {
     renameSync(tmp, this.#file)
   }
 
-  /** 只读快照（深拷贝，避免调用方改到内部状态） */
+  /**
+   * 只读快照（深拷贝，避免调用方改到内部状态）。
+   *
+   * 这是**唯一**做深拷贝的地方：所有写方法都返回 void，
+   * 一次写操作只在这里克隆一次，不再像以前那样
+   * 「写方法克隆一份、组装响应时又克隆一份」。
+   */
   get(): TimetableContent {
     return structuredClone(this.#content)
   }
 
   /** 每节的时间设置。只有非空的时间才会被保留，避免存一堆空行 */
-  setRows(raw: unknown): TimetableContent {
+  setRows(raw: unknown): void {
     if (!Array.isArray(raw)) throw new Error('rows 必须是数组')
     const rows: PeriodRow[] = []
     for (const item of raw) {
@@ -189,35 +217,42 @@ export class TimetableStore {
       if (row.start === '' && row.end === '') continue
       rows.push(row)
     }
+    if (sameRows(this.#content.rows, rows)) return
     this.#content.rows = rows
     this.#persist()
-    return this.get()
   }
 
   /** 写入 / 清空单个单元格。传入空白单元格等价于清空 */
-  setCell(key: unknown, raw: unknown): TimetableContent {
+  setCell(key: unknown, raw: unknown): void {
     const name = String(key ?? '')
     if (!CELL_KEY_PATTERN.test(name)) throw new Error('单元格坐标不合法')
 
     if (raw === null || raw === undefined) {
+      if (!(name in this.#content.cells)) return
       delete this.#content.cells[name]
       this.#persist()
-      return this.get()
+      return
     }
 
     const cell = sanitizeCell(raw)
-    if (isBlankCell(cell)) delete this.#content.cells[name]
-    else this.#content.cells[name] = cell
+    const existing = this.#content.cells[name]
+
+    if (isBlankCell(cell)) {
+      if (!existing) return
+      delete this.#content.cells[name]
+    } else {
+      if (sameCell(existing, cell)) return
+      this.#content.cells[name] = cell
+    }
 
     this.#persist()
-    return this.get()
   }
 
   /**
    * 导入课表照片。
    * 逐张处理，单张失败不影响其它——失败原因回传给界面，用户能知道哪张为什么没进来。
    */
-  async addImages(paths: readonly string[]): Promise<{ content: TimetableContent; added: number; errors: string[] }> {
+  async addImages(paths: readonly string[]): Promise<{ added: number; errors: string[] }> {
     const errors: string[] = []
     let added = 0
 
@@ -254,13 +289,13 @@ export class TimetableStore {
     }
 
     if (added > 0) this.#persist()
-    return { content: this.get(), added, errors }
+    return { added, errors }
   }
 
-  removeImage(id: unknown): TimetableContent {
+  removeImage(id: unknown): void {
     const target = String(id ?? '')
     const index = this.#content.images.findIndex((image) => image.id === target)
-    if (index < 0) return this.get()
+    if (index < 0) return
 
     const [removed] = this.#content.images.splice(index, 1)
     this.#persist()
@@ -273,7 +308,6 @@ export class TimetableStore {
         console.error('[timetable] 删除课表图片失败：', error)
       }
     }
-    return this.get()
   }
 
   /**

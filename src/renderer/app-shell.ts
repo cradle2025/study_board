@@ -2,6 +2,7 @@ import type { AppInfo, AppSettings } from '@shared/types'
 
 import { bridge, formatError, toast, unwrap } from './lib/ipc'
 import { escapeHtml } from './lib/html'
+import { mark } from './lib/perf'
 import { applyTheme, watchSystemTheme } from './lib/theme'
 import { createHomeView } from './views/home-view'
 import { createNotesView } from './views/notes-view'
@@ -80,6 +81,7 @@ export class AppShell extends HTMLElement {
   #stage: HTMLElement | null = null
   #nav: HTMLElement | null = null
   #unwatchTheme: (() => void) | null = null
+  #unwatchSettings: (() => void) | null = null
 
   connectedCallback(): void {
     this.render()
@@ -93,7 +95,16 @@ export class AppShell extends HTMLElement {
 
   disconnectedCallback(): void {
     this.#unwatchTheme?.()
+    this.#unwatchTheme = null
+    // 订阅一定要退掉：app-shell 被反复挂载卸载时，
+    // 不退订就会在主进程侧留下一串永远不会被调用的监听器
+    this.#unwatchSettings?.()
+    this.#unwatchSettings = null
     this.#current?.dispose?.()
+    // 必须一并清掉「当前路由」的记账，否则元素被重新挂载时
+    // go() 会因为「路由没变」直接返回，舞台永远空着
+    this.#current = null
+    this.#currentRoute = null
   }
 
   private render(): void {
@@ -132,8 +143,10 @@ export class AppShell extends HTMLElement {
 
       this.renderNav()
       await this.go('home')
+      mark('sb:shell-ready')
 
-      bridge().events.onSettingsChanged((next) => {
+      // 订阅要留着句柄，元素被卸载时才能退订
+      this.#unwatchSettings = bridge().events.onSettingsChanged((next) => {
         this.#settings = next
         applyTheme(next.theme)
       })
@@ -208,6 +221,7 @@ export class AppShell extends HTMLElement {
     this.#current = view
     this.#currentRoute = route
     this.#stage.appendChild(view.element)
+    mark(`sb:view:${route}:mount`)
     this.markActive(route)
 
     try {
@@ -215,6 +229,7 @@ export class AppShell extends HTMLElement {
     } catch (error) {
       toast(`页面加载失败：${formatError(error)}`, 'error')
     }
+    mark(`sb:view:${route}:ready`)
   }
 }
 

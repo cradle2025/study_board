@@ -1,5 +1,5 @@
 /**
- * 冒烟测试：启动真实的 Electron 窗口跑一遍自检，然后自动退出。
+ * 冒烟测试 / 性能基准：启动真实的 Electron 窗口跑一遍自检，然后自动退出。
  *
  * 退出码：
  *   0  自检全部通过
@@ -8,11 +8,12 @@
  * 用法：
  *   npm run smoke            基础自检：主进程起得来、preload 注得进去、界面挂得上
  *   npm run smoke:timetable  课程表端到端：写入单元格 + 图片导入 + 渲染 + 截图
+ *   npm run bench            性能与内存基准，报告打到 stdout 并写入 .preview/
  *
- * 测试跑在系统临时目录里，不会碰你真实的学习数据。
+ * 三者都跑在系统临时目录里，不会碰你真实的学习数据。
  */
 import { spawn } from 'node:child_process'
-import { mkdirSync } from 'node:fs'
+import { mkdirSync, writeFileSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -23,33 +24,44 @@ const root = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 // electron 包的入口在普通 Node 下导出的是二进制路径
 const electronPath = require('electron')
 
-const scenario = process.argv[2] === 'timetable' ? 'timetable' : 'basic'
+const requested = process.argv[2] ?? ''
+const bench = requested === 'bench'
+const scenario = requested === 'timetable' ? 'timetable' : 'basic'
+const label = bench ? 'bench' : scenario
 
-const env = { ...process.env, STUDY_BOARD_SMOKE: '1', STUDY_BOARD_SMOKE_SCENARIO: scenario }
+const env = { ...process.env }
 // 某些环境（CI 容器、部分终端）会预设这个变量，会让 electron 退化成普通 Node
 delete env.ELECTRON_RUN_AS_NODE
 
-// 顺手截图，方便在没人盯着屏幕时确认渲染结果
-if (!env.STUDY_BOARD_SMOKE_SHOT) {
-  const shotDir = resolve(root, '.preview')
-  mkdirSync(shotDir, { recursive: true })
-  env.STUDY_BOARD_SMOKE_SHOT = resolve(shotDir, 'screenshot.png')
+const previewDir = resolve(root, '.preview')
+mkdirSync(previewDir, { recursive: true })
+
+if (bench) {
+  env.STUDY_BOARD_BENCH = '1'
+  env.STUDY_BOARD_BENCH_OUT = process.env.STUDY_BOARD_BENCH_OUT ?? resolve(previewDir, 'bench.json')
+} else {
+  env.STUDY_BOARD_SMOKE = '1'
+  env.STUDY_BOARD_SMOKE_SCENARIO = scenario
+  // 顺手截图，方便在没人盯着屏幕时确认渲染结果
+  if (!env.STUDY_BOARD_SMOKE_SHOT) {
+    env.STUDY_BOARD_SMOKE_SHOT = resolve(previewDir, 'screenshot.png')
+  }
 }
 
-const TIMEOUT_MS = 90_000
+const TIMEOUT_MS = bench ? 150_000 : 90_000
 
-console.log(`[smoke] 场景：${scenario}`)
+console.log(`[${label}] 启动 Electron…`)
 const child = spawn(electronPath, ['.'], { stdio: 'inherit', env })
 
 const timer = setTimeout(() => {
-  console.error(`[smoke] 超过 ${TIMEOUT_MS / 1000} 秒未完成，强制结束`)
+  console.error(`[${label}] 超过 ${TIMEOUT_MS / 1000} 秒未完成，强制结束`)
   child.kill()
   process.exit(1)
 }, TIMEOUT_MS)
 
 child.on('error', (error) => {
   clearTimeout(timer)
-  console.error('[smoke] 无法启动 Electron：', error.message)
+  console.error(`[${label}] 无法启动 Electron：`, error.message)
   console.error('提示：如果 electron 二进制没下载成功，试试设置镜像后重装：')
   console.error('  ELECTRON_MIRROR=https://npmmirror.com/mirrors/electron/ npm rebuild electron')
   process.exit(1)
@@ -58,8 +70,16 @@ child.on('error', (error) => {
 child.on('exit', (code, signal) => {
   clearTimeout(timer)
   if (signal) {
-    console.error(`[smoke] 被信号 ${signal} 终止`)
+    console.error(`[${label}] 被信号 ${signal} 终止`)
     process.exit(1)
+  }
+  if (bench) {
+    // 报告由主进程自己写盘，这里只负责把结果路径说清楚
+    const out = env.STUDY_BOARD_BENCH_OUT
+    const summary = { scenario: label, exitCode: code ?? 1, report: out }
+    writeFileSync(resolve(previewDir, 'bench-last-run.json'), `${JSON.stringify(summary, null, 2)}\n`)
+    console.log(code === 0 ? `[${label}] 完成，报告：${out}` : `[${label}] 失败，退出码 ${code}`)
+    process.exit(code ?? 1)
   }
   console.log(code === 0 ? `[smoke] 通过（${scenario}）` : `[smoke] 失败（${scenario}），退出码 ${code}`)
   process.exit(code ?? 1)

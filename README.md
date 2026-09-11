@@ -125,15 +125,21 @@ npm run build        # 构建到 out/
 
 npm run smoke             # 冒烟测试：起真实窗口，自检主进程 / preload / 界面
 npm run smoke:timetable   # 课程表端到端：写入单元格 + 图片导入 + 渲染 + 截图
+npm run bench             # 性能与内存基准，报告打到 stdout 并写入 .preview/
+npm run bench:compare     # 对比两组基准报告（取中位数，并给出区间）
 npm run icon              # 重新生成应用图标（纯脚本绘制，无图像库依赖）
 
 npm run package:win  # 打 Windows 安装包 -> release/<版本>/
 npm run package:mac  # 打 macOS dmg     -> release/<版本>/
 ```
 
-两个冒烟测试都会把数据写到**系统临时目录**里，不会碰到你真实的学习数据。
+冒烟测试与基准都会把数据写到**系统临时目录**里，不会碰到你真实的学习数据。
 `npm run smoke:timetable` 会往 `.preview/` 里留两张截图（表格模式 / 图片模式），
 在 CI 或没人盯着屏幕时也能确认渲染结果。
+
+改动渲染路径或存储层之后，建议跑一次 `npm run bench` 确认没有退化。
+测量方法、本次优化的实测数据、以及「试过但决定不做」的项，
+都记在 [docs/PERFORMANCE.md](./docs/PERFORMANCE.md)。
 
 ### 自动发布
 
@@ -176,7 +182,8 @@ src/
 └── renderer/     界面层：原生 TypeScript + Web Components，零框架
 ```
 
-设计取舍与理由见 [docs/ARCHITECTURE.md](./docs/ARCHITECTURE.md)。
+设计取舍与理由见 [docs/ARCHITECTURE.md](./docs/ARCHITECTURE.md)，
+性能与内存的测量方法和实测数据见 [docs/PERFORMANCE.md](./docs/PERFORMANCE.md)。
 
 ---
 

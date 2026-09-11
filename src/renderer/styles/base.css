@@ -477,7 +477,10 @@ h4 {
 .sb-timetable--editable .sb-timetable__cell,
 .sb-timetable__cell[role='button'] {
   cursor: pointer;
-  transition: background 0.12s ease, box-shadow 0.12s ease;
+  /* 只过渡真正会变的 background。
+     把 box-shadow 也列进来毫无意义（悬停时它根本不变），
+     却让 77~140 个格子各自多背一条过渡声明 */
+  transition: background 0.12s ease;
 }
 
 .sb-timetable__cell[role='button']:hover {
@@ -701,6 +704,9 @@ h4 {
 .sb-ttshot__view img {
   display: block;
   width: 100%;
+  /* 必须显式 height:auto：否则 HTML 上的 height 属性会当成长度提示生效，
+     图片被拉成原始像素高。加上它之后，宽高属性才用于「提前占位」这一件事 */
+  height: auto;
   max-height: 68vh;
   object-fit: contain;
   border-radius: var(--radius-sm);

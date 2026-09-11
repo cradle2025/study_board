@@ -25,21 +25,28 @@ import { encodePng } from './services/png'
 
 export type SmokeScenario = 'basic' | 'timetable'
 
+export function smokeEnabled(): boolean {
+  return process.env['STUDY_BOARD_SMOKE'] === '1'
+}
+
 export function smokeScenario(): SmokeScenario {
   return process.env['STUDY_BOARD_SMOKE_SCENARIO'] === 'timetable' ? 'timetable' : 'basic'
 }
 
-/** 必须在 app ready 之前调用：把数据目录挪到临时目录 */
-export function prepareSmokeEnvironment(): void {
-  if (process.env['STUDY_BOARD_SMOKE'] !== '1') return
-  const dir = mkdtempSync(join(tmpdir(), 'study-board-smoke-'))
+/**
+ * 只要处于任何自动化运行模式（冒烟或基准），就把数据目录挪到临时目录。
+ * 必须在 app ready 之前调用。
+ */
+export function prepareIsolatedDataDir(): void {
+  if (!smokeEnabled() && process.env['STUDY_BOARD_BENCH'] !== '1') return
+  const dir = mkdtempSync(join(tmpdir(), 'study-board-run-'))
   setUserDataOverride(dir)
   try {
     app.setPath('userData', dir)
   } catch {
     /* 个别平台不允许覆盖，忽略即可——我们自己的数据已经隔离了 */
   }
-  console.info(`[smoke] 使用临时数据目录：${dir}`)
+  console.info(`[自动化] 使用临时数据目录：${dir}`)
 }
 
 /* ------------------------------------------------------------------ 造测试数据 */
@@ -158,6 +165,30 @@ const TIMETABLE_PROBE = `(async () => {
   const hasTime = document.body.textContent.includes('08:00')
   const activeNav = document.querySelector('[data-route][aria-current="page"]')?.getAttribute('data-route') ?? 'none'
 
+  // 走一遍「双击 → 填值 → 保存」，确认单格增量重绘这条路径真的把内容画出来了。
+  // 整表重绘与单格重绘是两条代码路径，只测其中一条等于没测。
+  const targetKey = '5:3'
+  const target = document.querySelector('.sb-timetable__cell[data-key="' + targetKey + '"]')
+  if (target) {
+    target.dispatchEvent(new MouseEvent('dblclick', { bubbles: true, cancelable: true }))
+  }
+  const nameInput = document.querySelector('.sb-tt-editor [data-field="courseName"]')
+  const teacherInput = document.querySelector('.sb-tt-editor [data-field="teacher"]')
+  const saveButton = document.querySelector('.sb-tt-editor [data-role="save"]')
+  if (nameInput && teacherInput && saveButton) {
+    nameInput.value = '编译原理'
+    teacherInput.value = '周芷若'
+    saveButton.click()
+  }
+
+  const painted = await waitFor('.sb-timetable__cell[data-key="' + targetKey + '"] .sb-ttcell__name')
+  const paintedText = painted ? painted.textContent : ''
+  const paintedMeta = document.querySelector(
+    '.sb-timetable__cell[data-key="' + targetKey + '"] .sb-ttcell__meta'
+  )
+  const editOk = paintedText === '编译原理' && Boolean(paintedMeta && paintedMeta.textContent.includes('周芷若'))
+  const filledAfterEdit = document.querySelectorAll('.sb-ttcell__name').length
+
   // 切到图片模式，确认自定义协议与 CSP 都放行（naturalWidth 只有真的加载成功才不为 0）
   const imageRadio = document.querySelector('input[name="tt-mode"][value="image"]')
   if (imageRadio) {
@@ -175,20 +206,30 @@ const TIMETABLE_PROBE = `(async () => {
   }
   const imageWidth = shot ? shot.naturalWidth : 0
   const shots = document.querySelectorAll('.sb-ttshot').length
+  // 照片必须被约束在视口内（CSS 里是 max-height: 68vh）。
+  // 只看 naturalWidth 是看不出布局问题的——图片解码成功但被拉成原始像素高，
+  // 一样会把整页撑爆，所以这里连渲染尺寸一起断言。
+  const shotHeight = shot ? shot.getBoundingClientRect().height : 0
+  const imageFits = shotHeight > 0 && shotHeight <= window.innerHeight * 0.7
 
   return JSON.stringify({
     cells, filled, hasCourse, hasTime, shots, imageWidth, activeNav,
+    paintedText, filledAfterEdit, shotHeight: Math.round(shotHeight),
     cellsOk: cells === 11 * 7,
     filledOk: filled === 3,
     navOk: activeNav === 'timetable',
-    imageOk: imageWidth > 0
+    editOk,
+    // 保存一格之后，填过的格子数应该只增加 1，而不是整表被重画成别的样子
+    filledAfterEditOk: filledAfterEdit === 4,
+    imageOk: imageWidth > 0,
+    imageFitsOk: imageFits
   })
 })()`
 
 /* ------------------------------------------------------------------ 主流程 */
 
 export function runSmokeTestIfRequested(win: BrowserWindow): void {
-  if (process.env['STUDY_BOARD_SMOKE'] !== '1') return
+  if (!smokeEnabled()) return
 
   const scenario = smokeScenario()
   const probe = scenario === 'timetable' ? TIMETABLE_PROBE : BASIC_PROBE
@@ -238,7 +279,10 @@ export function runSmokeTestIfRequested(win: BrowserWindow): void {
                   parsed['cellsOk'] &&
                   parsed['filledOk'] &&
                   parsed['hasTime'] &&
-                  parsed['imageOk']
+                  parsed['editOk'] &&
+                  parsed['filledAfterEditOk'] &&
+                  parsed['imageOk'] &&
+                  parsed['imageFitsOk']
               )
             : Boolean(parsed['customElement'] && parsed['mounted'] && parsed['bridge'])
 
@@ -276,7 +320,7 @@ export function runSmokeTestIfRequested(win: BrowserWindow): void {
  * 数据准备。必须在窗口创建之前 await 完成，否则渲染层可能在数据写入前就读完了。
  */
 export async function prepareSmokeDataIfRequested(): Promise<void> {
-  if (process.env['STUDY_BOARD_SMOKE'] !== '1') return
+  if (!smokeEnabled()) return
   if (smokeScenario() !== 'timetable') return
   await seedTimetable()
 }

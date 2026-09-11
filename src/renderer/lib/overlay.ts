@@ -23,6 +23,24 @@ function ensureLayer(): HTMLElement {
   return host
 }
 
+/**
+ * 浮层容器按需创建、空了就摘掉。
+ *
+ * 常驻一个 `position: fixed; inset: 0` 的覆盖层，Chromium 会一直为它保留
+ * 一个全屏层，白白占着内存和一次合成。用完了就该还回去。
+ *
+ * 清理走微任务而不是同步执行：像「关掉悬停预览、紧接着打开编辑弹层」这种
+ * 一关一开的连招，同步清理会把容器拆了又建，多一次无谓的 DOM 增删。
+ */
+function scheduleLayerCleanup(): void {
+  queueMicrotask(() => {
+    if (layer && layer.childElementCount === 0) {
+      layer.remove()
+      layer = null
+    }
+  })
+}
+
 /** 把浮层定位到锚点元素旁边，自动避让视口边缘 */
 function place(element: HTMLElement, anchor: DOMRect, gap = 6): void {
   const rect = element.getBoundingClientRect()
@@ -78,6 +96,7 @@ export function showFloating(options: FloatingOptions): FloatingHandle {
     document.removeEventListener('keydown', onKeyDown, true)
     window.removeEventListener('resize', reposition)
     window.removeEventListener('scroll', reposition, true)
+    scheduleLayerCleanup()
     options.onClose?.()
   }
 
@@ -164,6 +183,7 @@ export function confirmAction(options: ConfirmOptions): Promise<boolean> {
       settled = true
       document.removeEventListener('keydown', onKeyDown, true)
       backdrop.remove()
+      scheduleLayerCleanup()
       resolve(value)
     }
 
@@ -231,6 +251,7 @@ export function openLightbox(images: readonly LightboxImage[], startIndex = 0): 
   const close = (): void => {
     document.removeEventListener('keydown', onKeyDown, true)
     overlay.remove()
+    scheduleLayerCleanup()
   }
 
   function onKeyDown(event: KeyboardEvent): void {

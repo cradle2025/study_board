@@ -3,6 +3,7 @@ import type { CourseImage, TimetableCell, TimetableData } from '@shared/types'
 
 import { escapeHtml } from '../lib/html'
 import { openLightbox, showFloating } from '../lib/overlay'
+import { markLimited } from '../lib/perf'
 
 /**
  * 课程表面板：表格模式与图片模式的统一渲染器。
@@ -34,11 +35,24 @@ export interface TimetablePanelOptions {
 
 export interface TimetablePanelHandle {
   element: HTMLElement
-  render(data: TimetableData): void
+  /**
+   * 重绘。
+   *
+   * `hint` 用于告诉面板「这次只有这一个格子变了」——此时只重画那一个 `<td>`，
+   * 不重建整张表。保存单元格是最高频的写操作，走这条路径能省掉
+   * 整表 77~140 个节点的销毁与重建。
+   * 结构变化（换模式、改节数）或任何不确定的情况都穿 full 路径，保证正确性。
+   */
+  render(data: TimetableData, hint?: RenderHint): void
   /** 供单元测试 / 冒烟测试打点 */
   isEmpty(): boolean
   /** 解绑全局事件，路由切走时必须调用 */
   dispose(): void
+}
+
+export interface RenderHint {
+  kind: 'cell'
+  key: string
 }
 
 export function assetUrl(bucket: string, fileName: string): string {
@@ -78,6 +92,27 @@ function describeKey(key: string, weekdays: readonly string[]): string {
   return `第 ${period} 节 · ${weekday}`
 }
 
+function cellLabel(key: string, content: TimetableCell | undefined, weekdays: readonly string[]): string {
+  const summary = cellSummary(content)
+  const what = isBlank(content) ? '空，双击添加课程' : summary.name || '未命名课程'
+  return `${describeKey(key, weekdays)}：${what}`
+}
+
+/**
+ * 单元格内容。
+ *
+ * 整表渲染与单格重绘都调它——只有一份模板，就不会出现
+ * 「整表刷新和局部刷新长得不一样」这种迟早会发生的偏差。
+ */
+function cellInnerHtml(content: TimetableCell | undefined): string {
+  if (isBlank(content)) {
+    return '<span class="sb-timetable__add" aria-hidden="true">＋</span>'
+  }
+  const summary = cellSummary(content)
+  const meta = summary.meta ? `<span class="sb-ttcell__meta">${escapeHtml(summary.meta)}</span>` : ''
+  return `<span class="sb-ttcell__name">${escapeHtml(summary.name || '未命名课程')}</span>${meta}`
+}
+
 export function createTimetablePanel(options: TimetablePanelOptions): TimetablePanelHandle {
   const element = document.createElement('div')
   element.className = 'sb-ttpanel'
@@ -111,12 +146,15 @@ export function createTimetablePanel(options: TimetablePanelOptions): TimetableP
     if (isBlank(content) || !content) return
 
     cancelHover()
-    const rect = cell.getBoundingClientRect()
     hoverTimer = window.setTimeout(() => {
+      hoverTimer = 0
+      // 位置留到真正要显示时才测：鼠标扫过一排空格子时不会每次都触发
+      // 一次强制布局，拿到的手也永远是最新的（滚动中不会偏）
+      if (!cell.isConnected) return
       closeHover?.()
       const handle = showFloating({
         className: 'sb-tt-preview',
-        anchor: rect,
+        anchor: cell.getBoundingClientRect(),
         closeOnOutsideClick: false,
         closeOnEscape: false
       })
@@ -307,30 +345,40 @@ export function createTimetablePanel(options: TimetablePanelOptions): TimetableP
       for (let column = 1; column < weekdays.length; column += 1) {
         const key = `${period}:${column - 1}`
         const content = current.cells[key]
-        const blank = isBlank(content)
-        const summary = cellSummary(content)
-        const label = `${describeKey(key, weekdays)}：${blank ? '空，双击添加课程' : summary.name}`
         cells.push(
-          `<td class="sb-timetable__cell${blank ? ' sb-timetable__cell--empty' : ''}"
+          `<td class="sb-timetable__cell${isBlank(content) ? ' sb-timetable__cell--empty' : ''}"
                data-key="${key}"
                tabindex="${options.editable ? '0' : '-1'}"
                ${options.editable ? 'role="button"' : ''}
-               aria-label="${escapeHtml(label)}">${
-                 blank
-                   ? '<span class="sb-timetable__add" aria-hidden="true">＋</span>'
-                   : `<span class="sb-ttcell__name">${escapeHtml(summary.name || '未命名课程')}</span>${
-                       summary.meta ? `<span class="sb-ttcell__meta">${escapeHtml(summary.meta)}</span>` : ''
-                     }`
-               }</td>`
+               aria-label="${escapeHtml(cellLabel(key, content, weekdays))}">${cellInnerHtml(content)}</td>`
         )
       }
       bodyRows.push(`<tr>${cells.join('')}</tr>`)
     }
 
+    markLimited('sb:tt:render:build')
     body.innerHTML = `<div class="sb-ttpanel__scroll"><table class="sb-timetable">
       <thead><tr>${head}</tr></thead>
       <tbody>${bodyRows.join('')}</tbody>
     </table></div>`
+    markLimited('sb:tt:render:dom')
+  }
+
+  /**
+   * 只重画一个格子。
+   * 找不到对应的 `<td>`（例如表结构刚好变了）就返回 false，
+   * 交给调用方退回整表渲染——宁可多画一次，也不能画错。
+   */
+  function paintCell(key: string, current: TimetableData): boolean {
+    const cell = body.querySelector<HTMLTableCellElement>(`td.sb-timetable__cell[data-key="${key}"]`)
+    if (!cell) return false
+
+    const content = current.cells[key]
+    cell.classList.toggle('sb-timetable__cell--empty', isBlank(content))
+    cell.setAttribute('aria-label', cellLabel(key, content, current.weekdays))
+    cell.innerHTML = cellInnerHtml(content)
+    markLimited('sb:tt:render:cell')
+    return true
   }
 
   /* ------------------------------------------------------------ 图片渲染 */
@@ -359,11 +407,17 @@ export function createTimetablePanel(options: TimetablePanelOptions): TimetableP
     const dimensions = image.width > 0 ? `${image.width}×${image.height}` : ''
     const size = formatBytes(image.bytes)
     const meta = [dimensions, size].filter(Boolean).join(' · ')
+    // 带上真实宽高：浏览器能在图片解码完成前就把位置留出来，
+    // 避免图片加载完成后整块区域跳一下，也少一次布局重算
+    const intrinsic =
+      image.width > 0 && image.height > 0
+        ? ` width="${image.width}" height="${image.height}"`
+        : ''
 
     return `
       <figure class="sb-ttshot" data-id="${escapeHtml(image.id)}">
         <button class="sb-ttshot__view" type="button" data-role="view" aria-label="查看第 ${index + 1} 张课表照片">
-          <img src="${escapeHtml(assetUrl('timetable', image.fileName))}" alt="${escapeHtml(image.sourceName)}" loading="lazy" decoding="async" />
+          <img src="${escapeHtml(assetUrl('timetable', image.fileName))}" alt="${escapeHtml(image.sourceName)}"${intrinsic} loading="lazy" decoding="async" />
         </button>
         <figcaption class="sb-ttshot__caption">
           <span class="sb-ttshot__name" title="${escapeHtml(image.sourceName)}">${escapeHtml(image.sourceName)}</span>
@@ -466,7 +520,21 @@ export function createTimetablePanel(options: TimetablePanelOptions): TimetableP
 
   return {
     element,
-    render(next: TimetableData) {
+    render(next: TimetableData, hint?: RenderHint) {
+      // 单格重绘的前提：表结构没变，而且目标格子确实还在
+      if (
+        hint?.kind === 'cell' &&
+        next.mode === 'table' &&
+        data?.mode === 'table' &&
+        data.periodCount === next.periodCount &&
+        data.weekdays.length === next.weekdays.length &&
+        paintCell(hint.key, next)
+      ) {
+        data = next
+        hideHover()
+        return
+      }
+
       data = next
       hideHover()
       closeEditor?.()

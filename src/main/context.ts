@@ -36,8 +36,6 @@ export function initContext(): AppContext {
   const snapshot = settings.get()
 
   const timetable = new TimetableStore(timetableFile(snapshot.portableMode), timetableImagesDir(snapshot.portableMode))
-  const swept = timetable.sweepOrphans()
-  if (swept > 0) console.info(`[timetable] 清理了 ${swept} 个无主的课表图片`)
 
   current = {
     settings,
@@ -45,6 +43,18 @@ export function initContext(): AppContext {
     timetable
   }
   return current
+}
+
+/**
+ * 清理「有文件但没记录」的孤儿课表图片。
+ *
+ * 刻意**不放在启动路径上**：它是纯清理工作，不影响首屏能否显示，
+ * 却要在课表图片目录里做一次目录遍历。放到窗口显示之后再跑，
+ * 启动阶段就只做「读出必要数据」这一件事。
+ */
+export function sweepTimetableOrphans(): void {
+  const swept = context().timetable.sweepOrphans()
+  if (swept > 0) console.info(`[timetable] 清理了 ${swept} 个无主的课表图片`)
 }
 
 export function context(): AppContext {
