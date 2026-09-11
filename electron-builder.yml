@@ -12,7 +12,8 @@ files:
   - '!**/*.{map,md,ts}'
   - '!**/{.eslintrc,.editorconfig,.gitignore,.github}'
 
-# 依赖不打包进 asar，但运行时不需要任何原生模块（sql.js / libheif-js 均为纯 JS/WASM）
+# 运行时不需要任何原生模块（.node）：生产依赖全是纯 JS / WASM，
+# 所以两个平台共用一套产物，不需要 electron-rebuild，也不会有 ABI 不匹配
 asar: true
 asarUnpack:
   - resources/**
