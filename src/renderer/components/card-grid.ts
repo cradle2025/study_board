@@ -34,41 +34,45 @@ export interface CardGridHandle {
   dispose(): void
 }
 
-/** 难度 / 掌握程度：0 表示没填，用圆点直观显示等级 */
-function levelHtml(label: string, value: number): string {
+/**
+ * 难度 / 掌握程度：0 表示没填。
+ *
+ * 用「标签在上、圆点在下」的小块，而不是把标签和值甩到左右两端——
+ * 后者在两个评分并排时会拉出一大片空白，看着又挤又散。
+ */
+function ratingHtml(label: string, value: number): string {
   const dots: string[] = []
   for (let i = 1; i <= MAX_CARD_LEVEL; i += 1) {
-    dots.push(`<span class="sb-card__dot${i <= value ? ' sb-card__dot--on' : ''}"></span>`)
+    dots.push(`<span class="sb-course__dot${i <= value ? ' sb-course__dot--on' : ''}"></span>`)
   }
   const text = value > 0 ? `${value} / ${MAX_CARD_LEVEL}` : '未填'
   return `
-    <div class="sb-card__level">
-      <span class="sb-card__level-label">${escapeHtml(label)}</span>
-      <span class="sb-card__dots" title="${escapeHtml(text)}">${dots.join('')}</span>
-    </div>
-  `
-}
-
-function metaLine(label: string, value: string): string {
-  const shown = value.trim().length > 0 ? value : '—'
-  const dim = value.trim().length > 0 ? '' : ' sb-card__value--empty'
-  return `
-    <div class="sb-card__meta-row">
-      <span class="sb-card__meta-label">${escapeHtml(label)}</span>
-      <span class="sb-card__value${dim}">${escapeHtml(shown)}</span>
+    <div class="sb-course__rating">
+      <span class="sb-course__rating-label">${escapeHtml(label)}</span>
+      <span class="sb-course__dots" title="${escapeHtml(`${label}：${text}`)}">${dots.join('')}</span>
     </div>
   `
 }
 
 function frontHtml(card: CourseCard): string {
+  // 打分是「结果」，做成右上角的徽章；没填就整个不渲染，不留一个空占位
+  const score = card.score.trim()
+  const badge = score.length > 0
+    ? `<span class="sb-course__score" title="打分：${escapeHtml(score)}">${escapeHtml(score)}</span>`
+    : ''
+
   return `
-    <div class="sb-card__face sb-card__face--front">
-      <div class="sb-card__name">${escapeHtml(card.courseName)}</div>
-      <div class="sb-card__teacher">${escapeHtml(card.teacher || '未填老师')}</div>
-      <div class="sb-card__meta">
-        ${metaLine('打分', card.score)}
-        ${levelHtml('难度', card.difficulty)}
-        ${levelHtml('掌握', card.mastery)}
+    <div class="sb-itemcard__face sb-itemcard__face--front">
+      <div class="sb-course__top">
+        <div class="sb-course__id">
+          <div class="sb-course__name" title="${escapeHtml(card.courseName)}">${escapeHtml(card.courseName)}</div>
+          ${card.teacher ? `<div class="sb-course__teacher">${escapeHtml(card.teacher)}</div>` : ''}
+        </div>
+        ${badge}
+      </div>
+      <div class="sb-course__ratings">
+        ${ratingHtml('难度', card.difficulty)}
+        ${ratingHtml('掌握', card.mastery)}
       </div>
     </div>
   `
@@ -78,30 +82,26 @@ function backHtml(card: CourseCard): string {
   const hasContent = card.gradingPolicy.length > 0 || card.outline.length > 0
   if (!hasContent) {
     return `
-      <div class="sb-card__face sb-card__face--back">
-        <div class="sb-card__back-title">背面还空着</div>
-        <p class="sb-card__back-empty">双击卡片，补上「给分标准」和「课程大致结构」。</p>
+      <div class="sb-itemcard__face sb-itemcard__face--back">
+        <div class="sb-course__empty">
+          <div class="sb-course__empty-title">背面还空着</div>
+          <p class="sb-course__empty-hint">双击卡片，补上「给分标准」和「课程大致结构」。</p>
+        </div>
       </div>
     `
   }
+
+  const block = (title: string, body: string): string => `
+    <div class="sb-course__block">
+      <div class="sb-course__block-title">${escapeHtml(title)}</div>
+      <p class="sb-course__block-body">${escapeHtml(body)}</p>
+    </div>
+  `
+
   const parts: string[] = []
-  if (card.gradingPolicy.length > 0) {
-    parts.push(`
-      <div class="sb-card__block">
-        <div class="sb-card__block-title">给分标准</div>
-        <p class="sb-card__block-body">${escapeHtml(card.gradingPolicy)}</p>
-      </div>
-    `)
-  }
-  if (card.outline.length > 0) {
-    parts.push(`
-      <div class="sb-card__block">
-        <div class="sb-card__block-title">课程结构</div>
-        <p class="sb-card__block-body">${escapeHtml(card.outline)}</p>
-      </div>
-    `)
-  }
-  return `<div class="sb-card__face sb-card__face--back">${parts.join('')}</div>`
+  if (card.gradingPolicy.length > 0) parts.push(block('给分标准', card.gradingPolicy))
+  if (card.outline.length > 0) parts.push(block('课程结构', card.outline))
+  return `<div class="sb-itemcard__face sb-itemcard__face--back">${parts.join('')}</div>`
 }
 
 function cardHtml(card: CourseCard, editable: boolean): string {
@@ -116,15 +116,15 @@ function cardHtml(card: CourseCard, editable: boolean): string {
         </div>
       </div>
       <div class="sb-itemcard__foot">
-        <button class="sb-btn sb-btn--ghost sb-itemcard__note" type="button" data-act="note"
+        <button class="sb-itemcard__note" type="button" data-act="note"
                 title="${linked ? '打开这门课的笔记' : '这门课还没有笔记，去笔记页新建一篇'}">
           记笔记
         </button>
         ${
           editable
             ? `<span class="sb-itemcard__actions">
-                 <button class="sb-portal__action" type="button" data-act="edit" title="修改" aria-label="修改 ${escapeHtml(card.courseName)}">✎</button>
-                 <button class="sb-portal__action sb-portal__action--danger" type="button" data-act="remove" title="删除卡片" aria-label="删除 ${escapeHtml(card.courseName)}">✕</button>
+                 <button class="sb-iconbtn" type="button" data-act="edit" title="修改" aria-label="修改 ${escapeHtml(card.courseName)}">✎</button>
+                 <button class="sb-iconbtn sb-iconbtn--danger" type="button" data-act="remove" title="删除卡片" aria-label="删除 ${escapeHtml(card.courseName)}">✕</button>
                </span>`
             : ''
         }

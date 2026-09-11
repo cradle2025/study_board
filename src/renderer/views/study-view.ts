@@ -38,7 +38,7 @@ const FORM_HTML = `
     <select class="sb-select" id="card-picker" data-field="picker"></select>
   </div>
 
-  <div class="sb-card__form-pair">
+  <div class="sb-form-pair">
     <div class="sb-field">
       <label for="card-name">课程名称</label>
       <input class="sb-input" id="card-name" data-field="courseName" type="text" maxlength="60" />
@@ -49,17 +49,17 @@ const FORM_HTML = `
     </div>
   </div>
 
-  <div class="sb-card__form-pair">
+  <div class="sb-form-pair">
     <div class="sb-field">
       <label for="card-score">打分</label>
       <input class="sb-input" id="card-score" data-field="score" type="text" maxlength="60" placeholder="95 / A / 优秀" />
     </div>
     <div class="sb-field">
-      <label for="card-difficulty">难度（0–5）</label>
+      <label for="card-difficulty">难度</label>
       <select class="sb-select" id="card-difficulty" data-field="difficulty"></select>
     </div>
     <div class="sb-field">
-      <label for="card-mastery">掌握程度（0–5）</label>
+      <label for="card-mastery">掌握程度</label>
       <select class="sb-select" id="card-mastery" data-field="mastery"></select>
     </div>
   </div>

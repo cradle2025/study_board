@@ -20,6 +20,10 @@
   --color-accent: #3b6ef0;
   --color-accent-hover: #2f5cd6;
   --color-accent-soft: #e8eeff;
+  /* 用在「柔和色底 + 强调色文字」这种组合上的文字色。
+     主色 #3b6ef0 直接当文字时，浅色底上约 3.9:1、深色底上只有 2.8:1，
+     都够不到正文 4.5:1 的可读下限——所以这一档单独给一个值 */
+  --color-accent-text: #2f5cd6;
 
   --color-danger: #d64545;
   --color-success: #2f9e6f;
@@ -53,6 +57,8 @@ html[data-theme='dark'] {
   --timetable-header: #2a2e36;
   --timetable-grid: #343943;
   --color-accent-soft: #23305c;
+  /* 深色底上必须换成更亮的蓝，否则强调色文字几乎糊在背景里（2.8:1 → 6.6:1） */
+  --color-accent-text: #9dbaff;
 }
 
 * {
@@ -205,7 +211,7 @@ h4 {
   padding: 1px 7px;
   border-radius: 999px;
   background: var(--color-accent-soft);
-  color: var(--color-accent);
+  color: var(--color-accent-text);
   font-size: 12px;
 }
 
@@ -933,12 +939,13 @@ h4 {
   border-top: 1px solid var(--border-default);
 }
 
-.sb-portal__action {
+/* 通用小图标按钮：门户的站点操作条与课程卡片的脚部共用同一套 */
+.sb-iconbtn {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 26px;
-  height: 24px;
+  width: 28px;
+  height: 26px;
   border: 0;
   border-radius: var(--radius-sm);
   background: transparent;
@@ -949,63 +956,74 @@ h4 {
   transition: background 0.12s ease, color 0.12s ease;
 }
 
-.sb-portal__action:hover {
+.sb-iconbtn:hover {
   background: var(--bg-hover);
   color: var(--text-primary);
 }
 
-.sb-portal__action:disabled {
+.sb-iconbtn:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: -2px;
+}
+
+.sb-iconbtn:disabled {
   opacity: 0.3;
   cursor: not-allowed;
 }
 
-.sb-portal__action:disabled:hover {
+.sb-iconbtn:disabled:hover {
   background: transparent;
   color: var(--text-tertiary);
 }
 
-.sb-portal__action--danger:hover {
+.sb-iconbtn--danger:hover {
   color: var(--color-danger);
 }
 
 /* ---------------------------------------------------------------- 课程卡片 */
 
+/* 列宽给到 288px：再窄的话「高等数学 A」这种名字会被挤到折行，
+   而每行又要放标签 + 数值，字就只能缩到 12px，读起来费劲 */
 .sb-cards__grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
-  gap: 14px;
+  grid-template-columns: repeat(auto-fill, minmax(288px, 1fr));
+  gap: 16px;
 }
 
 .sb-itemcard {
   display: flex;
   flex-direction: column;
   border: 1px solid var(--border-default);
-  border-radius: var(--radius-md);
+  border-radius: var(--radius-lg);
   background: var(--bg-surface);
   box-shadow: var(--shadow-sm);
   overflow: hidden;
-  transition: border-color 0.12s ease;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease, transform 0.15s ease;
 }
 
 .sb-itemcard:hover {
   border-color: var(--border-strong);
+  box-shadow: var(--shadow-md);
+  transform: translateY(-1px);
 }
 
-/* 翻转容器：靠 rotateY 转内层，两个面各自 backface-visibility: hidden */
+/* 翻转容器：靠 rotateY 转内层，两个面各自 backface-visibility: hidden。
+   高度写死而不是 min-height——网格里的卡片高度一旦参差，整片看起来就乱。
+   156px 是按「课程名最多两行 + 两个评分」量出来的：
+   再高，单行课程名的卡片中间会空出一大块；再矮，两行名字就顶到分隔线。 */
 .sb-itemcard__flip {
   position: relative;
   flex: 1 1 auto;
-  min-height: 168px;
+  height: 156px;
   cursor: pointer;
-  perspective: 1000px;
+  perspective: 1200px;
 }
 
 .sb-itemcard__inner {
   position: relative;
   width: 100%;
   height: 100%;
-  min-height: 168px;
-  transition: transform 0.34s ease;
+  transition: transform 0.4s cubic-bezier(0.4, 0.15, 0.2, 1);
   transform-style: preserve-3d;
 }
 
@@ -1018,18 +1036,19 @@ h4 {
   inset: 0;
   display: flex;
   flex-direction: column;
-  gap: 8px;
-  padding: 14px;
+  padding: 16px 18px;
   overflow: auto;
   backface-visibility: hidden;
   -webkit-backface-visibility: hidden;
 }
 
 .sb-itemcard__face--front {
+  gap: 0;
   background: var(--bg-surface);
 }
 
 .sb-itemcard__face--back {
+  gap: 14px;
   transform: rotateY(180deg);
   background: var(--bg-subtle);
 }
@@ -1039,106 +1058,155 @@ h4 {
   outline-offset: -2px;
 }
 
-.sb-card__name {
-  font-size: 15px;
+.sb-course__top {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.sb-course__id {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+/* 最多两行，超出省略：卡片高度写死了，课程名太长不能把布局顶开 */
+.sb-course__name {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  font-size: 17px;
   font-weight: 600;
+  line-height: 1.35;
   word-break: break-word;
 }
 
-.sb-card__teacher {
+.sb-course__teacher {
+  margin-top: 4px;
   font-size: 13px;
+  line-height: 1.5;
   color: var(--text-secondary);
-}
-
-.sb-card__meta {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  margin-top: auto;
-}
-
-.sb-card__meta-row,
-.sb-card__level {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  font-size: 12px;
-}
-
-.sb-card__meta-label,
-.sb-card__level-label {
-  color: var(--text-tertiary);
-  flex: 0 0 auto;
-}
-
-.sb-card__value {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.sb-card__value--empty {
+/* 打分是「结果」，做成右上角的徽章；没填就整个不出现 */
+.sb-course__score {
+  flex: 0 0 auto;
+  max-width: 92px;
+  padding: 3px 11px;
+  border-radius: 999px;
+  background: var(--color-accent-soft);
+  color: var(--color-accent-text);
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.5;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* 两个评分并排、各自左对齐，中间留固定间距。
+   比「标签左、点数右」的两端对齐紧凑得多，也不需要用户来回找 */
+.sb-course__ratings {
+  display: flex;
+  gap: 30px;
+  margin-top: auto;
+  padding-top: 14px;
+  border-top: 1px solid var(--border-default);
+}
+
+.sb-course__rating {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+
+.sb-course__rating-label {
+  font-size: 12px;
+  line-height: 1.2;
   color: var(--text-tertiary);
 }
 
-.sb-card__dots {
+.sb-course__dots {
   display: inline-flex;
-  gap: 3px;
+  gap: 4px;
 }
 
-.sb-card__dot {
-  width: 6px;
-  height: 6px;
+.sb-course__dot {
+  width: 7px;
+  height: 7px;
   border-radius: 50%;
   background: var(--border-strong);
 }
 
-.sb-card__dot--on {
+.sb-course__dot--on {
   background: var(--color-accent);
 }
 
-.sb-card__back-title {
-  font-size: 13px;
+.sb-course__block-title {
+  margin-bottom: 6px;
+  font-size: 11px;
   font-weight: 600;
-}
-
-.sb-card__back-empty {
-  margin: 0;
-  font-size: 12px;
+  letter-spacing: 0.08em;
   color: var(--text-tertiary);
 }
 
-.sb-card__block-title {
-  margin-bottom: 4px;
-  font-size: 12px;
-  font-weight: 600;
-  color: var(--text-secondary);
-}
-
-.sb-card__block-body {
+.sb-course__block-body {
   margin: 0;
-  font-size: 12px;
-  line-height: 1.65;
+  font-size: 13px;
+  line-height: 1.75;
   color: var(--text-primary);
   white-space: pre-wrap;
   word-break: break-word;
+}
+
+.sb-course__empty-title {
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.sb-course__empty-hint {
+  margin: 8px 0 0;
+  font-size: 13px;
+  line-height: 1.75;
+  color: var(--text-tertiary);
 }
 
 .sb-itemcard__foot {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 6px;
-  padding: 4px 6px 4px 8px;
+  gap: 8px;
+  padding: 7px 8px 7px 10px;
   border-top: 1px solid var(--border-default);
+  background: var(--bg-subtle);
 }
 
+/* 脚部的「记笔记」自己做按钮样式，而不是套 sb-btn：
+   卡片脚很矮，通用按钮的边框在这里会显得很吵 */
 .sb-itemcard__note {
-  height: 26px;
-  padding: 0 8px;
-  font-size: 12px;
-  color: var(--color-accent);
+  height: 30px;
+  padding: 0 12px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--color-accent-text);
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 0.12s ease;
+}
+
+.sb-itemcard__note:hover {
+  background: var(--color-accent-soft);
+}
+
+.sb-itemcard__note:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: -2px;
 }
 
 .sb-itemcard__actions {
@@ -1147,12 +1215,12 @@ h4 {
 }
 
 /* 表单里的并排字段：名字 / 老师这一类短输入不该各占一整行 */
-.sb-card__form-pair {
+.sb-form-pair {
   display: flex;
   gap: 10px;
 }
 
-.sb-card__form-pair > .sb-field {
+.sb-form-pair > .sb-field {
   flex: 1 1 0;
   min-width: 0;
 }

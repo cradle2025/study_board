@@ -180,9 +180,19 @@ function seedCards(): void {
     difficulty: 2,
     mastery: 4
   })
+  // 故意放一个超长课程名：卡片高度是写死的，这种名字会不会把内容顶出去，
+  // 只有真的摆一张出来才知道。短名字的样本测不到这个
+  const longName = cards.upsert({
+    courseName: '毛泽东思想和中国特色社会主义理论体系概论',
+    teacher: '李建国',
+    score: '良好',
+    difficulty: 3,
+    mastery: 2,
+    gradingPolicy: '论文 40% + 期末 60%'
+  })
 
   // 卡片与笔记的关联在真实流程里由 IPC 层建立，这里手工补上等价的结果
-  for (const card of [maths, english]) {
+  for (const card of [maths, english, longName]) {
     const note = notes.create(`${card.courseName}_${card.teacher}`)
     cards.linkNote(card.id, note.id)
   }
@@ -351,7 +361,7 @@ const CARDS_PROBE = `(async () => {
 
   // 先等课表数据到了再开——「从课表带过来」这个下拉是靠它填的。
   // 直接看下拉有没有选项，等于等语义状态而不是等元素（老坑了）
-  const cardCount = await waitForCount('.sb-itemcard', 2)
+  const cardCount = await waitForCount('.sb-itemcard', 3)
   if (!cardCount) return JSON.stringify({ error: '卡片没渲染出来' })
 
   // —— 翻转：单击应该把卡片翻到背面，再点一次翻回来
@@ -361,14 +371,68 @@ const CARDS_PROBE = `(async () => {
   await wait(420)
   const flipped = first.classList.contains('sb-itemcard--flipped')
   // 背面必须真的有内容，不能只是转了个空壳
-  const backText = first.querySelector('.sb-card__face--back').textContent.trim().length
+  const backText = first.querySelector('.sb-itemcard__face--back').textContent.trim().length
   flipTarget.click()
   await wait(420)
   const flippedBack = !first.classList.contains('sb-itemcard--flipped')
 
   // 正面该显示的东西
-  const frontText = first.querySelector('.sb-card__face--front').textContent
+  const frontFace = first.querySelector('.sb-itemcard__face--front')
+  const frontText = frontFace.textContent
   const frontOk = frontText.includes('高等数学 A') && frontText.includes('张启明')
+
+  // —— 排版体检：这些东西"看着挤不挤"没法自动判断，
+  // 但"字号够不够大、内容溢没溢出、留白有多宽"是可以量的
+  const nameEl = first.querySelector('.sb-course__name')
+  const teacherEl = first.querySelector('.sb-course__teacher')
+  const ratingsEl = first.querySelector('.sb-course__ratings')
+  const faceRect = frontFace.getBoundingClientRect()
+  const cardRect = first.getBoundingClientRect()
+  const nameFont = nameEl ? parseFloat(getComputedStyle(nameEl).fontSize) : 0
+  const teacherFont = teacherEl ? parseFloat(getComputedStyle(teacherEl).fontSize) : 0
+  const bodyFont = ratingsEl
+    ? parseFloat(getComputedStyle(first.querySelector('.sb-course__rating-label') || ratingsEl).fontSize)
+    : 0
+  // 正面内容不能溢出：写死高度之后，多出来的字会被切掉
+  const faceOverflow = frontFace.scrollHeight > frontFace.clientHeight + 1
+  // 名字块底边到分隔线之间还剩多少空白——太少显得挤，太多显得空
+  const gapBeforeRule = ratingsEl
+    ? Math.round(ratingsEl.getBoundingClientRect().top -
+        (teacherEl ? teacherEl.getBoundingClientRect().bottom : faceRect.top))
+    : 0
+  const scoreBadge = first.querySelector('.sb-course__score')
+  const scoreFont = scoreBadge ? parseFloat(getComputedStyle(scoreBadge).fontSize) : 0
+
+  // 超长课程名的那张：名字必须被夹到两行且不能把内容顶出卡片。
+  // 中文课名动辄十几个字，这是真实用户一定会碰到的情形，不是边角案例
+  const longCard = document.querySelectorAll('.sb-itemcard')[2]
+  const longFace = longCard.querySelector('.sb-itemcard__face--front')
+  const longNameEl = longCard.querySelector('.sb-course__name')
+  const longNameHeight = longNameEl.getBoundingClientRect().height
+  const longLineHeight = parseFloat(getComputedStyle(longNameEl).lineHeight) || 23
+  const longNameLines = Math.round(longNameHeight / longLineHeight)
+  const longOverflow = longFace.scrollHeight > longFace.clientHeight + 1
+  const longNameOk = longNameLines === 2 && !longOverflow
+
+  // 强调色当文字用的时候，必须走 --color-accent-text 那一档：
+  // 直接用主色在柔和底上对比度只有 3.9:1（浅色）/ 2.8:1（深色），读起来费劲
+  const accentText = getComputedStyle(document.documentElement)
+    .getPropertyValue('--color-accent-text')
+    .trim()
+  const badgeColor = scoreBadge ? getComputedStyle(scoreBadge).color : ''
+  // 用 split/join 而不是正则：探针整段是模板字符串，
+  // 正则里的 \s 会被当成转义吃掉，变成「去掉所有字母 s」这种鬼东西
+  const contrastOk = badgeColor.split(' ').join('') === 'rgb(47,92,214)'
+  // 名字块与分隔线之间的留白只设下限：课程名一行还是两行本来就差 23px，
+  // 想把两边都卡进一个窄区间是不可能的。只要不挤就行
+  const typoOk =
+    nameFont >= 16 &&
+    teacherFont >= 12.5 &&
+    bodyFont >= 12 &&
+    scoreFont >= 12.5 &&
+    !faceOverflow &&
+    cardRect.width >= 260 &&
+    gapBeforeRule >= 10
 
   // —— 新建卡片：课程名与老师从课表带过来，不再手打一遍
   document.querySelector('[data-action="add"]').click()
@@ -390,7 +454,7 @@ const CARDS_PROBE = `(async () => {
   if (scoreInput) scoreInput.value = 'A'
   saveBtn.click()
 
-  const addedInTime = await waitForCount('.sb-itemcard', 3)
+  const addedInTime = await waitForCount('.sb-itemcard', 4)
   const addedText = document.body.textContent.includes(carriedName)
   const carriedOk = carriedName.length > 0 && carriedTeacher.length > 0
 
@@ -398,7 +462,7 @@ const CARDS_PROBE = `(async () => {
   document.querySelector('[data-route="notes"]').click()
   await waitFor('[data-role="list"]')
   const expectedTitle = carriedTeacher ? carriedName + '_' + carriedTeacher : carriedName
-  const listItems = await waitForCount('.sb-notes__item', 3)
+  const listItems = await waitForCount('.sb-notes__item', 4)
   // 精确比对标题那一行，不能用整块的 includes——
   // 「A_老师」和「A_老师 (2)」互相包含，模糊匹配会挑错人
   const titles = Array.from(document.querySelectorAll('.sb-notes__item-title')).map((el) =>
@@ -428,7 +492,7 @@ const CARDS_PROBE = `(async () => {
   // —— 从卡片点「记笔记」应该跳到笔记页并定位到那一篇。
   // 要挑**新建的那张**卡片（它在最后），否则点到的是别的课，测了个寂寞
   document.querySelector('[data-route="study"]').click()
-  await waitForCount('.sb-itemcard', 3)
+  await waitForCount('.sb-itemcard', 4)
   const allCards = Array.from(document.querySelectorAll('.sb-itemcard'))
   const noteBtn = allCards[allCards.length - 1]
   if (noteBtn) noteBtn.querySelector('[data-act="note"]').click()
@@ -440,6 +504,9 @@ const CARDS_PROBE = `(async () => {
     flipped, flippedBack, backText, frontOk, options, pickerOk,
     carriedName, carriedTeacher, carriedOk, addedInTime, addedText,
     listItems, autoNoteOk, typedOk, jumpedTitle, jumpOk,
+    nameFont, teacherFont, bodyFont, scoreFont, gapBeforeRule, faceOverflow, typoOk,
+    cardW: Math.round(cardRect.width), cardH: Math.round(cardRect.height),
+    longNameLines, longOverflow, longNameOk, accentText, badgeColor, contrastOk,
     flipOk: flipped && flippedBack && backText > 0,
     addOk: pickerOk && carriedOk && addedInTime && addedText,
     noteOk: listItems && autoNoteOk && typedOk
@@ -620,6 +687,10 @@ export function runSmokeTestIfRequested(win: BrowserWindow): void {
                   ? Boolean(
                       parsed['flipOk'] &&
                         parsed['frontOk'] &&
+                        // 排版体检：字号够大、内容不溢出、留白不局促、长课名夹得住
+                        parsed['typoOk'] &&
+                        parsed['longNameOk'] &&
+                        parsed['contrastOk'] &&
                         parsed['addOk'] &&
                         parsed['noteOk'] &&
                         parsed['jumpOk'] &&

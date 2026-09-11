@@ -60,10 +60,10 @@ function iconHtml(site: PortalSite): string {
 function actionsHtml(site: PortalSite): string {
   return `
     <span class="sb-portal__actions">
-      <button class="sb-portal__action" type="button" data-act="edit" title="编辑" aria-label="编辑 ${escapeHtml(site.name)}">✎</button>
-      <button class="sb-portal__action" type="button" data-act="icon" title="重新抓取图标" aria-label="重新抓取 ${escapeHtml(site.name)} 的图标">⟳</button>
-      <button class="sb-portal__action" type="button" data-act="hide" title="${site.hidden ? '显示' : '隐藏'}" aria-label="${site.hidden ? '显示' : '隐藏'} ${escapeHtml(site.name)}">${site.hidden ? '◌' : '◉'}</button>
-      <button class="sb-portal__action sb-portal__action--danger" type="button" data-act="remove" title="${site.builtin ? '内置站点不能删除' : '删除'}" aria-label="${site.builtin ? '内置站点不能删除' : `删除 ${escapeHtml(site.name)}`}" ${site.builtin ? 'disabled' : ''}>✕</button>
+      <button class="sb-iconbtn" type="button" data-act="edit" title="编辑" aria-label="编辑 ${escapeHtml(site.name)}">✎</button>
+      <button class="sb-iconbtn" type="button" data-act="icon" title="重新抓取图标" aria-label="重新抓取 ${escapeHtml(site.name)} 的图标">⟳</button>
+      <button class="sb-iconbtn" type="button" data-act="hide" title="${site.hidden ? '显示' : '隐藏'}" aria-label="${site.hidden ? '显示' : '隐藏'} ${escapeHtml(site.name)}">${site.hidden ? '◌' : '◉'}</button>
+      <button class="sb-iconbtn sb-iconbtn--danger" type="button" data-act="remove" title="${site.builtin ? '内置站点不能删除' : '删除'}" aria-label="${site.builtin ? '内置站点不能删除' : `删除 ${escapeHtml(site.name)}`}" ${site.builtin ? 'disabled' : ''}>✕</button>
     </span>
   `
 }
