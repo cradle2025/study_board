@@ -25,6 +25,7 @@
     "smoke": "node scripts/smoke.mjs",
     "smoke:timetable": "node scripts/smoke.mjs timetable",
     "smoke:portal": "node scripts/smoke.mjs portal",
+    "smoke:cards": "node scripts/smoke.mjs cards",
     "bench": "node scripts/smoke.mjs bench",
     "bench:compare": "node scripts/compare-bench.mjs",
     "icon": "node scripts/make-icon.mjs",

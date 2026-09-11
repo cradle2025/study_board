@@ -95,6 +95,11 @@ export function portalFile(portable: boolean): string {
   return join(dataRoot(portable), 'portal.json')
 }
 
+/** 课程卡片 */
+export function cardsFile(portable: boolean): string {
+  return join(dataRoot(portable), 'cards.json')
+}
+
 export function tempDir(portable: boolean): string {
   return join(dataRoot(portable), 'temp')
 }

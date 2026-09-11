@@ -1,4 +1,5 @@
 import {
+  cardsFile,
   detectPortableMode,
   ensureDir,
   iconsCacheDir,
@@ -7,6 +8,8 @@ import {
   timetableImagesDir
 } from './paths'
 import type { AssetBuckets } from './services/assetProtocol'
+import { CardsStore } from './services/cards'
+import { NotesStore } from './services/notes'
 import { PortalStore } from './services/portal'
 import { resolveNotesDir, SettingsStore } from './services/settings'
 import { TimetableStore } from './services/timetable'
@@ -21,6 +24,8 @@ export interface AppContext {
   buckets: AssetBuckets
   timetable: TimetableStore
   portal: PortalStore
+  cards: CardsStore
+  notes: NotesStore
 }
 
 let current: AppContext | null = null
@@ -45,12 +50,16 @@ export function initContext(): AppContext {
     timetableImagesDir(snapshot.portableMode)
   )
   const portal = new PortalStore(portalFile(snapshot.portableMode), iconsCacheDir(snapshot.portableMode))
+  const cards = new CardsStore(cardsFile(snapshot.portableMode))
+  const notes = new NotesStore(resolveNotesDir(snapshot))
 
   current = {
     settings,
     buckets: buildBuckets(snapshot.portableMode, resolveNotesDir(snapshot)),
     timetable,
-    portal
+    portal,
+    cards,
+    notes
   }
   return current
 }
@@ -75,9 +84,15 @@ export function context(): AppContext {
   return current
 }
 
-/** 笔记库目录被用户改动后，同步刷新资源桶 */
+/**
+ * 笔记库目录被用户改动后，同步刷新资源桶与笔记存储。
+ *
+ * 笔记存储必须一起重建：它是绑在具体目录上的，换了库却还指着旧目录，
+ * 就会出现「设置里显示新路径，但列表里还是旧库的笔记」这种让人发毛的状态。
+ */
 export function refreshBuckets(): void {
   const ctx = context()
   const snapshot = ctx.settings.get()
   ctx.buckets = buildBuckets(snapshot.portableMode, resolveNotesDir(snapshot))
+  ctx.notes = new NotesStore(resolveNotesDir(snapshot))
 }

@@ -1,5 +1,5 @@
 import { BrowserWindow, app } from 'electron'
-import { mkdtempSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 
@@ -22,13 +22,15 @@ import { encodePng } from './services/png'
  *  - timetable 额外验证课程表：写入单元格、跑一次真实的图片导入链路、
  *              切到图片模式确认 sb-asset 协议与 CSP 都放行，最后截图
  *  - portal    额外验证网站门户：内置站点、图标走 sb-asset、增删改隐藏全链路
+ *  - cards     额外验证课程卡片：翻转、从课表带过课程、建卡片自动建笔记、
+ *              「记笔记」跳转、笔记落盘成 Obsidian 认得的文件
  *
  * 门户场景**不测图标抓取**：那需要真实网络，在无网的 CI 里会让自检变成随机失败。
  * 图标文件由本文件直接造好写进图标目录，测的是「图标能不能显示出来」这条链路，
  * 而不是「能不能从外网抓下来」——后者本来就该由人点一下按钮确认。
  */
 
-export type SmokeScenario = 'basic' | 'timetable' | 'portal'
+export type SmokeScenario = 'basic' | 'timetable' | 'portal' | 'cards'
 
 export function smokeEnabled(): boolean {
   return process.env['STUDY_BOARD_SMOKE'] === '1'
@@ -38,6 +40,7 @@ export function smokeScenario(): SmokeScenario {
   const value = process.env['STUDY_BOARD_SMOKE_SCENARIO']
   if (value === 'timetable') return 'timetable'
   if (value === 'portal') return 'portal'
+  if (value === 'cards') return 'cards'
   return 'basic'
 }
 
@@ -128,6 +131,64 @@ async function seedTimetable(): Promise<void> {
 }
 
 /**
+ * 卡片测试数据。
+ *
+ * 同时要种课表：需求里「课程名和老师从课表自动带过来」这条链路，
+ * 没有课表数据就根本测不到。
+ */
+function seedCards(): void {
+  const { timetable, cards, notes } = context()
+
+  timetable.setCell('1:0', {
+    courseName: '高等数学 A',
+    teacher: '张启明',
+    location: '教三-201',
+    duration: '45 分钟',
+    remark: ''
+  })
+  timetable.setCell('1:1', {
+    courseName: '大学英语',
+    teacher: 'Li Na',
+    location: '外语楼 B305',
+    duration: '45 分钟',
+    remark: ''
+  })
+  timetable.setCell('3:2', {
+    courseName: '数据结构',
+    teacher: '王海',
+    location: '计算机楼 402',
+    duration: '1-2 节连上',
+    remark: ''
+  })
+
+  // 只种两张：第三张留给探针从课表带过来新建。
+  // 如果连「数据结构」也种上，探针新建时会因为重名变成「数据结构_王海 (2)」，
+  // 断言就得跟着变复杂——测试数据不该给测试本身制造歧义。
+  const maths = cards.upsert({
+    courseName: '高等数学 A',
+    teacher: '张启明',
+    score: '92',
+    difficulty: 4,
+    mastery: 3,
+    gradingPolicy: '平时 30% + 期末 70%',
+    outline: '极限 → 导数 → 积分'
+  })
+  const english = cards.upsert({
+    courseName: '大学英语',
+    teacher: 'Li Na',
+    score: 'A',
+    difficulty: 2,
+    mastery: 4
+  })
+
+  // 卡片与笔记的关联在真实流程里由 IPC 层建立，这里手工补上等价的结果
+  for (const card of [maths, english]) {
+    const note = notes.create(`${card.courseName}_${card.teacher}`)
+    cards.linkNote(card.id, note.id)
+  }
+}
+
+/**
  * 门户测试数据：给内置站点塞一张真图标。
  *
  * 目的是验证「图标目录 → sb-asset 协议 → CSP → <img> 显示」这条链路，
@@ -169,6 +230,25 @@ const PROBE_HELPERS = `
     const deadline = Date.now() + timeout
     for (;;) {
       if (!document.body.textContent.includes(text)) return true
+      if (Date.now() > deadline) return false
+      await wait(100)
+    }
+  }
+  // 元素在不在不代表数据到了：输入框是页面搭好就存在的，值要等异步加载才填上
+  const waitForValue = async (selector, value, timeout = 15000) => {
+    const deadline = Date.now() + timeout
+    for (;;) {
+      const el = document.querySelector(selector)
+      if (el && el.value === value) return true
+      if (Date.now() > deadline) return false
+      await wait(100)
+    }
+  }
+  const waitForText = async (selector, text, timeout = 15000) => {
+    const deadline = Date.now() + timeout
+    for (;;) {
+      const el = document.querySelector(selector)
+      if (el && el.textContent.includes(text)) return true
       if (Date.now() > deadline) return false
       await wait(100)
     }
@@ -259,6 +339,110 @@ const TIMETABLE_PROBE = `(async () => {
     filledAfterEditOk: filledAfterEdit === 4,
     imageOk: imageWidth > 0,
     imageFitsOk: imageFits
+  })
+})()`
+
+const CARDS_PROBE = `(async () => {
+  ${PROBE_HELPERS}
+  const nav = await waitFor('[data-route="study"]')
+  if (!nav) return JSON.stringify({ error: '导航未就绪' })
+  nav.click()
+  await waitFor('[data-role="cards"]')
+
+  // 先等课表数据到了再开——「从课表带过来」这个下拉是靠它填的。
+  // 直接看下拉有没有选项，等于等语义状态而不是等元素（老坑了）
+  const cardCount = await waitForCount('.sb-itemcard', 2)
+  if (!cardCount) return JSON.stringify({ error: '卡片没渲染出来' })
+
+  // —— 翻转：单击应该把卡片翻到背面，再点一次翻回来
+  const first = document.querySelector('.sb-itemcard')
+  const flipTarget = first.querySelector('[data-act="flip"]')
+  flipTarget.click()
+  await wait(420)
+  const flipped = first.classList.contains('sb-itemcard--flipped')
+  // 背面必须真的有内容，不能只是转了个空壳
+  const backText = first.querySelector('.sb-card__face--back').textContent.trim().length
+  flipTarget.click()
+  await wait(420)
+  const flippedBack = !first.classList.contains('sb-itemcard--flipped')
+
+  // 正面该显示的东西
+  const frontText = first.querySelector('.sb-card__face--front').textContent
+  const frontOk = frontText.includes('高等数学 A') && frontText.includes('张启明')
+
+  // —— 新建卡片：课程名与老师从课表带过来，不再手打一遍
+  document.querySelector('[data-action="add"]').click()
+  const picker = await waitFor('.sb-modal__card--form [data-field="picker"]')
+  const nameInput = document.querySelector('.sb-modal__card--form [data-field="courseName"]')
+  const teacherInput = document.querySelector('.sb-modal__card--form [data-field="teacher"]')
+  const scoreInput = document.querySelector('.sb-modal__card--form [data-field="score"]')
+  const saveBtn = document.querySelector('.sb-modal__card--form [data-role="save"]')
+  if (!picker || !nameInput || !teacherInput || !saveBtn) {
+    return JSON.stringify({ error: '卡片表单未挂载' })
+  }
+  const options = picker.querySelectorAll('option').length
+  // 选项 = "手动填写" + 课表里去重后的课程数（种子里是 3 门）
+  const pickerOk = options === 4
+  picker.value = '2'
+  picker.dispatchEvent(new Event('change', { bubbles: true }))
+  const carriedName = nameInput.value
+  const carriedTeacher = teacherInput.value
+  if (scoreInput) scoreInput.value = 'A'
+  saveBtn.click()
+
+  const addedInTime = await waitForCount('.sb-itemcard', 3)
+  const addedText = document.body.textContent.includes(carriedName)
+  const carriedOk = carriedName.length > 0 && carriedTeacher.length > 0
+
+  // —— 切到笔记页：卡片应该已经自动建好了同名笔记
+  document.querySelector('[data-route="notes"]').click()
+  await waitFor('[data-role="list"]')
+  const expectedTitle = carriedTeacher ? carriedName + '_' + carriedTeacher : carriedName
+  const listItems = await waitForCount('.sb-notes__item', 3)
+  // 精确比对标题那一行，不能用整块的 includes——
+  // 「A_老师」和「A_老师 (2)」互相包含，模糊匹配会挑错人
+  const titles = Array.from(document.querySelectorAll('.sb-notes__item-title')).map((el) =>
+    el.textContent.trim()
+  )
+  const autoNoteOk = titles.indexOf(expectedTitle) >= 0
+
+  // 打开那篇自动建的笔记，写点东西并等自动保存落盘
+  const target = Array.from(document.querySelectorAll('.sb-notes__item'))
+    .find((el) => el.querySelector('.sb-notes__item-title').textContent.trim() === expectedTitle)
+  let typedOk = false
+  if (target) {
+    target.click()
+    // 必须等标题被填上——那才说明笔记真的读出来了。
+    // 只等 [data-role="body"] 会立刻命中（它一直在 DOM 里，只是被 hidden 藏着），
+    // 这时往里写的内容会被随后到达的 open() 覆盖掉
+    const loaded = await waitForValue('[data-role="title"]', expectedTitle)
+    const body = document.querySelector('[data-role="body"]')
+    if (loaded && body) {
+      body.value = '# 第一章\\n\\n自动建的笔记也应该能直接写。'
+      body.dispatchEvent(new Event('input', { bubbles: true }))
+      const saved = await waitForText('[data-role="status"]', '已保存')
+      typedOk = saved
+    }
+  }
+
+  // —— 从卡片点「记笔记」应该跳到笔记页并定位到那一篇。
+  // 要挑**新建的那张**卡片（它在最后），否则点到的是别的课，测了个寂寞
+  document.querySelector('[data-route="study"]').click()
+  await waitForCount('.sb-itemcard', 3)
+  const allCards = Array.from(document.querySelectorAll('.sb-itemcard'))
+  const noteBtn = allCards[allCards.length - 1]
+  if (noteBtn) noteBtn.querySelector('[data-act="note"]').click()
+  await waitFor('[data-role="pane"]:not([hidden])')
+  const jumpedTitle = document.querySelector('[data-role="title"]').value
+  const jumpOk = jumpedTitle === expectedTitle
+
+  return JSON.stringify({
+    flipped, flippedBack, backText, frontOk, options, pickerOk,
+    carriedName, carriedTeacher, carriedOk, addedInTime, addedText,
+    listItems, autoNoteOk, typedOk, jumpedTitle, jumpOk,
+    flipOk: flipped && flippedBack && backText > 0,
+    addOk: pickerOk && carriedOk && addedInTime && addedText,
+    noteOk: listItems && autoNoteOk && typedOk
   })
 })()`
 
@@ -364,8 +548,14 @@ export function runSmokeTestIfRequested(win: BrowserWindow): void {
 
   const scenario = smokeScenario()
   const probe =
-    scenario === 'timetable' ? TIMETABLE_PROBE : scenario === 'portal' ? PORTAL_PROBE : BASIC_PROBE
-  const timeoutMs = scenario === 'basic' ? 20_000 : 30_000
+    scenario === 'timetable'
+      ? TIMETABLE_PROBE
+      : scenario === 'portal'
+        ? PORTAL_PROBE
+        : scenario === 'cards'
+          ? CARDS_PROBE
+          : BASIC_PROBE
+  const timeoutMs = scenario === 'basic' ? 20_000 : 35_000
 
   const timer = setTimeout(() => {
     console.error(`[smoke] 超时：渲染层 ${timeoutMs / 1000} 秒内未完成自检`)
@@ -416,17 +606,27 @@ export function runSmokeTestIfRequested(win: BrowserWindow): void {
                   parsed['imageOk'] &&
                   parsed['imageFitsOk']
               )
-            : scenario === 'portal'
-              ? Boolean(
-                  parsed['builtinsOk'] &&
-                    parsed['layoutOk'] &&
-                    parsed['iconOk'] &&
-                    parsed['addOk'] &&
-                    parsed['deleteOk'] &&
-                    parsed['hideOk'] &&
-                    parsed['homeOk']
-                )
-              : Boolean(parsed['customElement'] && parsed['mounted'] && parsed['bridge'])
+              : scenario === 'portal'
+                ? Boolean(
+                    parsed['builtinsOk'] &&
+                      parsed['layoutOk'] &&
+                      parsed['iconOk'] &&
+                      parsed['addOk'] &&
+                      parsed['deleteOk'] &&
+                      parsed['hideOk'] &&
+                      parsed['homeOk']
+                  )
+                : scenario === 'cards'
+                  ? Boolean(
+                      parsed['flipOk'] &&
+                        parsed['frontOk'] &&
+                        parsed['addOk'] &&
+                        parsed['noteOk'] &&
+                        parsed['jumpOk'] &&
+                        // 界面说自己存了不算数，磁盘上真有一份对得上的文件才算
+                        verifyNoteOnDisk()
+                    )
+                  : Boolean(parsed['customElement'] && parsed['mounted'] && parsed['bridge'])
 
         if (scenario === 'timetable') {
           // 自检结束时停在图片模式，先留一张图；再切回表格模式，留第二张
@@ -447,6 +647,20 @@ export function runSmokeTestIfRequested(win: BrowserWindow): void {
         } else if (scenario === 'portal') {
           // 自检收尾停在概览页（正好能同时看到首页的门户格子）
           await captureIfRequested(win, 'portal-home.png')
+        } else if (scenario === 'cards') {
+          // 收尾停在「课程与学习」页，留一张带卡片的截图
+          await win.webContents
+            .executeJavaScript(
+              `(async () => {
+                 const wait = (ms) => new Promise((r) => setTimeout(r, ms))
+                 document.querySelector('[data-route="study"]')?.click()
+                 await wait(900)
+                 return 'ok'
+               })()`,
+              true
+            )
+            .catch(() => undefined)
+          await captureIfRequested(win, 'cards.png')
         } else {
           await captureIfRequested(win, 'screenshot.png')
         }
@@ -469,6 +683,102 @@ export async function prepareSmokeDataIfRequested(): Promise<void> {
   const scenario = smokeScenario()
   if (scenario === 'timetable') await seedTimetable()
   else if (scenario === 'portal') seedPortal()
+  else if (scenario === 'cards') seedCards()
+}
+
+/**
+ * 界面说自己存好了不算数——去磁盘上把那篇笔记找出来看一眼。
+ *
+ * 这一步验证的是「Obsidian 能不能直接读」这件事：文件确实是 .md、
+ * 开头确实是 YAML frontmatter、正文确实是用户敲进去的那些字。
+ * 只断言 DOM 等于只测了自己骗自己。
+ */
+function verifyNoteOnDisk(): boolean {
+  const { notes } = context()
+  let files: string[] = []
+  try {
+    files = readdirSync(notes.dir).filter((name) => name.toLowerCase().endsWith('.md'))
+  } catch (error) {
+    console.error('[smoke] 读不了笔记库目录：', error)
+    return false
+  }
+  console.info(`[smoke] 笔记库文件：${files.join(' / ') || '（空）'}`)
+
+  const target = files.find((name) => name.startsWith('数据结构'))
+  if (!target) {
+    console.error('[smoke] 没找到自动创建的那篇笔记文件')
+    return false
+  }
+
+  try {
+    const raw = readFileSync(join(notes.dir, target), 'utf-8')
+    const hasFrontmatter = raw.startsWith('---\n') && raw.includes('id:')
+    const hasBody = raw.includes('自动建的笔记也应该能直接写')
+    if (!hasFrontmatter || !hasBody) {
+      console.error('[smoke] 笔记文件内容不符合预期：', JSON.stringify(raw.slice(0, 240)))
+      return false
+    }
+    console.info(`[smoke] 笔记文件校验通过：${target}（${Buffer.byteLength(raw, 'utf-8')} 字节）`)
+  } catch (error) {
+    console.error('[smoke] 读笔记文件失败：', error)
+    return false
+  }
+
+  return verifyExternalNote()
+}
+
+/**
+ * 外部编辑器（Obsidian / VS Code / 记事本）丢进来的笔记必须能被认出来。
+ * 这是「这个目录可以直接当 Obsidian 库用」这句话的前提，
+ * 也是后面做文件监听与双向同步的地基——地基不稳，上面盖什么都会歪。
+ */
+function verifyExternalNote(): boolean {
+  const { notes } = context()
+  const fileName = '外部写的笔记.md'
+  const externalId = '11111111-2222-3333-4444-555555555555'
+
+  try {
+    writeFileSync(
+      join(notes.dir, fileName),
+      `---\nid: ${externalId}\n---\n\n来自 Obsidian\n`,
+      'utf-8'
+    )
+  } catch (error) {
+    console.error('[smoke] 写外部笔记失败：', error)
+    return false
+  }
+
+  const found = notes.list().find((note) => note.fileName === fileName)
+  if (!found) {
+    console.error('[smoke] 外部新增的笔记没有被认出来')
+    return false
+  }
+  // id 要从文件自己的 frontmatter 里捡回来，而不是随便发一个——
+  // 否则索引文件一丢，卡片与笔记的关联就全断了
+  if (found.id !== externalId) {
+    console.error(`[smoke] 外部笔记的 id 没有沿用 frontmatter：${found.id}`)
+    return false
+  }
+
+  const doc = notes.read(externalId)
+  if (!doc.content.includes('来自 Obsidian')) {
+    console.error('[smoke] 外部笔记正文读出来不对：', JSON.stringify(doc.content))
+    return false
+  }
+
+  // 外部删掉之后，索引里也不能留着幽灵条目
+  try {
+    rmSync(join(notes.dir, fileName), { force: true })
+  } catch {
+    /* 删不掉就算了，后面的断言会体现出来 */
+  }
+  if (notes.list().some((note) => note.fileName === fileName)) {
+    console.error('[smoke] 外部删掉的笔记还留在列表里')
+    return false
+  }
+
+  console.info(`[smoke] 外部笔记对账通过：新增认得出、id 捡得回、删除不掉队`)
+  return true
 }
 
 /** 截图落到 STUDY_BOARD_SMOKE_SHOT 所在目录下 */

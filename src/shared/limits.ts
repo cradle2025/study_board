@@ -35,3 +35,25 @@ export const MAX_SITE_URL = 2048
 
 /** 门户图标缓存的边长（像素）：够看清，又不会让图标目录膨胀 */
 export const PORTAL_ICON_EDGE = 64
+
+/* ------------------------------------------------------------------ 课程卡片 */
+
+export const MAX_CARDS = 200
+
+/** 卡片上的短文本：课程名 / 老师 / 打分 */
+export const MAX_CARD_TEXT = 60
+/** 卡片背面的长文本：给分标准 / 课程结构 */
+export const MAX_CARD_LONG = 2000
+/** 难度与掌握程度都按 1–5 打分，0 表示没填 */
+export const MAX_CARD_LEVEL = 5
+
+/* ------------------------------------------------------------------ 笔记 */
+
+/** 笔记标题上限。同时决定文件名长度，留够余量给 " (2)" 这类去重后缀 */
+export const MAX_NOTE_TITLE = 80
+/** 单篇笔记正文上限，防止一次写入把内存打爆 */
+export const MAX_NOTE_BYTES = 2 * 1024 * 1024
+/** 文件名（含 .md）上限：Windows 上单段路径上限是 255 */
+export const MAX_NOTE_FILE_BYTES = 200
+/** 读笔记文件时用于提取 frontmatter 的头部字节数 */
+export const NOTE_HEAD_BYTES = 4096

@@ -9,6 +9,7 @@
  *   npm run smoke            基础自检：主进程起得来、preload 注得进去、界面挂得上
  *   npm run smoke:timetable  课程表端到端：写入单元格 + 图片导入 + 渲染 + 截图
  *   npm run smoke:portal     网站门户端到端：内置站点 + 图标显示 + 增删改隐藏
+ *   npm run smoke:cards      课程卡片端到端：翻转 + 课表带过课程 + 自动建笔记
  *   npm run bench            性能与内存基准，报告打到 stdout 并写入 .preview/
  *
  * 三者都跑在系统临时目录里，不会碰你真实的学习数据。
@@ -27,7 +28,7 @@ const electronPath = require('electron')
 
 const requested = process.argv[2] ?? ''
 const bench = requested === 'bench'
-const scenario = requested === 'timetable' || requested === 'portal' ? requested : 'basic'
+const scenario = ['timetable', 'portal', 'cards'].includes(requested) ? requested : 'basic'
 const label = bench ? 'bench' : scenario
 
 const env = { ...process.env }

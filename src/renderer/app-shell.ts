@@ -18,6 +18,14 @@ export interface ViewContext {
   getInfo(): AppInfo | null
   navigate(route: RouteId): void
   reloadSettings(): Promise<void>
+  /** 跳到笔记页并打开指定笔记（卡片上的「记笔记」用这条路） */
+  openNote(noteId: string): void
+  /**
+   * 取出并清空「待打开的笔记」标记。
+   * 笔记页挂载时调一次——用「取走」而不是「读取」，是为了让用户自己
+   * 切回笔记页时不会被上次的跳转目标再次抢走焦点。
+   */
+  consumePendingNote(): string | null
 }
 
 export interface ViewInstance {
@@ -90,6 +98,8 @@ export class AppShell extends HTMLElement {
   #nav: HTMLElement | null = null
   #unwatchTheme: (() => void) | null = null
   #unwatchSettings: (() => void) | null = null
+  /** 别的页面请求「跳到某篇笔记」时先记在这里，笔记页挂载时取走 */
+  #pendingNoteId: string | null = null
 
   connectedCallback(): void {
     this.render()
@@ -223,6 +233,15 @@ export class AppShell extends HTMLElement {
       reloadSettings: async () => {
         this.#settings = await unwrap(bridge().settings.get())
         applyTheme(this.#settings.theme)
+      },
+      openNote: (noteId) => {
+        this.#pendingNoteId = noteId
+        void this.go('notes')
+      },
+      consumePendingNote: () => {
+        const id = this.#pendingNoteId
+        this.#pendingNoteId = null
+        return id
       }
     })
 
