@@ -1,5 +1,5 @@
 import { MAX_NOTE_BYTES } from '@shared/limits'
-import type { NoteMeta } from '@shared/types'
+import type { LibraryChangedEvent, NoteMeta } from '@shared/types'
 
 import type { ViewContext, ViewInstance } from '../app-shell'
 import { MODE_HINT, MODE_LABEL, type EditorHandle, type EditorMode } from '../lib/editor/commands'
@@ -24,6 +24,9 @@ import { confirmAction } from '../lib/overlay'
  *
  * 自动保存是「停止输入 800ms 写一次」+「切走页面或离开笔记时补写一次」，
  * 既不会每敲一个字就落一次盘，也不会因为忘了按保存而丢东西。
+ *
+ * 磁盘上的文件还可能被别的程序改动（这个目录本来就是 Obsidian 库），
+ * 所以主进程会推 `library-changed` 过来，见下面「外部改动」那一节。
  */
 
 const AUTOSAVE_DELAY = 800
@@ -149,6 +152,23 @@ export function createNotesView(ctx: ViewContext): ViewInstance {
   }
 
   /* -------------------------------------------------------------- 编辑器 */
+
+  /**
+   * 收起编辑器，回到「没选中任何笔记」的样子。
+   *
+   * 有个坑：必须把「待保存」标记和定时器一起清掉。否则编辑器没了、
+   * 保存定时器还在跑，`flush()` 会拿着已经作废的内容往存储里写。
+   */
+  function clearEditor(): void {
+    window.clearTimeout(timer)
+    window.clearTimeout(countTimer)
+    dirty = false
+    activeId = null
+    teardownEditor()
+    if (pane) pane.hidden = true
+    if (placeholder) placeholder.hidden = false
+    setStatus('')
+  }
 
   /** 只销毁编辑器。工具栏不跟着走——它只是换个绑定对象而已 */
   function teardownEditor(): void {
@@ -317,7 +337,85 @@ export function createNotesView(ctx: ViewContext): ViewInstance {
     }
   }
 
+  /* ------------------------------------------------- 外部改动（文件监听） */
+
+  /**
+   * 别的程序动了笔记库，主进程推过来了。
+   *
+   * 我们自己的写入在主进程就被过滤掉了，不会走到这里，所以下面这几种
+   * 都可以当成「外面有人改」来对待。
+   */
+  async function handleLibraryEvent(event: LibraryChangedEvent): Promise<void> {
+    if (event.kind === 'reset') {
+      // 笔记库换目录了。正在编辑的这篇已经不属于当前库，硬留着的话
+      // 下一次自动保存会拿着旧 id 去新库里找，只会得到一个「笔记不存在」
+      clearEditor()
+      await refreshList()
+      return
+    }
+
+    await refreshList()
+
+    // 变的不是正在编辑的那一篇：列表刷新过就够了
+    if (!activeId || event.id !== activeId) return
+
+    if (event.kind === 'unlink') {
+      // 正在编辑的这篇被外面删了。必须把编辑器收起来——留着的话，
+      // 自动保存会把刚被删掉的文件又写回来，用户会觉得「怎么删都删不掉」
+      clearEditor()
+      toast('这篇笔记在外部被删除了，已从编辑器里收起来', 'error')
+      return
+    }
+
+    // 剩下的都意味着「这篇在磁盘上被改过」——包括外部改名（id 从 frontmatter
+    // 里认了回来，报成 change）和文件被删掉之后又被人放回来（报成 add）
+    if (event.kind !== 'change' && event.kind !== 'add') return
+    if (switching) return
+    await reloadFromDisk()
+  }
+
+  /**
+   * 磁盘上的内容变了，要不要盖掉编辑器里正在写的？
+   *
+   * 没改过就直接换掉：用户看到的就是最新的，这正是「双向同步」的意思。
+   * 改过就必须问一句——自动保存马上就会把编辑器里的内容写回磁盘，
+   * 这时无论选哪边都是覆盖另一边，不能替用户做这个决定。
+   */
+  async function reloadFromDisk(): Promise<void> {
+    const id = activeId
+    if (!id) return
+
+    if (dirty) {
+      const useDisk = await confirmAction({
+        title: '这篇笔记在外部被修改了',
+        message:
+          '你正在编辑的内容还没有保存。载入磁盘版本会丢掉刚输入的内容；保留你的内容的话，稍后的自动保存会覆盖磁盘上这次的改动。',
+        confirmText: '载入磁盘版本',
+        cancelText: '保留我的内容',
+        danger: true
+      })
+      if (!useDisk) {
+        setStatus('外部已修改 · 保留了你正在编辑的内容')
+        return
+      }
+      // 一定要先把「待保存」清掉：open() 开头会 flush() 一次，
+      // 不清的话它会把我们刚刚决定丢掉的那份内容又写回磁盘，
+      // 磁盘上的新版就这么被自己的旧版盖掉了——恰好是最该避免的事
+      window.clearTimeout(timer)
+      dirty = false
+    }
+
+    await open(id)
+    setStatus('已从磁盘刷新')
+  }
+
   /* ---------------------------------------------------------------- 事件 */
+
+  // app-shell 每次切路由都会重建视图，所以退订是必须的：
+  // 不退的话主进程那边会攒下一串永远没人调用的监听器
+  const offLibrary = bridge().events.onLibraryChanged((payload) => {
+    void handleLibraryEvent(payload)
+  })
 
   listEl?.addEventListener('click', (event) => {
     const target = event.target as HTMLElement | null
@@ -395,13 +493,11 @@ export function createNotesView(ctx: ViewContext): ViewInstance {
     if (!confirmed) return
 
     try {
+      const id = activeId
       dirty = false
       window.clearTimeout(timer)
-      await unwrap(bridge().notes.remove(activeId))
-      activeId = null
-      teardownEditor()
-      if (pane) pane.hidden = true
-      if (placeholder) placeholder.hidden = false
+      await unwrap(bridge().notes.remove(id))
+      clearEditor()
       await refreshList()
       toast('已移入回收站', 'success')
     } catch (error) {
@@ -431,6 +527,7 @@ export function createNotesView(ctx: ViewContext): ViewInstance {
       if (pending) await open(pending)
     },
     dispose() {
+      offLibrary()
       // 路由切走：把没保存的内容补写一次，不然最后敲的几个字就没了。
       // 内容必须**同步**取出来（teardownEditor 之后编辑器就没了），
       // 所以这里不复用 flush()

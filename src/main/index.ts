@@ -2,6 +2,7 @@ import { BrowserWindow, app } from 'electron'
 
 import { benchEnabled, prepareBenchDataIfRequested, runBenchIfRequested } from './bench'
 import { context, initContext, sweepOrphanFiles } from './context'
+import { startNotesSync } from './ipc/notes'
 import { registerIpcHandlers } from './ipc/register'
 import { mark } from './metrics'
 import { installAssetProtocol } from './services/assetProtocol'
@@ -57,6 +58,11 @@ if (!app.requestSingleInstanceLock()) {
       // 必须在建窗之前把测试数据写好，否则渲染层可能先读到空数据
       await prepareSmokeDataIfRequested()
       if (benchEnabled()) await prepareBenchDataIfRequested()
+
+      // 文件监听放在数据准备之后：ignoreInitial 只保证「首轮扫描不报事件」，
+      // 而那之后再发生的写入都会报，种数据正好卡在这个缝里
+      mark('notes-sync:start')
+      startNotesSync()
 
       const win = createMainWindow()
       mark('window:created')

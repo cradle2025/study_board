@@ -14,6 +14,7 @@ import { context, refreshBuckets } from '../context'
 import { ensureDir } from '../paths'
 import { MAX_PERIODS, MIN_PERIODS, resolveNotesDir } from '../services/settings'
 import { broadcast, handle } from './index'
+import { restartNotesSync } from './notes'
 
 /**
  * 设置相关的 IPC。
@@ -109,6 +110,19 @@ function sanitizePatch(raw: unknown): SettingsPatch {
   return patch
 }
 
+/**
+ * 设置改完之后统一收尾。
+ *
+ * 三个设置入口都会走到这里，但**只有真的换了笔记库目录时**才去重接文件监听：
+ * 改个主题、调下节数也会走这条路，每次都重接的话会顺手推一个 reset，
+ * 笔记页正在编辑的那篇会被莫名其妙地放掉。
+ */
+function refreshBucketsAndResync(): void {
+  const before = context().notes.dir
+  refreshBuckets()
+  if (context().notes.dir !== before) restartNotesSync()
+}
+
 export function registerSettingsHandlers(): void {
   handle<unknown, AppSettings>(CHANNELS.SETTINGS_GET, () => {
     return structuredClone(context().settings.get()) as AppSettings
@@ -117,7 +131,7 @@ export function registerSettingsHandlers(): void {
   handle<unknown, AppSettings>(CHANNELS.SETTINGS_PATCH, (raw) => {
     const patch = sanitizePatch(raw)
     const next = context().settings.patch(patch)
-    refreshBuckets()
+    refreshBucketsAndResync()
     broadcast(CHANNELS.EVENT_SETTINGS_CHANGED, next)
     return structuredClone(next) as AppSettings
   })
@@ -133,7 +147,7 @@ export function registerSettingsHandlers(): void {
     const picked = resolve(result.filePaths[0] as string)
     ensureDir(picked)
     const next = context().settings.patch({ notesLibraryDir: picked })
-    refreshBuckets()
+    refreshBucketsAndResync()
     broadcast(CHANNELS.EVENT_SETTINGS_CHANGED, next)
     return structuredClone(next) as AppSettings
   })
@@ -142,7 +156,7 @@ export function registerSettingsHandlers(): void {
     const settings = context().settings.get()
     const next = context().settings.patch({ notesLibraryDir: '' })
     ensureDir(resolveNotesDir(next))
-    refreshBuckets()
+    refreshBucketsAndResync()
     broadcast(CHANNELS.EVENT_SETTINGS_CHANGED, next)
     console.info(`[settings] 笔记库已回退到默认位置（原目录：${settings.notesLibraryDir}）`)
     return structuredClone(next) as AppSettings

@@ -1,5 +1,13 @@
 import { BrowserWindow, app } from 'electron'
-import { mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
+import {
+  appendFileSync,
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  renameSync,
+  rmSync,
+  writeFileSync
+} from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 
@@ -26,13 +34,19 @@ import { encodePng } from './services/png'
  *              「记笔记」跳转、笔记落盘成 Obsidian 认得的文件
  *  - notes     额外验证双模式编辑器：CodeMirror 与 TipTap 的按需加载、
  *              工具栏命令、md ↔ 富文本来回切换、切换前自动备份
+ *  - sync      额外验证笔记库文件监听：外部新增 / 改动 / 删除能不能被认出来、
+ *              自己写盘会不会造成事件回环、外部改动撞上未保存内容时会不会先问一句
  *
  * 门户场景**不测图标抓取**：那需要真实网络，在无网的 CI 里会让自检变成随机失败。
  * 图标文件由本文件直接造好写进图标目录，测的是「图标能不能显示出来」这条链路，
  * 而不是「能不能从外网抓下来」——后者本来就该由人点一下按钮确认。
+ *
+ * sync 场景也刻意**不测「换个真编辑器」**：这里直接往磁盘上写文件，
+ * 那正是任何外部程序最终做的事——Obsidian 保存、VS Code 保存、记事本保存，
+ * 落到文件系统层面都是同一件事。测 IPC 之外那条真实路径才有意义。
  */
 
-export type SmokeScenario = 'basic' | 'timetable' | 'portal' | 'cards' | 'notes'
+export type SmokeScenario = 'basic' | 'timetable' | 'portal' | 'cards' | 'notes' | 'sync'
 
 export function smokeEnabled(): boolean {
   return process.env['STUDY_BOARD_SMOKE'] === '1'
@@ -44,6 +58,7 @@ export function smokeScenario(): SmokeScenario {
   if (value === 'portal') return 'portal'
   if (value === 'cards') return 'cards'
   if (value === 'notes') return 'notes'
+  if (value === 'sync') return 'sync'
   return 'basic'
 }
 
@@ -482,6 +497,152 @@ const NOTES_PROBE = `(async () => {
   })
 })()`
 
+/* --------------------------------------------------- 文件监听（双向同步） */
+
+/**
+ * 「外部程序」写入的那篇笔记。
+ *
+ * id 写死是有意的：下一步要让一张卡片指着它，好验证「文件被外部删掉之后
+ * 卡片会不会自动解开关联」。id 写在文件里，认领时就会被原样捡回来。
+ */
+const SYNC_EXTERNAL_FILE = '外部新增的笔记.md'
+const SYNC_EXTERNAL_ID = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee'
+/** 种子那篇被外部改名之后的名字 */
+const SYNC_RENAMED_FILE = '改过名的笔记.md'
+
+const EXTERNAL_APPEND_1 = '外部追加的第一段。'
+const EXTERNAL_APPEND_2 = '外部追加的第二段。'
+const EXTERNAL_APPEND_3 = '外部追加的第三段。'
+
+/** 打开那篇笔记，并验明「自己写盘不会引起事件回环」 */
+const SYNC_OPEN_PROBE = `(async () => {
+  ${PROBE_HELPERS}
+  const nav = await waitFor('[data-route="notes"]')
+  if (!nav) return JSON.stringify({ error: '导航未就绪' })
+  nav.click()
+
+  // 顺手把收到的事件记下来：出问题时这几行比任何猜测都管用
+  window.__syncEvents = []
+  window.studyBoard.events.onLibraryChanged((p) => {
+    window.__syncEvents.push(p.kind + ' ' + p.fileName)
+  })
+
+  const listed = await waitForCount('.sb-notes__item', 1)
+  if (!listed) return JSON.stringify({ error: '笔记列表不是 1 条' })
+  document.querySelector('.sb-notes__item').click()
+
+  const cmReady = await waitFor('.cm-editor', 20000)
+  const loaded = await waitForValue('[data-role="title"]', '编辑器自检')
+  if (!cmReady || !loaded) return JSON.stringify({ error: '笔记没打开' })
+  await wait(300)
+
+  // —— 自己写一次盘。自动保存每次落盘都会产生文件事件，没过滤掉的话
+  // 用户每打一个字编辑器就会被重建一次。编辑器是不是同一个 DOM 节点，
+  // 是这件事最直接、也最不容易假装过去的证据，所以留个引用到后面比
+  window.__syncEditorRef = document.querySelector('.cm-editor')
+  const hr = document.querySelector('.sb-editorbar [data-command="hr"]')
+  if (!hr) return JSON.stringify({ error: '工具栏没渲染' })
+  hr.click()
+  const saved = await waitForText('[data-role="status"]', '已保存', 8000)
+  await wait(2000)
+
+  const same = window.__syncEditorRef === document.querySelector('.cm-editor')
+  return JSON.stringify({
+    opened: true, saved, noEcho: same,
+    selfEvents: window.__syncEvents.slice()
+  })
+})()`
+
+/** 外部新增一篇：列表要自己长出来 */
+const SYNC_ADD_PROBE = `(async () => {
+  ${PROBE_HELPERS}
+  await waitForCount('.sb-notes__item', 2, 12000)
+  // 元素取不到时不要把探针本身弄崩——那样只会得到一句「执行失败」，
+  // 什么线索都没有，不如把现场描述清楚
+  const list = document.querySelector('[data-role="list"]')
+  const listed = list ? list.textContent.includes('外部新增的笔记') : false
+  const count = document.querySelectorAll('.sb-notes__item').length
+  return JSON.stringify({
+    count, listed, hasList: Boolean(list),
+    addOk: listed && count === 2,
+    events: window.__syncEvents.slice()
+  })
+})()`
+
+/** 外部改了正在编辑的这篇：编辑器要整个换成磁盘上的新版 */
+const SYNC_CHANGE_PROBE = `(async () => {
+  ${PROBE_HELPERS}
+  const shown = await waitForText('.cm-content', '外部追加的第一段', 12000)
+  const refreshed = window.__syncEditorRef !== document.querySelector('.cm-editor')
+  const title = document.querySelector('[data-role="title"]').value
+  return JSON.stringify({ shown, refreshed, title, changeOk: shown && refreshed && title === '编辑器自检' })
+})()`
+
+/** 外部删掉那篇：列表要收起；顺便把编辑器置脏，好验下一步的冲突追问 */
+const SYNC_UNLINK_PROBE = `(async () => {
+  ${PROBE_HELPERS}
+  const gone = await waitForGone('外部新增的笔记', 12000)
+  const count = document.querySelectorAll('.sb-notes__item').length
+
+  // 改标题不会触发自动保存（只有点「重命名」才落盘），所以这个「脏」
+  // 会稳稳留到下一步，不会半路被自动保存清掉
+  const input = document.querySelector('[data-role="title"]')
+  input.value = '编辑器自检（改了还没保存）'
+  input.dispatchEvent(new Event('input', { bubbles: true }))
+  const dirty = document.querySelector('[data-role="status"]').textContent.includes('标题待保存')
+
+  return JSON.stringify({ gone, count, dirty, unlinkOk: gone && count === 1 && dirty })
+})()`
+
+/** 有未保存内容时撞上外部改动：必须先问一句；选「保留我的内容」则编辑器不动 */
+const SYNC_CONFLICT_KEEP_PROBE = `(async () => {
+  ${PROBE_HELPERS}
+  const confirm = await waitFor('.sb-modal [data-role="confirm"]', 12000)
+  if (!confirm) return JSON.stringify({ error: '外部改动没有追问' })
+  const asked = document.querySelector('.sb-modal__message').textContent.includes('还没有保存')
+  document.querySelector('.sb-modal [data-role="cancel"]').click()
+  await wait(700)
+
+  const body = document.querySelector('.cm-content').textContent
+  const status = document.querySelector('[data-role="status"]').textContent
+  const kept = !body.includes('外部追加的第二段')
+  return JSON.stringify({ asked, kept, status, keepOk: asked && kept })
+})()`
+
+/** 同样的冲突，这次选「载入磁盘版本」：编辑器要换成磁盘上的内容 */
+const SYNC_CONFLICT_LOAD_PROBE = `(async () => {
+  ${PROBE_HELPERS}
+  const confirm = await waitFor('.sb-modal [data-role="confirm"]', 12000)
+  if (!confirm) return JSON.stringify({ error: '第二次外部改动没有追问' })
+  confirm.click()
+
+  const shown = await waitForText('.cm-content', '外部追加的第三段', 12000)
+  const title = document.querySelector('[data-role="title"]').value
+  const status = document.querySelector('[data-role="status"]').textContent
+  return JSON.stringify({ shown, title, status, loadOk: shown && title === '编辑器自检' })
+})()`
+
+/**
+ * 外部改名。
+ *
+ * 这是整条链路上最容易出事的一种：如果对账把「改名」当成「删一篇 + 加一篇」，
+ * 卡片与笔记的关联就会在用户改个文件名的时候无声地断掉。
+ * 所以这里同时验三件事：列表里的标题跟着换、正在编辑的那篇没被弄丢、
+ * 卡片仍然指着同一个 id。
+ */
+const SYNC_RENAME_PROBE = `(async () => {
+  ${PROBE_HELPERS}
+  const listed = await waitForText('[data-role="list"]', '改过名的笔记', 12000)
+  const title = document.querySelector('[data-role="title"]').value
+  const body = document.querySelector('.cm-content').textContent
+  const oldGone = !document.querySelector('[data-role="list"]').textContent.includes('编辑器自检')
+  const keptBody = body.includes('外部追加的第三段')
+  return JSON.stringify({
+    listed, title, keptBody, oldGone,
+    renameOk: listed && title === '改过名的笔记' && keptBody && oldGone
+  })
+})()`
+
 const CARDS_PROBE = `(async () => {
   ${PROBE_HELPERS}
   const nav = await waitFor('[data-route="study"]')
@@ -755,7 +916,8 @@ export function runSmokeTestIfRequested(win: BrowserWindow): void {
           : scenario === 'notes'
             ? NOTES_PROBE
             : BASIC_PROBE
-  const timeoutMs = scenario === 'basic' ? 20_000 : 35_000
+  // sync 场景要在主进程与渲染层之间来回走好几趟，比别的场景长得多
+  const timeoutMs = scenario === 'basic' ? 20_000 : scenario === 'sync' ? 70_000 : 35_000
 
   const timer = setTimeout(() => {
     console.error(`[smoke] 超时：渲染层 ${timeoutMs / 1000} 秒内未完成自检`)
@@ -786,6 +948,22 @@ export function runSmokeTestIfRequested(win: BrowserWindow): void {
   })
 
   win.webContents.once('did-finish-load', () => {
+    // sync 场景要在「外部程序写盘」和「界面该有什么反应」之间来回切，
+    // 一趟 executeJavaScript 装不下，所以单独走一条链路
+    if (scenario === 'sync') {
+      void runSyncScenario(win)
+        .then((passed) => {
+          clearTimeout(timer)
+          setTimeout(() => app.exit(passed ? 0 : 1), 200)
+        })
+        .catch((error: unknown) => {
+          clearTimeout(timer)
+          console.error('[smoke] sync 场景执行失败：', error)
+          app.exit(1)
+        })
+      return
+    }
+
     void win.webContents
       .executeJavaScript(probe, true)
       .then(async (raw: unknown) => {
@@ -900,6 +1078,7 @@ export async function prepareSmokeDataIfRequested(): Promise<void> {
   else if (scenario === 'portal') seedPortal()
   else if (scenario === 'cards') seedCards()
   else if (scenario === 'notes') seedNotes()
+  else if (scenario === 'sync') seedNotes()
 }
 
 /**
@@ -997,6 +1176,147 @@ function verifyExternalNote(): boolean {
 
   console.info(`[smoke] 外部笔记对账通过：新增认得出、id 捡得回、删除不掉队`)
   return true
+}
+
+/* --------------------------------------------------- 文件监听（双向同步） */
+
+function settle(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms))
+}
+
+/** 模拟外部编辑器保存：直接往文件末尾追加。Obsidian 保存落到磁盘上也是这一件事 */
+function appendExternal(fileName: string, text: string): void {
+  appendFileSync(join(context().notes.dir, fileName), `\n\n${text}\n`, 'utf-8')
+}
+
+/**
+ * 笔记被外部删除之后，指着它的卡片必须自己解开关联。
+ *
+ * 只断言界面是不够的：界面那边只是把列表收起来了，卡片身上留着的 noteId
+ * 才是真正会出问题的地方——用户回到课程页点「记笔记」会跳进一个空页面，
+ * 而且没有任何提示说明为什么。
+ */
+function verifyCardUnlinked(cardId: string): boolean {
+  const card = context().cards.list().find((item) => item.id === cardId)
+  if (!card) {
+    console.error('[smoke] 找不到关联测试用的那张卡片')
+    return false
+  }
+  if (card.noteId !== '') {
+    console.error(`[smoke] 笔记被外部删除后，卡片仍然指着 ${card.noteId}`)
+    return false
+  }
+  console.info('[smoke] 外部删除笔记之后，卡片关联已自动解开')
+  return true
+}
+
+/**
+ * 改名之后卡片还得指着同一篇。
+ *
+ * 这一条才是「外部改名不能当成删一篇加一篇」的验金石：文件换了名字，
+ * 但笔记的 id 没变（它写在文件的 frontmatter 里，认领时会原样捡回来），
+ * 所以卡片的关联必须原封不动。断了就说明对账把改名拆成了删除 + 新增。
+ */
+function verifyCardStillLinked(cardId: string, noteId: string): boolean {
+  const card = context().cards.list().find((item) => item.id === cardId)
+  if (!card) {
+    console.error('[smoke] 找不到改名测试用的那张卡片')
+    return false
+  }
+  if (card.noteId !== noteId) {
+    console.error(`[smoke] 外部改名把卡片关联弄断了：期望 ${noteId}，实际 ${card.noteId || '（空）'}`)
+    return false
+  }
+  console.info('[smoke] 外部改名之后，卡片关联仍然指着同一篇')
+  return true
+}
+
+/**
+ * 文件监听场景。
+ *
+ * 来回七趟：开笔记（顺带验「自己写盘不回环」）→ 外部新增 → 外部改动 →
+ * 外部删除（顺带验卡片解绑）→ 冲突选保留 → 冲突选载入 → 外部改名。
+ *
+ * 每一趟之间都由主进程直接写磁盘。这就是「外部编辑器」最终在做的事，
+ * 只是省掉了那个编辑器——测的仍然是真实的那条路径。
+ */
+async function runSyncScenario(win: BrowserWindow): Promise<boolean> {
+  const probe = async (script: string): Promise<Record<string, unknown>> => {
+    const raw = await win.webContents.executeJavaScript(script, true)
+    const parsed = JSON.parse(String(raw)) as Record<string, unknown>
+    console.info('[smoke] 同步自检：', raw)
+    return parsed
+  }
+
+  const seeded = context().notes.list().find((note) => note.title === '编辑器自检')
+  if (!seeded) {
+    console.error('[smoke] 种子里没有那篇笔记')
+    return false
+  }
+
+  // —— 1. 打开笔记，并自己写一次盘
+  const opened = await probe(SYNC_OPEN_PROBE)
+  if (!opened['opened']) return false
+  if (!opened['noEcho']) {
+    console.error('[smoke] 自己写盘触发了事件回环：编辑器被重载了')
+  }
+
+  // —— 2. 外部新增一篇：列表要自己长出来
+  writeFileSync(
+    join(context().notes.dir, SYNC_EXTERNAL_FILE),
+    `---\nid: ${SYNC_EXTERNAL_ID}\nmode: markdown\n---\n\n来自 Obsidian 的一段话\n`,
+    'utf-8'
+  )
+  await settle(2000)
+  const added = await probe(SYNC_ADD_PROBE)
+
+  // —— 3. 外部改正在编辑的那篇：编辑器要换成磁盘上的版本
+  appendExternal(seeded.fileName, EXTERNAL_APPEND_1)
+  await settle(2000)
+  const changed = await probe(SYNC_CHANGE_PROBE)
+
+  // —— 4. 先让一张卡片指着那篇外部笔记，再把文件删掉
+  const card = context().cards.upsert({ courseName: '外部删除联动测试', teacher: '自检' })
+  context().cards.linkNote(card.id, SYNC_EXTERNAL_ID)
+  rmSync(join(context().notes.dir, SYNC_EXTERNAL_FILE), { force: true })
+  // 删除要两次确认才上报（用来挡「先删原文件再写新的」那种保存方式），等久一点
+  await settle(3000)
+  const unlinked = await probe(SYNC_UNLINK_PROBE)
+  const cardOk = verifyCardUnlinked(card.id)
+
+  // —— 5. 编辑器里有没保存的改动时，外部再改必须先问一句
+  appendExternal(seeded.fileName, EXTERNAL_APPEND_2)
+  await settle(2000)
+  const kept = await probe(SYNC_CONFLICT_KEEP_PROBE)
+
+  // —— 6. 同样的冲突，这次选择载入磁盘上的版本
+  appendExternal(seeded.fileName, EXTERNAL_APPEND_3)
+  await settle(2000)
+  const loaded = await probe(SYNC_CONFLICT_LOAD_PROBE)
+
+  // —— 7. 外部改名：文件换个名字，但 id 写在里面没动。
+  // 对账必须把「改名」认成改名，而不是「删一篇 + 加一篇」——
+  // 否则用户只是在 Obsidian 里改个文件名，卡片关联就无声地断了
+  const renameCard = context().cards.upsert({ courseName: '外部改名联动测试', teacher: '自检' })
+  context().cards.linkNote(renameCard.id, seeded.id)
+  renameSync(join(context().notes.dir, seeded.fileName), join(context().notes.dir, SYNC_RENAMED_FILE))
+  await settle(2500)
+  const renamed = await probe(SYNC_RENAME_PROBE)
+  const renameCardOk = verifyCardStillLinked(renameCard.id, seeded.id)
+
+  await captureIfRequested(win, 'sync.png')
+
+  return Boolean(
+    opened['noEcho'] &&
+      added['addOk'] &&
+      changed['changeOk'] &&
+      unlinked['unlinkOk'] &&
+      cardOk &&
+      kept['keepOk'] &&
+      loaded['loadOk'] &&
+      renamed['renameOk'] &&
+      renameCardOk
+  )
 }
 
 /** 截图落到 STUDY_BOARD_SMOKE_SHOT 所在目录下 */

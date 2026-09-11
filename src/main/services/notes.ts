@@ -39,7 +39,44 @@ import { parseFrontmatter, scalar, stringifyFrontmatter, type Frontmatter } from
 const INDEX_VERSION = 1
 const INDEX_DIR = '.study-board'
 const TRASH_DIR = 'trash'
-const NOTE_EXT = '.md'
+/** 笔记正文的扩展名。文件监听要靠它把「笔记」和别的杂项文件分开 */
+export const NOTE_EXT = '.md'
+
+/**
+ * 写入指纹的保留量。
+ *
+ * 自动保存每 800ms 落一次盘，指纹表会一直长；超过这个量就把老的清掉。
+ * 清早了也不会出错——只是那条写入可能被当成外部改动，多刷一次界面而已。
+ */
+const MAX_WRITE_MARKS = 64
+
+/** 指纹的存活时间：这么久都没再用上就可以扔了 */
+const WRITE_MARK_TTL = 30_000
+
+/** 只认形状像 uuid 的 id：随手写的 `id: 1` 不该被当成一篇笔记的身份 */
+function isNoteId(value: string): boolean {
+  return /^[0-9a-fA-F-]{36}$/.test(value)
+}
+
+/**
+ * 一次对账发现的变化。
+ *
+ * 三组之间**互不重叠**：同一个 id 不会既出现在 added 又出现在 removed 里。
+ * 这个不变式由对账自己保证，而不是指望调用方去重——调用方很容易只处理
+ * removed 那半边，于是把卡片关联白白解掉一轮。
+ */
+export interface NotesReconcileDiff {
+  /** 磁盘上新出现、索引里没有的笔记 */
+  added: NoteMeta[]
+  /** id 不变、文件名变了的笔记（外部改名） */
+  renamed: NoteMeta[]
+  /** 索引里有、磁盘上没了，且没有以别的文件名重新出现 */
+  removed: Array<{ id: string; fileName: string }>
+}
+
+function emptyDiff(): NotesReconcileDiff {
+  return { added: [], renamed: [], removed: [] }
+}
 
 /** Windows 上的保留文件名：叫这些名字的文件根本创建不出来 */
 const RESERVED_NAMES = new Set([
@@ -99,6 +136,17 @@ export class NotesStore {
   #dir: string
   #indexFile: string
   #index: IndexContent
+  /**
+   * 「这个文件是我们自己刚写的」——按文件名记下写入后的 size + mtime。
+   *
+   * 文件监听会把我们自己写盘的动静也报上来。不过滤的话，自动保存每 800ms
+   * 写一次，用户每打一个字编辑器就会被重载一次，完全没法用。
+   *
+   * 为什么按指纹记而不是「多少毫秒内写的一律忽略」：时间窗是个猜出来的数，
+   * 短了会漏、长了会把用户紧接着做的外部修改也一起吃掉。指纹是确定的——
+   * 写完立刻 stat 一次，之后文件再被人动过，size 或 mtime 必有一个变。
+   */
+  #written = new Map<string, { size: number; mtimeMs: number; at: number }>()
 
   constructor(dir: string) {
     this.#dir = ensureDir(dir)
@@ -163,17 +211,28 @@ export class NotesStore {
   }
 
   /**
-   * 与磁盘对账。
+   * 与磁盘对账，**并把差异报出来**。
    *
    * 三种情况：
    *  - 索引里有、磁盘上也在 → 标题可能被外部改名了，跟着文件名走；
    *  - 磁盘上有、索引里没有 → 外部新建的笔记，给它分配一个 id
    *    （优先沿用 frontmatter 里已有的 id）；
    *  - 索引里有、磁盘上没了 → 外部删除的，从索引里摘掉。
+   *
+   * 返回值要给文件监听拿去广播事件，所以这里必须把两件容易搞错的事做对：
+   *
+   *  1. **外部改名不是「删一篇 + 加一篇」**。我们的文件里写着 id，改名之后
+   *     frontmatter 还在，所以能把 id 认回来。只有认回来，
+   *     用户在 Obsidian 里改个文件名才不会把课程卡片与笔记的关联弄断。
+   *  2. **同一个 id 不能既报 removed 又报 added**。否则调用方会先解开卡片关联、
+   *     再重新关联，白折腾一轮；更糟的是调用方很容易只处理其中一边。
    */
-  #reconcile(): boolean {
+  reconcile(): NotesReconcileDiff {
+    const diff = emptyDiff()
     let changed = false
     const files = this.#scan()
+    const onDisk = new Set(files.map((name) => name.toLowerCase()))
+
     const byFileName = new Map<string, string>()
     for (const [id, meta] of Object.entries(this.#index.notes)) {
       byFileName.set(meta.fileName.toLowerCase(), id)
@@ -183,16 +242,18 @@ export class NotesStore {
 
     for (const fileName of files) {
       const title = parsePath(fileName).name
-      const id = byFileName.get(fileName.toLowerCase())
+      const knownId = byFileName.get(fileName.toLowerCase())
 
-      if (id) {
-        seen.add(id)
-        const meta = this.#index.notes[id] as NoteMeta
-        if (meta.fileName !== fileName) {
-          // 外部改名：标题跟着走。id 不变，卡片关联不受影响
+      if (knownId) {
+        seen.add(knownId)
+        const meta = this.#index.notes[knownId]
+        // 文件名只有大小写变了。Windows / macOS 的编辑器干得出这种事，
+        // 而文件系统本身不区分大小写，不专门看一眼就会被漏掉
+        if (meta && meta.fileName !== fileName) {
           meta.fileName = fileName
           meta.title = title
           meta.updatedAt = new Date().toISOString()
+          diff.renamed.push({ ...meta })
           changed = true
         }
         continue
@@ -202,10 +263,25 @@ export class NotesStore {
       const head = readHead(filePath, NOTE_HEAD_BYTES)
       const { data } = parseFrontmatter(head)
       const claimed = scalar(data['id'])
-      // 只认「格式像 uuid 且索引里没用过」的 id，防止两份笔记互相抢同一个 id
-      const usable =
-        /^[0-9a-fA-F-]{36}$/.test(claimed) && !(claimed in this.#index.notes)
-      const newIdValue = usable ? claimed : newId()
+      const existing = isNoteId(claimed) ? this.#index.notes[claimed] : undefined
+
+      // 认得出 id、而它原来那个文件名已经不在硬盘上了 → 这是**外部改名**。
+      // 「旧文件还在不在」这一条不能省：同一个 id 的两份文件同时存在
+      // （用户复制了一份）会让它们来回抢同一个 id，每次对账都翻一次面
+      if (existing && !onDisk.has(existing.fileName.toLowerCase())) {
+        existing.fileName = fileName
+        existing.title = title
+        existing.updatedAt = new Date().toISOString()
+        seen.add(existing.id)
+        diff.renamed.push({ ...existing })
+        changed = true
+        continue
+      }
+
+      // 全新的一篇。只认「格式像 uuid 且索引里没用过」的 id，
+      // 防止两份笔记互相抢同一个 id
+      const usable = isNoteId(claimed) && !(claimed in this.#index.notes)
+      const id = usable ? claimed : newId()
 
       let createdAt = new Date().toISOString()
       try {
@@ -214,31 +290,33 @@ export class NotesStore {
         /* 拿不到时间就用当前时间 */
       }
 
-      this.#index.notes[newIdValue] = {
-        id: newIdValue,
+      const meta: NoteMeta = {
+        id,
         title,
         fileName,
         mode: modeOf(data['mode']),
         createdAt: String(data['createdAt'] ?? '') || createdAt,
         updatedAt: createdAt
       }
-      seen.add(newIdValue)
+      this.#index.notes[id] = meta
+      seen.add(id)
+      diff.added.push({ ...meta })
       changed = true
     }
 
-    for (const id of Object.keys(this.#index.notes)) {
-      if (!seen.has(id)) {
-        delete this.#index.notes[id]
-        changed = true
-      }
+    for (const [id, meta] of Object.entries(this.#index.notes)) {
+      if (seen.has(id)) continue
+      diff.removed.push({ id, fileName: meta.fileName })
+      delete this.#index.notes[id]
+      changed = true
     }
 
     if (changed) this.#persistIndex()
-    return changed
+    return diff
   }
 
   list(): NoteMeta[] {
-    this.#reconcile()
+    this.reconcile()
     return Object.values(this.#index.notes)
       .map((meta) => ({ ...meta }))
       .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
@@ -246,8 +324,76 @@ export class NotesStore {
 
   find(id: unknown): NoteMeta | null {
     const target = String(id ?? '')
-    this.#reconcile()
+    this.reconcile()
     return this.#index.notes[target] ?? null
+  }
+
+  /** 按文件名找笔记。文件监听给的是路径，不是 id */
+  #metaByFileName(fileName: string): NoteMeta | null {
+    const key = fileName.toLowerCase()
+    for (const meta of Object.values(this.#index.notes)) {
+      if (meta.fileName.toLowerCase() === key) return meta
+    }
+    return null
+  }
+
+  /**
+   * 外部改动之后把时间戳跟上去。
+   *
+   * 列表是按 updatedAt 排的。用户在 Obsidian 里改完笔记切回来，
+   * 如果这篇还排在老位置、日期还是上周的，会让人以为压根没同步。
+   *
+   * 时间取文件的 mtime 而不是「现在」：mtime 才是这次改动真正发生的时间，
+   * 而且它跟我们自己写盘时的 updatedAt 落在同一个刻度上（都是那一次写入的时刻）。
+   */
+  touch(fileName: string): NoteMeta | null {
+    const meta = this.#metaByFileName(fileName)
+    if (!meta) return null
+
+    try {
+      meta.updatedAt = statSync(safeJoin(this.#dir, fileName)).mtime.toISOString()
+    } catch {
+      meta.updatedAt = new Date().toISOString()
+    }
+    this.#persistIndex()
+    return { ...meta }
+  }
+
+  /**
+   * 记下「这个文件是我们自己刚写的」。
+   *
+   * 写完立刻 stat 一次取指纹。这一步必须紧跟在写之后：中间被别人插一脚，
+   * 指纹就记成别人的了，后果是我们会把那次外部改动当成自己的动静忽略掉。
+   */
+  #remember(fileName: string): void {
+    const key = fileName.toLowerCase()
+    try {
+      const stat = statSync(safeJoin(this.#dir, fileName))
+      this.#written.set(key, { size: stat.size, mtimeMs: stat.mtimeMs, at: Date.now() })
+    } catch {
+      this.#written.delete(key)
+      return
+    }
+
+    if (this.#written.size > MAX_WRITE_MARKS) {
+      const cutoff = Date.now() - WRITE_MARK_TTL
+      for (const [name, mark] of this.#written) {
+        if (mark.at < cutoff) this.#written.delete(name)
+      }
+    }
+  }
+
+  /** 磁盘上的这个文件是不是我们自己刚写的 */
+  isSelfWrite(fileName: string): boolean {
+    const mark = this.#written.get(fileName.toLowerCase())
+    if (!mark) return false
+    try {
+      const stat = statSync(safeJoin(this.#dir, fileName))
+      return stat.size === mark.size && stat.mtimeMs === mark.mtimeMs
+    } catch {
+      // 文件已经不在（例如刚刚被自己收进回收站）→ 不算「自己写的」
+      return false
+    }
   }
 
   read(id: unknown): NoteDoc {
@@ -301,6 +447,8 @@ export class NotesStore {
     const tmp = `${filePath}.tmp`
     writeFileSync(tmp, payload, { encoding: 'utf-8', mode: 0o600 })
     renameSync(tmp, filePath)
+    // 紧跟着记指纹：文件监听马上就会为这次写入报事件，得认得出来是自己干的
+    this.#remember(fileName)
   }
 
   create(rawTitle: string, content = ''): NoteDoc {
@@ -404,6 +552,9 @@ export class NotesStore {
 
     delete this.#index.notes[meta.id]
     this.#persistIndex()
+    // 指纹跟着一起清掉。留着的话，下次真有同名文件出现时，
+    // 万一 size 与 mtime 又恰好撞上，那次外部改动就会被我们当成自己的动静放过
+    this.#written.delete(meta.fileName.toLowerCase())
   }
 
   /**
