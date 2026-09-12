@@ -52,7 +52,12 @@ export function installAssetProtocol(getBuckets: () => AssetBuckets): void {
   protocol.handle(ASSET_SCHEME, async (request) => {
     try {
       const url = new URL(request.url)
-      const base = pickBase(url.hostname, getBuckets())
+      // 桶名**不区分大小写**：Electron 在把请求交到 protocol.handle 之前
+      // 会把 hostname 规范化成小写（实测：渲染层发 sb-asset://TIMETABLE/x.png，
+      // 这里收到的 url.hostname 已经是 'timetable'）。Node 的 new URL() 对
+      // 非特殊 scheme 并不做这件事，所以只跑单测是发现不了的。
+      // 规范化掉大小写，行为才只由「桶名对不对」决定，而不是由客户端写法决定
+      const base = pickBase(url.hostname.toLowerCase(), getBuckets())
       const relative = decodeURIComponent(url.pathname).replace(/^\/+/, '')
       if (!relative) throw new Error('资源路径为空')
 

