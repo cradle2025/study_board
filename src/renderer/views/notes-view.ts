@@ -1,4 +1,10 @@
-import { EXPORT_EXTENSIONS, MAX_NOTE_BYTES } from '@shared/limits'
+import { findAiProvider, isLoopbackBaseUrl } from '@shared/aiProviders'
+import {
+  EXPORT_EXTENSIONS,
+  MAX_AI_CONTEXT,
+  MAX_AI_INSTRUCTION,
+  MAX_NOTE_BYTES
+} from '@shared/limits'
 import type { ExportFormat, LibraryChangedEvent, NoteMeta } from '@shared/types'
 
 import type { ViewContext, ViewInstance } from '../app-shell'
@@ -6,7 +12,7 @@ import { MODE_HINT, MODE_LABEL, type EditorHandle, type EditorMode } from '../li
 import { createEditorToolbar } from '../lib/editor/toolbar'
 import { escapeHtml } from '../lib/html'
 import { bridge, formatError, toast, unwrap } from '../lib/ipc'
-import { confirmAction, showFloating } from '../lib/overlay'
+import { confirmAction, openModalCard, showFloating } from '../lib/overlay'
 
 /**
  * 笔记页。
@@ -44,6 +50,21 @@ const EXPORT_ITEMS: ReadonlyArray<{ format: ExportFormat; label: string }> = [
   { format: 'pdf', label: 'PDF 文档' }
 ]
 
+/**
+ * 常用的整理要求。
+ *
+ * 给几个「按一下就能用」的起点，比让用户对着空输入框自己想措辞友好得多。
+ * 它们只是把文字填进输入框，用户可以随手改——所以这些是**例句**不是枚举值。
+ */
+const AI_PRESETS: ReadonlyArray<{ label: string; instruction: string }> = [
+  { label: '整理成大纲', instruction: '把这篇笔记整理成层级清晰的大纲，保留原有信息，不要增删事实' },
+  { label: '提炼要点', instruction: '提炼出这篇笔记的核心要点，用无序列表逐条列出，每条一句话' },
+  { label: '复习提纲', instruction: '根据这篇笔记生成一份复习提纲，按知识点分组，标出需要重点记忆的地方' },
+  { label: '解释难点', instruction: '找出这篇笔记里最难的几个概念，用更通俗的话解释一遍，可以打比方' },
+  { label: '出练习题', instruction: '根据这篇笔记出 5 道练习题并附答案，覆盖主要知识点' },
+  { label: '润色文字', instruction: '把这篇笔记的文字润色得更通顺，去掉口语和重复，不要改变原意' }
+]
+
 export function createNotesView(ctx: ViewContext): ViewInstance {
   const element = document.createElement('div')
   element.className = 'sb-view'
@@ -62,7 +83,12 @@ export function createNotesView(ctx: ViewContext): ViewInstance {
     <div class="sb-notice" data-role="lib-path">读取中…</div>
 
     <div class="sb-notes">
-      <aside class="sb-notes__list" data-role="list"></aside>
+      <aside class="sb-notes__list" data-role="list">
+        <div class="sb-notes__course" data-role="course-materials" hidden>
+          <div class="sb-notes__course-head">本课资料</div>
+          <div data-role="course-materials-list"></div>
+        </div>
+      </aside>
       <section class="sb-notes__editor">
         <p class="sb-empty" data-role="placeholder">从左边选一篇笔记，或者新建一篇。</p>
         <div class="sb-notes__pane" data-role="pane" hidden>
@@ -70,6 +96,8 @@ export function createNotesView(ctx: ViewContext): ViewInstance {
             <input class="sb-input sb-notes__title" data-role="title" type="text" maxlength="80" aria-label="笔记标题" />
             <div class="sb-toolbar">
               <span class="sb-badge" data-role="meta"></span>
+              <button class="sb-btn sb-btn--ghost" type="button" data-action="materials">插资料</button>
+              <button class="sb-btn sb-btn--ghost" type="button" data-action="ai">AI 助手</button>
               <button class="sb-btn sb-btn--ghost" type="button" data-action="export">导出</button>
               <button class="sb-btn sb-btn--ghost" type="button" data-action="rename">重命名</button>
               <button class="sb-btn sb-btn--ghost" type="button" data-action="delete">删除</button>
@@ -304,8 +332,74 @@ export function createNotesView(ctx: ViewContext): ViewInstance {
       dirty = false
       await mountEditor(doc.content, doc.mode)
       renderList()
+      void refreshCourseMaterials()
     } catch (error) {
       toast(`打不开这篇笔记：${formatError(error)}`, 'error')
+    }
+  }
+
+  /* ------------------------------------------------- 本课资料（侧栏 + 插引用） */
+
+  /**
+   * 当前笔记所属课程的资料。
+   *
+   * 笔记和课程的关联记在卡片身上（noteId），所以这里要反向查一次卡片；
+   * 查不到（未关联 / 已解绑）就把「本课资料」整块藏起来，不占侧栏地方。
+   */
+  async function refreshCourseMaterials(): Promise<void> {
+    const block = element.querySelector<HTMLElement>('[data-role="course-materials"]')
+    const host = element.querySelector<HTMLElement>('[data-role="course-materials-list"]')
+    if (!block || !host) return
+    if (!activeId) {
+      block.hidden = true
+      return
+    }
+    try {
+      const cards = await unwrap(bridge().cards.list())
+      const card = cards.find((entry) => entry.noteId === activeId)
+      const materials = card
+        ? (await unwrap(bridge().materials.list())).filter(
+            (item) => item.courseCardId === card.id && !item.missing
+          )
+        : []
+      if (!card || materials.length === 0) {
+        block.hidden = true
+        return
+      }
+      block.hidden = false
+      host.innerHTML = materials
+        .map(
+          (item) => `
+            <button class="sb-notes__material" type="button" data-material="${escapeHtml(item.id)}"
+                    title="${escapeHtml(item.fileName)}（点击打开）">
+              <span class="sb-notes__material-kind">${escapeHtml(item.ext.toUpperCase())}</span>
+              <span class="sb-notes__material-name">${escapeHtml(item.title)}</span>
+            </button>
+          `
+        )
+        .join('')
+    } catch {
+      block.hidden = true
+    }
+  }
+
+  async function insertMaterialReference(): Promise<void> {
+    if (!editor || !activeId) {
+      toast('先选一篇笔记再插资料', 'info')
+      return
+    }
+    try {
+      const cards = await unwrap(bridge().cards.list())
+      const card = cards.find((entry) => entry.noteId === activeId)
+      const items = await unwrap(bridge().materials.list())
+      const { openMaterialPickDialog } = await import('../components/material-form')
+      const picked = await openMaterialPickDialog(items, card?.id ?? '')
+      if (!picked) return
+      // Obsidian 的嵌入语法：库内文件名即路径，Obsidian 里能直接预览 PDF
+      editor.insertText(`![[${picked.fileName}]]`)
+      setStatus('已插入资料引用')
+    } catch (error) {
+      toast(`插入失败：${formatError(error)}`, 'error')
     }
   }
 
@@ -482,6 +576,213 @@ export function createNotesView(ctx: ViewContext): ViewInstance {
     }
   }
 
+  /* ------------------------------------------------------------- AI 助手 */
+
+  /**
+   * AI 助手：把整篇笔记 + 用户的要求发给大模型，拿回一段整理好的 Markdown。
+   *
+   * 三条设计上的取舍：
+   *  - **结果先预览，不直接改正文**。模型偶尔会跑偏，插进正文再让人自己删，
+   *    比「生成完直接替换」要麻烦得多。
+   *  - **不做「逐段改写」**。那需要把正文切成块、一块块往返，
+   *    既慢又容易在中途失败时留下半新半旧的正文。
+   *  - **认的是编辑器里的内容**，不是磁盘上那份：用户常常是写完一段就想整理一下，
+   *    这时候那一段还在编辑器里，没落盘。
+   */
+  async function openAiAssistant(): Promise<void> {
+    if (!editor || !activeId) return
+
+    const source = editor.getMarkdown()
+    if (!source.trim()) {
+      toast('这篇笔记还是空的，先写点内容再让 AI 整理', 'error')
+      return
+    }
+
+    const settings = ctx.getSettings()
+    const preset = findAiProvider(settings.ai.provider)
+    // 「有没有密钥」不等于「能不能用」：指向本机的地址不校验密钥。
+    // 这条判据要和主进程一致（看地址，不看预设 id），否则界面放行、主进程拦下
+    if (!settings.ai.hasApiKey && !isLoopbackBaseUrl(settings.ai.baseUrl)) {
+      const go = await confirmAction({
+        title: '还没配置 AI 服务',
+        message:
+          '请先在「设置 → AI 助手」里选一个服务商并保存 API Key。密钥是加密存在本机的，不会明文落盘，界面也不会回读。',
+        confirmText: '去设置'
+      })
+      if (go) ctx.navigate('settings')
+      return
+    }
+
+    let armTimer = 0
+    const modal = openModalCard({
+      className: 'sb-modal__card--ai',
+      onClose: () => window.clearTimeout(armTimer)
+    })
+
+    const scope = `${escapeHtml(preset?.label ?? '自定义')} · ${escapeHtml(settings.ai.model || '未设置模型')}`
+    modal.card.innerHTML = `
+      <div class="sb-modal__title">AI 助手</div>
+      <p class="sb-modal__message">处理整篇笔记（约 ${source.length} 字）· ${scope}</p>
+
+      <div class="sb-ai__presets" data-role="presets">
+        ${AI_PRESETS.map(
+          (item, index) =>
+            `<button class="sb-chip" type="button" data-preset="${index}">${escapeHtml(item.label)}</button>`
+        ).join('')}
+      </div>
+
+      <div class="sb-field">
+        <label for="sb-ai-instruction">整理要求</label>
+        <textarea id="sb-ai-instruction" class="sb-textarea" rows="3"
+                  placeholder="例如：把这篇笔记整理成一份复习提纲"></textarea>
+      </div>
+      <div class="sb-field">
+        <label for="sb-ai-focus">参考重点（可选）</label>
+        <input id="sb-ai-focus" class="sb-input" type="text" placeholder="例如：只看第三章" />
+      </div>
+
+      <div class="sb-ai__result" data-role="result" hidden>
+        <div class="sb-ai__preview" data-role="preview"></div>
+        <p class="sb-hint" data-role="usage"></p>
+        <div class="sb-inline sb-ai__apply">
+          <button class="sb-btn" type="button" data-role="replace">替换全文</button>
+          <button class="sb-btn sb-btn--primary" type="button" data-role="append">插入到文末</button>
+        </div>
+      </div>
+
+      <div class="sb-modal__actions">
+        <button class="sb-btn" type="button" data-role="cancel">关闭</button>
+        <button class="sb-btn sb-btn--primary" type="button" data-role="run">生成</button>
+      </div>
+    `
+
+    const instruction = modal.card.querySelector<HTMLTextAreaElement>('#sb-ai-instruction')
+    const focusInput = modal.card.querySelector<HTMLInputElement>('#sb-ai-focus')
+    const resultBox = modal.card.querySelector<HTMLElement>('[data-role="result"]')
+    const preview = modal.card.querySelector<HTMLElement>('[data-role="preview"]')
+    const usageEl = modal.card.querySelector<HTMLElement>('[data-role="usage"]')
+    const runButton = modal.card.querySelector<HTMLButtonElement>('[data-role="run"]')
+    const cancelButton = modal.card.querySelector<HTMLButtonElement>('[data-role="cancel"]')
+    const replaceButton = modal.card.querySelector<HTMLButtonElement>('[data-role="replace"]')
+
+    let generated: string | null = null
+    let armed = false
+
+    function disarm(): void {
+      armed = false
+      window.clearTimeout(armTimer)
+      if (!replaceButton) return
+      replaceButton.textContent = '替换全文'
+      replaceButton.classList.remove('sb-btn--danger')
+    }
+
+    modal.card.querySelector('[data-role="presets"]')?.addEventListener('click', (event) => {
+      const raw = (event.target as HTMLElement | null)?.closest<HTMLElement>('[data-preset]')
+        ?.dataset['preset']
+      const item = raw === undefined ? undefined : AI_PRESETS[Number(raw)]
+      if (!item || !instruction) return
+      instruction.value = item.instruction
+      instruction.focus()
+      // 换了要求，上一次的结果就作废了——留着会让人以为新要求已经生效
+      generated = null
+      if (resultBox) resultBox.hidden = true
+      disarm()
+    })
+
+    async function run(): Promise<void> {
+      if (!instruction) return
+      const text = instruction.value.trim()
+      if (!text) {
+        toast('先写下你想要的整理方式', 'error')
+        instruction.focus()
+        return
+      }
+      // 渲染层先拦一次是为了给出人话提示（别等发出去才报错）；主进程那边还会再收敛一次
+      if (source.length > MAX_AI_CONTEXT) {
+        toast(`这篇笔记太长了（${source.length} 字），超出单次能发送的上限`, 'error')
+        return
+      }
+
+      if (runButton) {
+        runButton.disabled = true
+        runButton.textContent = '生成中…'
+      }
+      if (cancelButton) cancelButton.disabled = true
+      try {
+        const result = await unwrap(
+          bridge().ai.complete({
+            instruction: text.slice(0, MAX_AI_INSTRUCTION),
+            focus: (focusInput?.value ?? '').trim(),
+            context: source
+          })
+        )
+        generated = result.text
+        disarm()
+        if (resultBox) resultBox.hidden = false
+        if (usageEl) {
+          usageEl.textContent = `${result.model} · 输入 ${result.usage.promptTokens} / 输出 ${result.usage.completionTokens} tokens`
+        }
+        if (preview) {
+          // 预览用的是和富文本编辑器**同一份** Markdown 解析器，
+          // 所以是「所见即所插」——不会出现预览好看、插进去变形
+          const { markdownFragmentToHtml } = await import('../lib/editor/convert')
+          preview.innerHTML = markdownFragmentToHtml(result.text)
+        }
+        if (runButton) runButton.textContent = '重新生成'
+      } catch (error) {
+        toast(`AI 请求失败：${formatError(error)}`, 'error')
+        if (runButton) runButton.textContent = '生成'
+      } finally {
+        if (runButton) runButton.disabled = false
+        if (cancelButton) cancelButton.disabled = false
+      }
+    }
+
+    /**
+     * 把结果落进正文。
+     *
+     * **不能指望编辑器的 onChange**：Markdown 那边 `dispatch` 会触发，
+     * 富文本那边 `setContent(..., { emitUpdate: false })` 明确不触发。
+     * 靠事件的话就变成「富文本模式下插入的内容永远不保存」——所以这里自己喊一次保存。
+     */
+    function applyResult(text: string, replaceAll: boolean): void {
+      if (!editor) return
+      const body = text.trim()
+      const next = replaceAll ? body : `${editor.getMarkdown().replace(/\s+$/, '')}\n\n${body}\n`
+      editor.setMarkdown(next)
+      scheduleSave()
+      toolbar?.refresh()
+    }
+
+    modal.card.querySelector('[data-role="append"]')?.addEventListener('click', () => {
+      if (!generated) return
+      applyResult(generated, false)
+      modal.close()
+      toast('已插入到笔记末尾', 'success')
+    })
+
+    replaceButton?.addEventListener('click', () => {
+      if (!generated) return
+      if (!armed) {
+        // 就地二次确认，不再叠一层确认框：那个新框和这个框都监听 Esc，
+        // 按一下会把两个一起关掉，连预览都没了
+        armed = true
+        replaceButton.textContent = '确认替换全文？'
+        replaceButton.classList.add('sb-btn--danger')
+        armTimer = window.setTimeout(disarm, 4000)
+        return
+      }
+      window.clearTimeout(armTimer)
+      applyResult(generated, true)
+      modal.close()
+      toast('已用 AI 的结果替换全文', 'success')
+    })
+
+    runButton?.addEventListener('click', () => void run())
+    cancelButton?.addEventListener('click', () => modal.close())
+    instruction?.focus()
+  }
+
   /* ---------------------------------------------------------------- 事件 */
 
   // app-shell 每次切路由都会重建视图，所以退订是必须的：
@@ -495,6 +796,26 @@ export function createNotesView(ctx: ViewContext): ViewInstance {
     const id = target?.closest<HTMLElement>('[data-note]')?.dataset['note']
     if (id && id !== activeId) void open(id)
   })
+
+  // 侧栏「本课资料」：点一下用系统默认程序打开（PDF 阅读器 / Office / WPS）
+  element
+    .querySelector('[data-role="course-materials-list"]')
+    ?.addEventListener('click', async (event) => {
+      const target = event.target as HTMLElement | null
+      const id = target?.closest<HTMLElement>('[data-material]')?.dataset['material']
+      if (!id) return
+      try {
+        await unwrap(bridge().materials.open(id))
+      } catch (error) {
+        toast(`打不开：${formatError(error)}`, 'error')
+      }
+    })
+
+  // 资料在任何页面被导入 / 删除后，本课资料列表跟着刷新
+  const onMaterialsChanged = (): void => {
+    void refreshCourseMaterials()
+  }
+  window.addEventListener('sb:materials-changed', onMaterialsChanged)
 
   for (const button of modeButtons) {
     button.addEventListener('click', () => {
@@ -534,6 +855,13 @@ export function createNotesView(ctx: ViewContext): ViewInstance {
     } catch (error) {
       toast(`新建失败：${formatError(error)}`, 'error')
     }
+  })
+
+  element.querySelector('[data-action="materials"]')?.addEventListener('click', () => {
+    void insertMaterialReference()
+  })
+  element.querySelector('[data-action="ai"]')?.addEventListener('click', () => {
+    void openAiAssistant()
   })
 
   element.querySelector('[data-action="export"]')?.addEventListener('click', (event) => {
@@ -605,6 +933,7 @@ export function createNotesView(ctx: ViewContext): ViewInstance {
     },
     dispose() {
       offLibrary()
+      window.removeEventListener('sb:materials-changed', onMaterialsChanged)
       // 路由切走：把没保存的内容补写一次，不然最后敲的几个字就没了。
       // 内容必须**同步**取出来（teardownEditor 之后编辑器就没了），
       // 所以这里不复用 flush()

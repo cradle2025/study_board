@@ -60,6 +60,8 @@ export interface EditorHandle {
   mode: EditorMode
   getMarkdown(): string
   setMarkdown(md: string): void
+  /** 在光标处插入纯文本（选区被替换）。两种编辑器都要支持——「插入资料引用」走这里 */
+  insertText(text: string): boolean
   focus(): void
   destroy(): void
   /** 执行命令；返回 false 表示这个编辑器不支持它 */

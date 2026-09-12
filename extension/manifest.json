@@ -1,0 +1,10 @@
+{
+  "manifest_version": 3,
+  "name": "StudyBoard 资料收件箱",
+  "version": "1.0.0",
+  "description": "把下载的 PDF / PPT / Word / Excel 自动改存到 StudyBoard 收件箱，由学习看板统一整理归档。",
+  "permissions": ["downloads", "storage"],
+  "background": {
+    "service_worker": "background.js"
+  }
+}

@@ -95,6 +95,14 @@ export function installWebContentsGuards(): void {
       if (!isInternalUrl(url)) {
         event.preventDefault()
         void openExternalSafely(url)
+        return
+      }
+      // file:// 只放行「当前已加载的这一页」。
+      // 把文件拖进窗口时 Chromium 的默认行为是导航到那个文件（file://），
+      // 渲染层的 dragover preventDefault 是第一道防线，这里是主进程的兜底：
+      // 漏了的话，拖一个 HTML 进来整个应用界面就被换成攻击者的页面了
+      if (url.startsWith('file://') && url !== contents.getURL()) {
+        event.preventDefault()
       }
     })
 

@@ -9,8 +9,10 @@ import {
 } from './paths'
 import type { AssetBuckets } from './services/assetProtocol'
 import { CardsStore } from './services/cards'
+import { MaterialsStore } from './services/materials'
 import { NotesStore } from './services/notes'
 import { PortalStore } from './services/portal'
+import { SecretsStore } from './services/secrets'
 import { resolveNotesDir, SettingsStore } from './services/settings'
 import { TimetableStore } from './services/timetable'
 
@@ -26,6 +28,10 @@ export interface AppContext {
   portal: PortalStore
   cards: CardsStore
   notes: NotesStore
+  /** 课程资料库（在笔记库的 attachments/ 内，跟着笔记库走） */
+  materials: MaterialsStore
+  /** 密钥存储。只有主进程能拿到，渲染层只能读到布尔值 */
+  secrets: SecretsStore
 }
 
 let current: AppContext | null = null
@@ -52,6 +58,13 @@ export function initContext(): AppContext {
   const portal = new PortalStore(portalFile(snapshot.portableMode), iconsCacheDir(snapshot.portableMode))
   const cards = new CardsStore(cardsFile(snapshot.portableMode))
   const notes = new NotesStore(resolveNotesDir(snapshot))
+  const materials = new MaterialsStore(resolveNotesDir(snapshot))
+  const secrets = new SecretsStore(snapshot.portableMode)
+
+  // 密钥的存在状态回填进内存态（不落盘）：设置页与笔记页都靠它决定
+  // 「AI 能不能用」。hasApiKey 永远只是一个布尔，密钥本体不出主进程
+  settings.markSecretPresence('ai', secrets.has('aiKey'))
+  settings.markSecretPresence('notion', secrets.has('notionToken'))
 
   current = {
     settings,
@@ -59,7 +72,9 @@ export function initContext(): AppContext {
     timetable,
     portal,
     cards,
-    notes
+    notes,
+    materials,
+    secrets
   }
   return current
 }
@@ -95,4 +110,7 @@ export function refreshBuckets(): void {
   const snapshot = ctx.settings.get()
   ctx.buckets = buildBuckets(snapshot.portableMode, resolveNotesDir(snapshot))
   ctx.notes = new NotesStore(resolveNotesDir(snapshot))
+  // 资料库也在笔记库内（attachments/），必须跟着一起重建，
+  // 否则换了库之后资料还指向上一个库的目录
+  ctx.materials = new MaterialsStore(resolveNotesDir(snapshot))
 }

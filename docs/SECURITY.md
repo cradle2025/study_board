@@ -53,12 +53,14 @@ lsof -nP -p <PID> | grep LISTEN
 
 ### 出网方向
 
-应用出网只有四种情况，全部由主进程发起，**渲染层永远发不出网络请求**（CSP `connect-src 'self'`）：
+应用出网只有三种情况（另有一条已规划但**尚未实现**的，见下），全部由主进程发起，
+**渲染层永远发不出网络请求**（CSP `connect-src 'self'`）：
 
 1. 用户在「网站门户」点击某个学习网站 → 交给系统默认浏览器打开（应用自己不请求）
 2. 用户在「网站门户」点击「补齐图标」或某个站点的 ⟳ → 抓取该站点图标（见下）
 3. 用户主动使用 AI 助手 → 请求用户自己配置的接口地址
-4. 用户主动开启 Notion 同步 → 请求 Notion 官方 API
+4. （规划中，**尚未实现**）用户主动开启 Notion 同步 → 请求 Notion 官方 API。
+   `shared/channels.ts` 里只留了通道占位，界面上没有入口，当前不会发出这个请求
 
 没有遥测、没有崩溃上报、没有自动更新回传、没有访问任何本项目自己的服务器（项目也没有服务器）。
 
@@ -291,6 +293,88 @@ npm ls --omit=dev       # 看生产依赖树
 4. **导出的 HTML / PDF 不加载外链图片**。为保持「应用不联网」，导出页的 CSP 只放行 `data:` 与本地文件；正文里写成 `https://…` 的图片不会显示。放进笔记库、用相对路径引用的图片正常。
 5. **导出会覆盖目标路径上的同名文件**。正常路径上由系统保存对话框替你确认；自动化路径（直接传 `targetPath`）不做二次确认。
 6. **便携模式**会把数据放在程序同级目录，如果程序装在共享位置，注意文件权限。
+
+---
+
+## 渗透测试记录（2026-09-12）
+
+### 威胁模型
+
+假设最坏情况：**渲染层里已经住进一段攻击者的内容**（比如一篇导入的恶意笔记）。
+探针就是那个攻击者，从被攻破的渲染层出发逐条尝试——这才是这个应用真实面对的场景，
+因为应用本身就要渲染用户自己（或从别处导入）的 Markdown。
+
+测试固化为 `npm run smoke:security`，每次改动都能重跑。
+
+### 发现并已修复的问题
+
+**S1（高危）`window.open` 绕过协议白名单 → 任意程序执行**
+
+- **根因**：`window.ts` 给主窗口注册 `setWindowOpenHandler` 时直接调了
+  `shell.openExternal(url)`。而 `setWindowOpenHandler` 是**后注册覆盖先注册**的，
+  这一行把 `security.ts` 里那个带协议白名单的安全版整个顶掉了。
+- **攻击链**：笔记里写一行 `<a href="file:///C:/Windows/System32/cmd.exe" target="_blank">点我</a>`
+  （markdown 按 `html: true` 原样渲染）→ 用户点击 → 系统执行 cmd.exe。
+  `smb://` 远程共享上的 exe 同理。
+- **修复**：`window.ts` 的 handler 改为走 `openExternalSafely` 的协议白名单
+  （`http/https/mailto`），其余协议静默拒绝。
+- **回归断言**：探针里 `window.open('file:///...')` 必须返回 `null`（deny）。
+
+**S2（中危，数据完整性）重命名注入 → 笔记「隐形」**
+
+- **根因**：`safeNoteTitle` 允许标题以 `.` 开头（它只洗路径分隔符），
+  而 `#scan()` 会把 `.` 开头的文件当隐藏文件忽略（为了跳过 `.study-board` / `.obsidian`）。
+  「应用能写出来的文件名」与「应用能扫回来的文件名」不是同一组集合。
+- **触发链**：把笔记重命名为 `.. .. x` → 文件写出来、索引更新 →
+  下一次任何 `list()`/`find()` 触发对账 → 文件被跳过 → 判定「被外部删除」→
+  **摘掉索引、解绑卡片关联、落盘持久化**。文件明明还在磁盘上，界面里凭空消失。
+- **修复**：`safeNoteTitle` 对称地剥掉**开头**的点和空格（它本来就剥结尾的）。
+- **回归断言**：重命名注入之后笔记必须还能读回来（`renameRoundTripOk`）。
+
+### 测试结果矩阵（全部通过）
+
+| 攻击手法 | 期望 | 结果 | 证据 |
+| --- | --- | --- | --- |
+| 渲染层访问 `process` / `require` / `Buffer` / `module` | 全部 `undefined` | ✅ 挡住 | 沙箱 + contextIsolation |
+| 经典逃逸：`top.process`、iframe `contentWindow.process` | `undefined` / 无法建 | ✅ 挡住 | `frame-src 'none'` + sandbox |
+| preload 暴露面 | 只有 `studyBoard` 一个注入对象 | ✅ 只有它 | `Object.keys(window)` |
+| 密钥读取通道 | 不存在 get 类方法 | ✅ 只有 set/clear | 渲染层永远只见布尔值 |
+| 注入 `<script>` 执行 | 不执行 | ✅ CSP 拦 | `script-src 'self'`，控制台有违规报告 |
+| `<img onerror="…">` 内联事件处理器 | 不执行 | ✅ CSP 拦 | 同上 |
+| `javascript:` URL 导航 | 不执行 | ✅ CSP 拦 | 同上 |
+| `fetch('https://…')` | 拒绝，请求不发出 | ✅ CSP 拦 | `connect-src 'self'` |
+| `WebSocket('wss://…')` | 拒绝 | ✅ CSP 拦 | 同上 |
+| 远程图片 beacon（信息外带） | 不加载 | ✅ CSP 拦 | `img-src` 不含 https |
+| `sb-asset://` 编码穿越（`%2e%2e%2f`） | 404 | ✅ 挡住 | `safeJoin` 前缀检查 |
+| `sb-asset://` 反斜杠穿越（`..%5C`） | 404 | ✅ 挡住 | Windows 路径归一化 |
+| `sb-asset://` 连跳四级出数据目录 | 404 | ✅ 挡住 | 同上 |
+| `sb-asset://` 未知桶 / 绝对路径注入 | 404 | ✅ 挡住 | 桶白名单 + 拒绝绝对路径 |
+| `sb-asset://` 正常路径（对照组） | 200 可加载 | ✅ 正常 | 区分「被挡」与「文件不存在」 |
+| 笔记 id 路径穿越（`../../etc/passwd`、绝对路径） | 拒绝 | ✅ 拒绝 | id 只查索引，不到磁盘 |
+| 重命名标题注入（`..\` + `<script>`） | 清洗，不报错不丢数据 | ✅ 洗成 `evil script` | `safeNoteTitle` |
+| 创建 `<img onerror>` 标题 | 清洗 | ✅ 尖括号被剥 | 同上 + 渲染层 escapeHtml |
+| 导出相对路径 / 错误扩展名 | 拒绝 | ✅ 拒绝 | `resolveTarget` 校验 |
+| 原型污染（`__proto__` / `constructor.prototype`） | 原型不受污染 | ✅ 干净 | 逐字段取值，不整体 assign |
+| 非法卡片状态值 | 落回默认，不崩 | ✅ 落 `learning` | `normalizeCourseStatus` |
+| 1MB 课程名 | 截断，不崩 | ✅ 截成 60 字符 | `MAX_CARD_TEXT` |
+| 非法 settings 补丁 / 非法课表坐标 | 拒绝 | ✅ 拒绝 | 设置校验 / 坐标校验 |
+| `openExternal` 打 `file://` / `javascript:` / `smb://` | 拒绝 | ✅ 拒绝 | 协议白名单（S1 修复的回归验证） |
+| `openPath` / `revealPath` 越出应用目录 | 拒绝 | ✅ 拒绝 | `assertInsideAppRoots` |
+| `window.open` 打非白名单协议 | deny | ✅ deny | S1 修复的回归验证 |
+| 改 `location.href` 导航到外部地址 | 拦截，不跳走 | ✅ 拦住 | `will-navigate` 拦截 |
+| 主进程监听 TCP 端口 | 无监听 | ✅ netstat 确认 | 「绝不把端口暴露到公网」 |
+
+### 已知并接受的风险
+
+1. **`targetPath` 允许任意绝对路径**（扩展名必须与格式一致）。
+   导出本来就是「写到用户选的位置」，正常路径上系统保存对话框挡着；
+   渲染层被攻破时能写任意 `.md/.html/.docx/.pdf`——但内容受格式约束，
+   写不出可自动执行的东西，且这个前提本身已是「渲染层沦陷」之后的事。
+2. **AI 结果预览按 `html: true` 渲染**，不洗 HTML——洗不干净。
+   执行面由 CSP 兜底（本轮已实证 `<script>` 与事件处理器都不执行）。
+3. **生产环境 `devTools: false` 无法在 smoke 里动态验证**（smoke 跑的是未打包的
+   开发进程）。静态配置已审查，打包成品验证时再人工确认一次。
+4. **端口监听硬断言目前只在 Windows 上做**（netstat 参数各平台不同）。
 
 ---
 

@@ -3,6 +3,7 @@ import { dirname, isAbsolute, join, normalize, resolve, sep } from 'node:path'
 import { mkdirSync, existsSync, writeFileSync, rmSync } from 'node:fs'
 
 import type { AppPaths } from '@shared/types'
+import { MATERIALS_DIRNAME } from '@shared/materials'
 
 /**
  * 所有本地路径的唯一出口。
@@ -69,10 +70,6 @@ export function secretsFile(portable: boolean): string {
   return join(dataRoot(portable), 'secrets.bin')
 }
 
-export function databaseFile(portable: boolean): string {
-  return join(dataRoot(portable), 'study-board.db')
-}
-
 export function defaultNotesLibraryDir(portable: boolean): string {
   return join(dataRoot(portable), 'notes_library')
 }
@@ -104,14 +101,41 @@ export function tempDir(portable: boolean): string {
   return join(dataRoot(portable), 'temp')
 }
 
+/**
+ * 运行日志目录。
+ *
+ * 出问题时用户手里得有个能交出来的现场——打包后的应用没有控制台，
+ * 光在终端里打日志等于没打。放数据目录下面，跟「打开数据目录」那个按钮对得上。
+ */
+export function logsDir(portable: boolean): string {
+  return join(dataRoot(portable), 'logs')
+}
+
 export function resolveAppPaths(portable: boolean, notesLibraryDir: string): AppPaths {
   return {
     userData: dataRoot(portable),
     notesLibrary: notesLibraryDir,
-    database: databaseFile(portable),
     timetableImages: timetableImagesDir(portable),
-    iconsCache: iconsCacheDir(portable)
+    iconsCache: iconsCacheDir(portable),
+    materials: materialsDir(notesLibraryDir),
+    logs: logsDir(portable)
   }
+}
+
+/**
+ * 课程资料目录：**跟笔记库走**，放在库内的 attachments/ 下。
+ *
+ * 为什么不放 dataRoot：资料要和笔记待在一起——Obsidian 原生能预览库里的 PDF，
+ * 备份/同步也只管一个文件夹。用户换笔记库目录时，资料目录跟着换
+ * （context.ts 的 refreshBuckets 负责跟着重建）。
+ */
+export function materialsDir(notesLibraryDir: string): string {
+  return join(notesLibraryDir, MATERIALS_DIRNAME)
+}
+
+/** 资料索引文件。跟资料目录走，换库时各自成套 */
+export function materialsFile(notesLibraryDir: string): string {
+  return join(materialsDir(notesLibraryDir), '.materials.json')
 }
 
 /**

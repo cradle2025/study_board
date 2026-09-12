@@ -3,15 +3,26 @@ import type { AppInfo, AppSettings } from '@shared/types'
 import { bridge, formatError, toast, unwrap } from './lib/ipc'
 import { escapeHtml } from './lib/html'
 import { mark } from './lib/perf'
+import { describeArch, describeOs } from './lib/platform'
 import { applyTheme, watchSystemTheme } from './lib/theme'
+import { createArchivedView } from './views/archived-view'
 import { createHomeView } from './views/home-view'
+import { createMaterialsView } from './views/materials-view'
 import { createNotesView } from './views/notes-view'
 import { createPortalView } from './views/portal-view'
 import { createSettingsView } from './views/settings-view'
 import { createStudyView } from './views/study-view'
 import { createTimetableEditorView } from './views/timetable-editor-view'
 
-export type RouteId = 'home' | 'timetable' | 'portal' | 'study' | 'notes' | 'settings'
+export type RouteId =
+  | 'home'
+  | 'timetable'
+  | 'portal'
+  | 'study'
+  | 'archived'
+  | 'materials'
+  | 'notes'
+  | 'settings'
 
 export interface ViewContext {
   getSettings(): AppSettings
@@ -20,12 +31,16 @@ export interface ViewContext {
   reloadSettings(): Promise<void>
   /** 跳到笔记页并打开指定笔记（卡片上的「记笔记」用这条路） */
   openNote(noteId: string): void
+  /** 跳到资料页并聚焦某门课的资料（卡片角标入口用） */
+  openMaterials(cardId: string): void
   /**
    * 取出并清空「待打开的笔记」标记。
    * 笔记页挂载时调一次——用「取走」而不是「读取」，是为了让用户自己
    * 切回笔记页时不会被上次的跳转目标再次抢走焦点。
    */
   consumePendingNote(): string | null
+  /** 同上，资料页用。空串表示「看了就走」，null 表示没有待办 */
+  consumePendingMaterialCard(): string | null
 }
 
 export interface ViewInstance {
@@ -74,6 +89,20 @@ const ROUTES: readonly RouteDef[] = [
     factory: createStudyView
   },
   {
+    id: 'archived',
+    label: '已学库',
+    group: '模块二',
+    icon: '▤',
+    factory: createArchivedView
+  },
+  {
+    id: 'materials',
+    label: '课程资料',
+    group: '模块二',
+    icon: '▣',
+    factory: createMaterialsView
+  },
+  {
     id: 'notes',
     label: '笔记',
     group: '模块二',
@@ -98,8 +127,14 @@ export class AppShell extends HTMLElement {
   #nav: HTMLElement | null = null
   #unwatchTheme: (() => void) | null = null
   #unwatchSettings: (() => void) | null = null
+  #unwatchInbox: (() => void) | null = null
   /** 别的页面请求「跳到某篇笔记」时先记在这里，笔记页挂载时取走 */
   #pendingNoteId: string | null = null
+  /** 卡片角标请求「看这门课的资料」时先记在这里，资料页挂载时取走 */
+  #pendingMaterialCardId: string | null = null
+  /** 拖拽导入的蒙层：拖着文件悬在窗口上时全屏提示「松手导入」 */
+  #dropMask: HTMLElement | null = null
+  #dragDepth = 0
 
   connectedCallback(): void {
     this.render()
@@ -109,6 +144,7 @@ export class AppShell extends HTMLElement {
       const mode = this.#settings?.theme ?? 'system'
       applyTheme(mode)
     })
+    this.#installDragImport()
   }
 
   disconnectedCallback(): void {
@@ -118,11 +154,127 @@ export class AppShell extends HTMLElement {
     // 不退订就会在主进程侧留下一串永远不会被调用的监听器
     this.#unwatchSettings?.()
     this.#unwatchSettings = null
+    this.#unwatchInbox?.()
+    this.#unwatchInbox = null
+    this.#uninstallDragImport()
     this.#current?.dispose?.()
     // 必须一并清掉「当前路由」的记账，否则元素被重新挂载时
     // go() 会因为「路由没变」直接返回，舞台永远空着
     this.#current = null
     this.#currentRoute = null
+  }
+
+  /**
+   * 全局拖拽导入：任何页面拖着文件进来都提示「松手导入」。
+   *
+   * dragover 必须 preventDefault——不拦的话 Chromium 的默认行为是把窗口
+   * **导航成被拖的那个文件**（渲染层的 preventDefault 是第一道，
+   * 主进程 will-navigate 的 file:// 校验是兜底）。
+   * dragleave 用深度计数：拖过子元素时 leave 会乱发，只看进出窗口最外层。
+   */
+  #installDragImport(): void {
+    this.#dragDepth = 0
+    window.addEventListener('dragover', this.#onDragOver)
+    window.addEventListener('dragenter', this.#onDragEnter)
+    window.addEventListener('dragleave', this.#onDragLeave)
+    window.addEventListener('drop', this.#onDrop)
+  }
+
+  #uninstallDragImport(): void {
+    window.removeEventListener('dragover', this.#onDragOver)
+    window.removeEventListener('dragenter', this.#onDragEnter)
+    window.removeEventListener('dragleave', this.#onDragLeave)
+    window.removeEventListener('drop', this.#onDrop)
+    this.#dropMask?.remove()
+    this.#dropMask = null
+    this.#dragDepth = 0
+  }
+
+  #onDragOver = (event: DragEvent): void => {
+    event.preventDefault()
+    if (event.dataTransfer) event.dataTransfer.dropEffect = 'copy'
+  }
+
+  #onDragEnter = (event: DragEvent): void => {
+    event.preventDefault()
+    if (!event.dataTransfer?.types.includes('Files')) return
+    this.#dragDepth += 1
+    this.#showDropMask()
+  }
+
+  #onDragLeave = (event: DragEvent): void => {
+    event.preventDefault()
+    this.#dragDepth = Math.max(0, this.#dragDepth - 1)
+    if (this.#dragDepth === 0) this.#hideDropMask()
+  }
+
+  #onDrop = (event: DragEvent): void => {
+    event.preventDefault()
+    this.#dragDepth = 0
+    this.#hideDropMask()
+    const files = Array.from(event.dataTransfer?.files ?? [])
+    if (files.length === 0) return
+    void this.#importDropped(files)
+  }
+
+  #showDropMask(): void {
+    if (this.#dropMask) return
+    const mask = document.createElement('div')
+    mask.className = 'sb-dropmask'
+    mask.innerHTML =
+      '<div class="sb-dropmask__card"><div class="sb-dropmask__title">松手导入</div>' +
+      '<div class="sb-dropmask__hint">支持 PDF / PPT / Word / Excel，可多选</div></div>'
+    document.body.appendChild(mask)
+    this.#dropMask = mask
+  }
+
+  #hideDropMask(): void {
+    this.#dropMask?.remove()
+    this.#dropMask = null
+  }
+
+  async #importDropped(files: File[]): Promise<void> {
+    // 沙箱渲染层拿不到真实路径，让 preload 用 webUtils 换算
+    const paths = bridge().pathsFromDrop(files)
+    if (paths.length === 0) {
+      toast('这些文件拿不到本地路径（可能来自网页），请用文件选择导入', 'info')
+      return
+    }
+    const { openMaterialImportDialog } = await import('./components/material-form')
+    const cards = await this.#courseCards()
+    const entries = paths.map((path) => ({
+      name: path.replace(/\\/g, '/').split('/').pop() ?? path,
+      bytes: (files.find((file) => file.name === (path.replace(/\\/g, '/').split('/').pop() ?? ''))?.size) ?? 0,
+      path
+    }))
+    const choice = await openMaterialImportDialog(entries, cards)
+    if (!choice) return
+    try {
+      const result = await unwrap(
+        bridge().materials.import({
+          paths,
+          courseCardId: choice.courseCardId,
+          title: choice.title,
+          sourcePolicy: 'keep'
+        })
+      )
+      const failed = result.errors.length
+      if (result.added > 0 && failed === 0) toast(`已导入 ${result.added} 份资料`, 'success')
+      else if (result.added > 0) toast(`导入 ${result.added} 份，${failed} 份失败`, 'info')
+      else toast(`导入失败：${result.errors[0]}`, 'error')
+      window.dispatchEvent(new CustomEvent('sb:materials-changed'))
+    } catch (error) {
+      toast(`导入失败：${formatError(error)}`, 'error')
+    }
+  }
+
+  async #courseCards(): Promise<readonly { id: string; courseName: string }[]> {
+    try {
+      const list = await unwrap(bridge().cards.list())
+      return list.map((card) => ({ id: card.id, courseName: card.courseName }))
+    } catch {
+      return []
+    }
   }
 
   private render(): void {
@@ -154,7 +306,11 @@ export class AppShell extends HTMLElement {
       applyTheme(this.#settings.theme)
 
       const versionEl = this.querySelector<HTMLElement>('[data-role="version"]')
-      if (versionEl) versionEl.textContent = `v${info.version} · ${info.platform}`
+      if (versionEl) {
+        // 别把 process.platform 直接摆出来：win32 在 64 位 Windows 上也是 win32，
+        // 侧栏那点宽度又放不下完整说明，所以这里只写「系统 + 位数」
+        versionEl.textContent = `v${info.version} · ${describeOs(info.platform)} ${describeArch(info.arch)}`
+      }
 
       const footerEl = this.querySelector<HTMLElement>('[data-role="footer"]')
       if (footerEl) footerEl.textContent = `数据目录：${info.paths.userData}`
@@ -168,8 +324,41 @@ export class AppShell extends HTMLElement {
         this.#settings = next
         applyTheme(next.theme)
       })
+      this.#unwatchInbox = bridge().events.onMaterialsInbox((payload) => {
+        void this.#handleInbox(payload.files ?? [])
+      })
     } catch (error) {
       this.showFatal(formatError(error))
+    }
+  }
+
+  /**
+   * 收件箱里出现了新下载（浏览器扩展改存进来的）。
+   * 弹归属对话框 → 确认后走收件箱导入通道（原文件由主进程移入系统回收站）。
+   */
+  async #handleInbox(files: { fileName: string; bytes: number }[]): Promise<void> {
+    if (files.length === 0) return
+    const { inboxCandidateEntries, openMaterialImportDialog } = await import(
+      './components/material-form'
+    )
+    const cards = await this.#courseCards()
+    const choice = await openMaterialImportDialog(inboxCandidateEntries(files), cards)
+    if (!choice) return
+    try {
+      const result = await unwrap(
+        bridge().materials.importInbox({
+          fileNames: files.map((file) => file.fileName),
+          courseCardId: choice.courseCardId,
+          title: choice.title
+        })
+      )
+      const failed = result.errors.length
+      if (result.added > 0 && failed === 0) toast(`已导入 ${result.added} 份资料`, 'success')
+      else if (result.added > 0) toast(`导入 ${result.added} 份，${failed} 份失败`, 'info')
+      else toast(`导入失败：${result.errors[0]}`, 'error')
+      window.dispatchEvent(new CustomEvent('sb:materials-changed'))
+    } catch (error) {
+      toast(`导入失败：${formatError(error)}`, 'error')
     }
   }
 
@@ -238,9 +427,18 @@ export class AppShell extends HTMLElement {
         this.#pendingNoteId = noteId
         void this.go('notes')
       },
+      openMaterials: (cardId) => {
+        this.#pendingMaterialCardId = cardId
+        void this.go('materials')
+      },
       consumePendingNote: () => {
         const id = this.#pendingNoteId
         this.#pendingNoteId = null
+        return id
+      },
+      consumePendingMaterialCard: () => {
+        const id = this.#pendingMaterialCardId
+        this.#pendingMaterialCardId = null
         return id
       }
     })

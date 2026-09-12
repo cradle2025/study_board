@@ -29,6 +29,9 @@
     "smoke:notes": "node scripts/smoke.mjs notes",
     "smoke:sync": "node scripts/smoke.mjs sync",
     "smoke:export": "node scripts/smoke.mjs export",
+    "smoke:ai": "node scripts/smoke.mjs ai",
+    "smoke:security": "node scripts/smoke.mjs security",
+    "smoke:materials": "node scripts/smoke.mjs materials",
     "bench": "node scripts/smoke.mjs bench",
     "bench:compare": "node scripts/compare-bench.mjs",
     "icon": "node scripts/make-icon.mjs",
@@ -41,7 +44,8 @@
   "dependencies": {
     "chokidar": "^5.0.0",
     "docx": "^9.7.1",
-    "libheif-js": "^1.23.2"
+    "libheif-js": "^1.23.2",
+    "markdown-it": "^15.0.1"
   },
   "devDependencies": {
     "@codemirror/autocomplete": "^6.20.3",

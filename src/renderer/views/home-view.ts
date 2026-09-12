@@ -1,6 +1,7 @@
 import type { ViewContext, ViewInstance } from '../app-shell'
 import { createPortalController } from '../components/portal-controller'
 import { createTimetableController, type TimetableController } from '../components/timetable-controller'
+import { bridge, formatError, unwrap } from '../lib/ipc'
 
 /**
  * 概览页。
@@ -45,11 +46,12 @@ export function createHomeView(ctx: ViewContext): ViewInstance {
     <section class="sb-section">
       <div class="sb-section__head">
         <h2 class="sb-section__title">课程卡片</h2>
-        <span class="sb-badge">模块二</span>
+        <span class="sb-badge" data-role="cards-meta">模块二</span>
       </div>
-      <div class="sb-card sb-empty" data-role="cards-slot">
-        可翻转的课程卡片 —— 开发中。
+      <div class="sb-toolbar sb-toolbar--right">
+        <button class="sb-btn" type="button" data-action="manage-cards">课程与学习</button>
       </div>
+      <p class="sb-hint" data-role="cards-slot">加载中…</p>
     </section>
   `
 
@@ -68,6 +70,31 @@ export function createHomeView(ctx: ViewContext): ViewInstance {
     }
   })
   portalSlot?.appendChild(portal.grid.element)
+
+  const cardsMeta = element.querySelector<HTMLElement>('[data-role="cards-meta"]')
+  const cardsSlot = element.querySelector<HTMLElement>('[data-role="cards-slot"]')
+
+  /**
+   * 概览页只报数字，不摆卡片。
+   *
+   * 这里原本写的是「可翻转的课程卡片 —— 开发中」，功能做好之后它就成了一句假话。
+   * 换成一句真实的三态统计：打开应用第一眼想知道的是「这学期几门在修」，
+   * 而不是把卡片网格再铺一遍——那是「课程与学习」页的事。
+   */
+  async function loadCards(): Promise<void> {
+    if (!cardsMeta || !cardsSlot) return
+    try {
+      const cards = await unwrap(bridge().cards.list())
+      const count = (status: string): number => cards.filter((card) => card.status === status).length
+      cardsMeta.textContent = cards.length === 0 ? '还没有卡片' : `共 ${cards.length} 门`
+      cardsSlot.textContent =
+        cards.length === 0
+          ? '还没有课程卡片。去「课程与学习」新建一张——课程名和老师可以从课表直接带过来。'
+          : `在学 ${count('learning')} 门 · 想学 ${count('wish')} 门 · 已学 ${count('learned')} 门`
+    } catch (error) {
+      cardsSlot.textContent = `卡片统计读不出来：${formatError(error)}`
+    }
+  }
 
   const controller: TimetableController = createTimetableController({
     editable: true,
@@ -93,6 +120,10 @@ export function createHomeView(ctx: ViewContext): ViewInstance {
     .querySelector('[data-action="manage-portal"]')
     ?.addEventListener('click', () => ctx.navigate('portal'))
 
+  element
+    .querySelector('[data-action="manage-cards"]')
+    ?.addEventListener('click', () => ctx.navigate('study'))
+
   // 概览页只读展示课表，一旦有数据就补一句空态提示
   const emptyHint = document.createElement('p')
   emptyHint.className = 'sb-hint sb-ttpanel__hint'
@@ -106,6 +137,7 @@ export function createHomeView(ctx: ViewContext): ViewInstance {
       await controller.load()
       emptyHint.hidden = !controller.panel.isEmpty()
       await portal.load()
+      await loadCards()
     },
     dispose() {
       controller.dispose()

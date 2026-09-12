@@ -7,6 +7,9 @@
  *  - id 统一用不依赖 crypto 随机源的 uuidv4 字符串。
  */
 
+import type { CourseStatus } from './course'
+import type { MaterialExtension } from './materials'
+
 /** 跨 IPC 边界的统一返回结构 */
 export type IpcResult<T> =
   | { ok: true; data: T }
@@ -35,9 +38,12 @@ export type AiApplyMode = 'preview' | 'append' | 'replace-selection'
 export interface AppPaths {
   userData: string
   notesLibrary: string
-  database: string
   timetableImages: string
   iconsCache: string
+  /** 课程资料目录（在笔记库内：attachments/）。设置页展示与「打开目录」用 */
+  materials: string
+  /** 运行日志目录。用户遇到卡死 / 崩溃时，出问题的现场在这里 */
+  logs: string
 }
 
 export interface AppInfo {
@@ -63,6 +69,8 @@ export interface TimetableSettings {
 }
 
 export interface AiSettings {
+  /** 选中的服务商预设 id。用户手动改过地址或模型之后会变成 'custom' */
+  provider: string
   baseUrl: string
   model: string
   temperature: number
@@ -77,6 +85,15 @@ export interface NotionSettings {
   lastSyncAt: string | null
 }
 
+export interface MaterialsSettings {
+  /**
+   * 资料收件箱的完整路径。
+   * 空串 = 未配置，运行时用「系统下载目录 / StudyBoard收件箱」。
+   * 浏览器扩展按同样的约定把下载改存到这里。
+   */
+  inboxDir: string
+}
+
 export interface AppSettings {
   theme: ThemeMode
   language: UiLanguage
@@ -88,6 +105,7 @@ export interface AppSettings {
   timetable: TimetableSettings
   ai: AiSettings
   notion: NotionSettings
+  materials: MaterialsSettings
 }
 
 /** 可局部更新的设置（AI / Notion 的密钥单独走专用通道，不进这里） */
@@ -95,10 +113,11 @@ export type TimetablePatch = Partial<TimetableSettings>
 export type AiPatch = Partial<Omit<AiSettings, 'hasApiKey'>>
 export type NotionPatch = Partial<Omit<NotionSettings, 'hasToken'>>
 
-export type SettingsPatch = Partial<Omit<AppSettings, 'timetable' | 'ai' | 'notion'>> & {
+export type SettingsPatch = Partial<Omit<AppSettings, 'timetable' | 'ai' | 'notion' | 'materials'>> & {
   timetable?: TimetablePatch
   ai?: AiPatch
   notion?: NotionPatch
+  materials?: Partial<MaterialsSettings>
 }
 
 /* ------------------------------------------------------------------ 课程表 */
@@ -206,6 +225,16 @@ export interface CourseCard {
   id: string
   courseName: string
   teacher: string
+  /**
+   * 课程状态：想学 / 在学 / 已学。
+   *
+   * 「已学库」不是第二种存储，就是这个字段等于 `learned` 的一个筛选视图。
+   */
+  status: CourseStatus
+  /** 学期，如 "2025-2026 秋"。自由文本，空串表示没填 */
+  semester: string
+  /** 想修的理由。只在想学阶段最有用，其它状态下允许留空 */
+  reason: string
   /** 打分，自由文本（可能是 "95" / "A" / "优秀"） */
   score: string
   /** 难度 1–5，0 表示未填 */
@@ -227,11 +256,28 @@ export interface CourseCardInput {
   id?: string
   courseName: string
   teacher: string
+  status?: CourseStatus
+  semester?: string
+  reason?: string
   score?: string
   difficulty?: number
   mastery?: number
   gradingPolicy?: string
   outline?: string
+}
+
+/**
+ * 只改状态（归档 / 移回在学 / 加入愿望单）。
+ *
+ * 单独开一个入参类型而不是复用 `CourseCardInput`：那个接口要求 `courseName`
+ * 必填，而卡片的脚部按钮手里只有 id——让它为了改个状态先把整张卡片读一遍、
+ * 再原样写回去，等于给「并发编辑时互相覆盖」开了个口子。
+ */
+export interface CourseStatusInput {
+  id: string
+  status: CourseStatus
+  /** 可选。给出时直接采用，缺省时学期为空才按状态补默认值 */
+  semester?: string
 }
 
 /* ------------------------------------------------------------------ 笔记 */
@@ -275,6 +321,68 @@ export interface ExportNoteResult {
   /** 用户取消时 cancelled 为 true */
   cancelled: boolean
   filePath?: string
+}
+
+/* ------------------------------------------------------------------ 课程资料 */
+
+/**
+ * 一份课程资料（PDF / PPT / Word / Excel）。
+ *
+ * **磁盘上的文件是本体**，这份索引只是簿记——丢了可以重建，
+ * 但「挂在哪门课」重建不回来，所以文件的增删走应用，不鼓励手动挪。
+ */
+export interface MaterialItem {
+  id: string
+  /** 库内文件名（含扩展名）。库目录 + 它 = 完整路径 */
+  fileName: string
+  /** 用户可读名（不含扩展名），改名改的是它 */
+  title: string
+  /** 类型扩展名（小写，无点） */
+  ext: MaterialExtension
+  bytes: number
+  /** 归属的课程卡片 id。空串 = 未归类 */
+  courseCardId: string
+  /** 导入前的原始文件名，仅用于展示与检索 */
+  sourceName: string
+  importedAt: string
+  /**
+   * 对账状态：ok = 磁盘上在；missing = 索引里有、磁盘上没了。
+   * 丢失**不自动摘除**——很可能只是被挪走了，摘了关联就找不回来
+   */
+  missing: boolean
+}
+
+/** 一次导入的逐条结果。与课表图片导入的 {added, errors} 同一个模式 */
+export interface MaterialImportResult {
+  /** 导入后的完整资料列表（写操作统一返回整份，渲染层直接重绘） */
+  materials: MaterialItem[]
+  added: number
+  /** 逐条失败原因（原文件名 + 原因） */
+  errors: string[]
+}
+
+export interface MaterialImportInput {
+  /** 要导入的文件绝对路径（拖拽 / 对话框两个入口都收敛到这里） */
+  paths: string[]
+  /** 归属的课程卡片 id，空串 = 暂不归类 */
+  courseCardId?: string
+  /**
+   * 资料名。缺省时用原始文件名去扩展名——它同时是入库文件名的主要成分，
+   * 比如课程「高等数学 A」+ 名称「第3章极限」→ 高等数学 A_第3章极限.pdf
+   */
+  title?: string
+  /**
+   * 导入成功后对源文件的处理。
+   * 收件箱用 'recycle'（中转站使命完成，原文件进系统回收站），
+   * 拖拽/对话框用 'keep'（原件在用户的下载目录里，一个字节都不动）
+   */
+  sourcePolicy?: 'keep' | 'recycle'
+}
+
+/** 收件箱里待处理的候选（渲染层弹归属对话框用，只报名字不报路径） */
+export interface MaterialInboxCandidate {
+  fileName: string
+  bytes: number
 }
 
 /* ------------------------------------------------------------------ AI */

@@ -48,6 +48,20 @@ export const CHANNELS = {
   CARDS_UPSERT: 'cards:upsert',
   CARDS_DELETE: 'cards:delete',
   CARDS_REORDER: 'cards:reorder',
+  CARDS_SET_STATUS: 'cards:set-status',
+
+  /* 课程资料 */
+  MATERIALS_LIST: 'materials:list',
+  MATERIALS_IMPORT: 'materials:import',
+  MATERIALS_IMPORT_INBOX: 'materials:import-inbox',
+  MATERIALS_RENAME: 'materials:rename',
+  MATERIALS_REMOVE: 'materials:remove',
+  MATERIALS_SET_CARD: 'materials:set-card',
+  MATERIALS_OPEN: 'materials:open',
+  MATERIALS_UNREGISTERED: 'materials:unregistered',
+  MATERIALS_CLAIM: 'materials:claim',
+  MATERIALS_OPEN_INBOX: 'materials:open-inbox',
+  DIALOG_PICK_MATERIALS: 'dialog:pick-materials',
 
   /* 笔记 */
   NOTES_LIST: 'notes:list',
@@ -73,7 +87,9 @@ export const CHANNELS = {
 
   /* 主进程 -> 渲染层 事件 */
   EVENT_LIBRARY_CHANGED: 'event:library-changed',
-  EVENT_SETTINGS_CHANGED: 'event:settings-changed'
+  EVENT_SETTINGS_CHANGED: 'event:settings-changed',
+  /** 收件箱里出现了新的候选资料，渲染层弹归属对话框 */
+  EVENT_MATERIALS_INBOX: 'event:materials-inbox'
 } as const
 
 export type ChannelName = (typeof CHANNELS)[keyof typeof CHANNELS]
@@ -81,5 +97,6 @@ export type ChannelName = (typeof CHANNELS)[keyof typeof CHANNELS]
 /** 允许渲染层订阅的主进程事件（白名单） */
 export const EVENT_CHANNELS: readonly ChannelName[] = [
   CHANNELS.EVENT_LIBRARY_CHANGED,
-  CHANNELS.EVENT_SETTINGS_CHANGED
+  CHANNELS.EVENT_SETTINGS_CHANGED,
+  CHANNELS.EVENT_MATERIALS_INBOX
 ] as const

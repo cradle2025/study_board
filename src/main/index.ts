@@ -2,9 +2,11 @@ import { BrowserWindow, app } from 'electron'
 
 import { benchEnabled, prepareBenchDataIfRequested, runBenchIfRequested } from './bench'
 import { context, initContext, sweepOrphanFiles } from './context'
+import { startMaterialsInboxWatch } from './ipc/materials'
 import { startNotesSync } from './ipc/notes'
 import { registerIpcHandlers } from './ipc/register'
 import { mark } from './metrics'
+import { installMainProcessGuards, logLine } from './resilience'
 import { installAssetProtocol } from './services/assetProtocol'
 import {
   hardenBeforeReady,
@@ -64,8 +66,13 @@ if (!app.requestSingleInstanceLock()) {
       mark('notes-sync:start')
       startNotesSync()
 
+      // 资料收件箱（浏览器扩展的下载落点）。ignoreInitial:false 是有意的：
+      // 应用没开着的时候收件箱里攒下的文件，启动这一扫就会弹出来
+      startMaterialsInboxWatch()
+
       const win = createMainWindow()
       mark('window:created')
+      logLine('start', `v${app.getVersion()} ${process.platform}/${process.arch} electron=${process.versions['electron']}`)
       win.once('ready-to-show', () => {
         mark('window:ready-to-show')
         // 首屏显示之后的空闲时间再做清理，不跟首屏抢
@@ -81,6 +88,12 @@ if (!app.requestSingleInstanceLock()) {
     })
     .catch((error: unknown) => {
       console.error('[main] 启动失败：', error)
+      // 启动失败是最需要留下现场的一种：用户看到的就是「双击了没反应」，
+      // 终端里那行字他永远看不到
+      logLine(
+        'startup-failed',
+        error instanceof Error ? `${error.message}\n${error.stack ?? ''}` : String(error)
+      )
       app.quit()
     })
 
@@ -89,10 +102,7 @@ if (!app.requestSingleInstanceLock()) {
     if (process.platform !== 'darwin') app.quit()
   })
 
-  process.on('uncaughtException', (error) => {
-    console.error('[main] 未捕获异常：', error)
-  })
-  process.on('unhandledRejection', (reason) => {
-    console.error('[main] 未处理的 Promise 拒绝：', reason)
-  })
+  // 未捕获异常 / 未处理的拒绝统一由这里接管：既打到终端，也落盘到数据目录。
+  // 打包后的应用没有控制台，只打 console 等于什么都没留下
+  installMainProcessGuards()
 }

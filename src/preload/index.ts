@@ -1,4 +1,4 @@
-import { contextBridge, ipcRenderer, type IpcRendererEvent } from 'electron'
+import { contextBridge, ipcRenderer, webUtils, type IpcRendererEvent } from 'electron'
 
 import { CHANNELS, EVENT_CHANNELS, type ChannelName } from '@shared/channels'
 import type { CourseImagePickResult, StudyBoardApi } from '@shared/api'
@@ -9,10 +9,15 @@ import type {
   AiCompleteResult,
   CourseCard,
   CourseCardInput,
+  CourseStatusInput,
   ExportNoteRequest,
   ExportNoteResult,
   IpcResult,
   LibraryChangedEvent,
+  MaterialImportInput,
+  MaterialImportResult,
+  MaterialInboxCandidate,
+  MaterialItem,
   NoteDoc,
   NoteMeta,
   NoteWriteInput,
@@ -106,7 +111,29 @@ const api = {
     list: () => invoke<CourseCard[]>(CHANNELS.CARDS_LIST),
     upsert: (card: CourseCardInput) => invoke<CourseCard[]>(CHANNELS.CARDS_UPSERT, card),
     remove: (id: string) => invoke<CourseCard[]>(CHANNELS.CARDS_DELETE, id),
-    reorder: (ids: string[]) => invoke<CourseCard[]>(CHANNELS.CARDS_REORDER, ids)
+    reorder: (ids: string[]) => invoke<CourseCard[]>(CHANNELS.CARDS_REORDER, ids),
+    setStatus: (input: CourseStatusInput) =>
+      invoke<CourseCard[]>(CHANNELS.CARDS_SET_STATUS, input)
+  },
+
+  materials: {
+    list: () => invoke<MaterialItem[]>(CHANNELS.MATERIALS_LIST),
+    import: (input: MaterialImportInput) =>
+      invoke<MaterialImportResult>(CHANNELS.MATERIALS_IMPORT, input),
+    importInbox: (input: { fileNames: string[]; courseCardId: string; title?: string }) =>
+      invoke<MaterialImportResult>(CHANNELS.MATERIALS_IMPORT_INBOX, input),
+    rename: (input: { id: string; title: string }) =>
+      invoke<MaterialItem[]>(CHANNELS.MATERIALS_RENAME, input),
+    remove: (id: string) => invoke<MaterialItem[]>(CHANNELS.MATERIALS_REMOVE, id),
+    setCard: (input: { id: string; courseCardId: string }) =>
+      invoke<MaterialItem[]>(CHANNELS.MATERIALS_SET_CARD, input),
+    open: (id: string) => invoke<null>(CHANNELS.MATERIALS_OPEN, id),
+    unregistered: () => invoke<MaterialInboxCandidate[]>(CHANNELS.MATERIALS_UNREGISTERED),
+    claim: (input: { fileName: string; courseCardId: string }) =>
+      invoke<MaterialImportResult>(CHANNELS.MATERIALS_CLAIM, input),
+    openInbox: () => invoke<null>(CHANNELS.MATERIALS_OPEN_INBOX),
+    pickFiles: () =>
+      invoke<{ canceled: boolean; paths: string[] }>(CHANNELS.DIALOG_PICK_MATERIALS)
   },
 
   notes: {
@@ -140,7 +167,29 @@ const api = {
     onLibraryChanged: (listener: (payload: LibraryChangedEvent) => void) =>
       subscribe<LibraryChangedEvent>(CHANNELS.EVENT_LIBRARY_CHANGED, listener),
     onSettingsChanged: (listener: (payload: AppSettings) => void) =>
-      subscribe<AppSettings>(CHANNELS.EVENT_SETTINGS_CHANGED, listener)
+      subscribe<AppSettings>(CHANNELS.EVENT_SETTINGS_CHANGED, listener),
+    onMaterialsInbox: (listener: (payload: { files: MaterialInboxCandidate[] }) => void) =>
+      subscribe<{ files: MaterialInboxCandidate[] }>(CHANNELS.EVENT_MATERIALS_INBOX, listener)
+  },
+
+  /**
+   * 拖拽文件的真实路径换算。
+   *
+   * 浏览器沙箱里的 File 对象只有名字和大小，路径是 Electron 的私有信息；
+   * `webUtils.getPathForFile` 是官方给沙箱渲染层留的唯一正门（老的 file.path 已废弃）。
+   * 渲染层把 File 对象传进来，这里逐个换算，拿不到路径的（比如从网页拖来的图）返回空串被过滤。
+   */
+  pathsFromDrop: (files: File[]): string[] => {
+    const paths: string[] = []
+    for (const file of files) {
+      try {
+        const path = webUtils.getPathForFile(file)
+        if (path && path.length > 0) paths.push(path)
+      } catch {
+        /* 拿不到路径（非本地文件），跳过 */
+      }
+    }
+    return paths
   }
 } satisfies StudyBoardApi
 

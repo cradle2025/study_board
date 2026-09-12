@@ -1,7 +1,15 @@
 import { existsSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
 import { dirname } from 'node:path'
 
-import { MAX_CARDS, MAX_CARD_LEVEL, MAX_CARD_LONG, MAX_CARD_TEXT } from '@shared/limits'
+import {
+  MAX_CARDS,
+  MAX_CARD_LEVEL,
+  MAX_CARD_LONG,
+  MAX_CARD_REASON,
+  MAX_CARD_SEMESTER,
+  MAX_CARD_TEXT
+} from '@shared/limits'
+import { normalizeCourseStatus, defaultSemesterFor } from '@shared/course'
 import type { CourseCard, CourseCardInput } from '@shared/types'
 
 import { ensureDir, newId } from '../paths'
@@ -61,6 +69,11 @@ function sanitizeCard(raw: unknown, index: number): CourseCard | null {
     id: id.slice(0, 64),
     courseName,
     teacher: text(input['teacher'], MAX_CARD_TEXT),
+    // 老数据没有这个字段 → 一律落到「在学」：加字段之前建的卡片，
+    // 那些课当时显然都在修，不该凭空消失也不该被塞进归档
+    status: normalizeCourseStatus(input['status']),
+    semester: text(input['semester'], MAX_CARD_SEMESTER),
+    reason: text(input['reason'], MAX_CARD_REASON),
     score: score(input['score']),
     difficulty: level(input['difficulty']),
     mastery: level(input['mastery']),
@@ -149,6 +162,9 @@ export class CardsStore {
     if (existing) {
       existing.courseName = courseName
       existing.teacher = text(input?.teacher, MAX_CARD_TEXT)
+      existing.status = normalizeCourseStatus(input?.status)
+      existing.semester = text(input?.semester, MAX_CARD_SEMESTER)
+      existing.reason = text(input?.reason, MAX_CARD_REASON)
       existing.score = score(input?.score)
       existing.difficulty = level(input?.difficulty)
       existing.mastery = level(input?.mastery)
@@ -167,6 +183,9 @@ export class CardsStore {
       id: newId(),
       courseName,
       teacher: text(input?.teacher, MAX_CARD_TEXT),
+      status: normalizeCourseStatus(input?.status),
+      semester: text(input?.semester, MAX_CARD_SEMESTER),
+      reason: text(input?.reason, MAX_CARD_REASON),
       score: score(input?.score),
       difficulty: level(input?.difficulty),
       mastery: level(input?.mastery),
@@ -180,6 +199,31 @@ export class CardsStore {
     this.#content.cards.push(card)
     this.#persist()
     return structuredClone(card)
+  }
+
+  /**
+   * 只改状态：归档 / 移回在学 / 放进愿望单。
+   *
+   * 刻意不做成 `upsert` 的一个调用姿势：脚部按钮手里只有 id 与目标状态，
+   * 若要求先把整张卡片读出来再原样写回去，就多了一条「读到写之间被别处改了
+   * 就互相覆盖」的路径。这里只动 status / semester / updatedAt 三个字段。
+   *
+   * 「学期」的预填规则放在这里而不是渲染层：状态可能从三个入口（卡片脚部、
+   * 归档页、表单）改，规则只该有一份。
+   */
+  setStatus(id: unknown, status: unknown, semester?: unknown): CourseCard[] {
+    const card = this.find(id)
+    if (!card) return this.list()
+
+    card.status = normalizeCourseStatus(status)
+
+    const given = text(semester, MAX_CARD_SEMESTER)
+    if (given.length > 0) card.semester = given
+    else if (card.semester.length === 0) card.semester = defaultSemesterFor(card.status)
+
+    card.updatedAt = new Date().toISOString()
+    this.#persist()
+    return this.list()
   }
 
   /** 关联笔记。由 IPC 层在「卡片创建 → 笔记创建」之后调用 */

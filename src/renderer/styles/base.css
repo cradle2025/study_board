@@ -90,6 +90,16 @@ html[data-theme='dark'] {
   box-sizing: border-box;
 }
 
+/* `hidden` 属性必须真的把元素藏起来。
+   这条看着多余，其实是必需的：浏览器默认样式里那条 `[hidden]{display:none}`
+   和本文件里的类选择器同为 (0,1,0)，而**作者样式优先于默认样式**——
+   只要某个类自己声明了 `display`（`.sb-field`、`.sb-empty`…），
+   `el.hidden = true` 就会静默失效，元素照旧显示在页面上。
+   加了 `!important` 才能压过那些 `display: flex`，让「隐藏」这件事只有一种含义。 */
+[hidden] {
+  display: none !important;
+}
+
 html,
 body {
   height: 100%;
@@ -1015,6 +1025,31 @@ h4 {
   gap: 16px;
 }
 
+/* 分组渲染（已学库按学期分组）时，这一层装的是若干个「组」，
+   每一组里才是网格。所以它自己不能是网格——否则组会被当成一个格子摆进列里 */
+.sb-cards__group + .sb-cards__group {
+  margin-top: 26px;
+}
+
+.sb-cards__group-head {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  margin-bottom: 12px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--border-default);
+}
+
+.sb-cards__group-title {
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.sb-cards__group-count {
+  font-size: 12.5px;
+  color: var(--text-tertiary);
+}
+
 .sb-itemcard {
   display: flex;
   flex-direction: column;
@@ -1236,7 +1271,36 @@ h4 {
 
 .sb-itemcard__actions {
   display: inline-flex;
+  align-items: center;
   gap: 2px;
+  flex: 0 0 auto;
+}
+
+/* 状态流转（归档 / 想学 / 开始学 / 移回在学）。
+   比「记笔记」多一层边框：它是一次会改变卡片归属的操作，值得看起来像个按钮，
+   但又不能抢过主操作，所以用中性描边而不是填充色 */
+.sb-itemcard__status {
+  height: 30px;
+  padding: 0 10px;
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-sm);
+  background: var(--bg-surface);
+  color: var(--text-secondary);
+  font-size: 12.5px;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: border-color 0.12s ease, color 0.12s ease, background 0.12s ease;
+}
+
+.sb-itemcard__status:hover {
+  border-color: var(--border-strong);
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+.sb-itemcard__status:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: -2px;
 }
 
 /* 表单里的并排字段：名字 / 老师这一类短输入不该各占一整行 */
@@ -1248,6 +1312,389 @@ h4 {
 .sb-form-pair > .sb-field {
   flex: 1 1 0;
   min-width: 0;
+}
+
+/* ------------------------------------------------------------ 课程三态 */
+
+/* 「在学 / 想学」切换器。
+   做成一段连体的分段控件而不是两个各自带边框的按钮：它们是一组互斥的选择，
+   连在一起更能说明这一点，也少占一条横线 */
+.sb-switch {
+  display: inline-flex;
+  margin-bottom: 16px;
+  padding: 3px;
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-md);
+  background: var(--bg-subtle);
+}
+
+.sb-switch__item {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  height: 32px;
+  padding: 0 14px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 13.5px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 0.12s ease, color 0.12s ease;
+}
+
+.sb-switch__item:hover {
+  color: var(--text-primary);
+}
+
+.sb-switch__item[aria-selected='true'] {
+  background: var(--bg-surface);
+  color: var(--text-primary);
+  font-weight: 600;
+  box-shadow: var(--shadow-sm);
+}
+
+.sb-switch__item:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: -2px;
+}
+
+.sb-switch__count {
+  min-width: 20px;
+  padding: 0 6px;
+  border-radius: 999px;
+  background: var(--bg-hover);
+  color: var(--text-tertiary);
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 18px;
+  text-align: center;
+}
+
+.sb-switch__item[aria-selected='true'] .sb-switch__count {
+  background: var(--color-accent-soft);
+  color: var(--color-accent-text);
+}
+
+/* 想学卡片的正面：这门课还没修过，分数和两个评分全是空的，
+   照搬在学卡片的正面只会得到一排「未填」。换成理由 + 计划学期 */
+.sb-course__wish {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: hidden;
+  margin-top: 12px;
+}
+
+.sb-course__wish-text {
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.7;
+  color: var(--text-primary);
+  word-break: break-word;
+}
+
+.sb-course__wish-text--empty {
+  color: var(--text-tertiary);
+}
+
+/* 卡片正面的底部信息行。与 .sb-course__ratings 同一套（贴底 + 上分隔线），
+   只是内容不是评分 */
+.sb-course__footrow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: auto;
+  padding-top: 12px;
+  border-top: 1px solid var(--border-default);
+}
+
+.sb-course__chip {
+  max-width: 100%;
+  padding: 3px 10px;
+  border-radius: 999px;
+  background: var(--bg-hover);
+  color: var(--text-secondary);
+  font-size: 12.5px;
+  line-height: 1.5;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* 背面的学期只占一行：正面高度是写死的，再多一行会把课程名挤成一行 */
+.sb-course__semester {
+  flex: 0 0 auto;
+  font-size: 12px;
+  color: var(--text-tertiary);
+}
+
+/* ------------------------------------------------------------ 课程资料 */
+
+/* 卡片脚部的资料角标：无边框的次级入口，数字比字面更值得看 */
+.sb-itemcard__mats {
+  height: 30px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--color-accent-text);
+  font-size: 12.5px;
+  font-weight: 500;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background 0.12s ease;
+}
+
+.sb-itemcard__mats:hover {
+  background: var(--color-accent-soft);
+}
+
+.sb-itemcard__mats:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: -2px;
+}
+
+/* 资料分组（按课程） */
+.sb-materials__group + .sb-materials__group {
+  margin-top: 22px;
+}
+
+.sb-materials__group-head {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  margin-bottom: 10px;
+  padding-bottom: 6px;
+  border-bottom: 1px solid var(--border-default);
+}
+
+.sb-materials__group-title {
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.sb-materials__group-count {
+  font-size: 12.5px;
+  color: var(--text-tertiary);
+}
+
+/* 单条资料：类型徽章 + 名称与元信息 + 操作条 */
+.sb-material {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 9px 10px;
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-md);
+  background: var(--bg-surface);
+  margin-bottom: 8px;
+  transition: border-color 0.12s ease;
+}
+
+.sb-material:hover {
+  border-color: var(--border-strong);
+}
+
+.sb-material--lost {
+  background: var(--bg-subtle);
+}
+
+.sb-material--lost .sb-material__title {
+  color: var(--text-tertiary);
+  text-decoration: line-through;
+}
+
+.sb-material__kind {
+  flex: 0 0 auto;
+  min-width: 44px;
+  padding: 3px 6px;
+  border-radius: var(--radius-sm);
+  background: var(--color-accent-soft);
+  color: var(--color-accent-text);
+  font-size: 11.5px;
+  font-weight: 500;
+  text-align: center;
+}
+
+.sb-material__main {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.sb-material__title {
+  font-size: 14px;
+  font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sb-material__meta {
+  font-size: 12px;
+  color: var(--text-tertiary);
+}
+
+.sb-material__meta b {
+  color: var(--color-danger);
+  font-weight: 500;
+}
+
+.sb-material__actions {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+/* 小号按钮（资料行的「打开」） */
+.sb-btn--sm {
+  height: 28px;
+  padding: 0 10px;
+  font-size: 12.5px;
+}
+
+/* 资料页的筛选提示条（卡片角标跳过来时显示） */
+.sb-filternote {
+  display: inline-block;
+  margin: 2px 0 12px;
+  padding: 5px 12px;
+  border: 0;
+  border-radius: 999px;
+  background: var(--color-accent-soft);
+  color: var(--color-accent-text);
+  font-size: 12.5px;
+  cursor: pointer;
+}
+
+/* 导入对话框里的文件清单 */
+.sb-material-pick {
+  list-style: none;
+  margin: 0 0 14px;
+  padding: 0;
+  max-height: 220px;
+  overflow-y: auto;
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-md);
+}
+
+.sb-material-pick__item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 8px 12px;
+}
+
+.sb-material-pick__item + .sb-material-pick__item {
+  border-top: 1px solid var(--border-default);
+}
+
+.sb-material-pick__name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13px;
+}
+
+.sb-material-pick__meta {
+  flex: 0 0 auto;
+  font-size: 12px;
+  color: var(--text-tertiary);
+}
+
+.sb-material-pick__item--bad .sb-material-pick__name {
+  color: var(--color-danger);
+  text-decoration: line-through;
+}
+
+/* 笔记页侧栏的「本课资料」块 */
+.sb-notes__course {
+  margin-top: 12px;
+  padding-top: 10px;
+  border-top: 1px solid var(--border-default);
+}
+
+.sb-notes__course-head {
+  margin-bottom: 6px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  color: var(--text-tertiary);
+}
+
+.sb-notes__material {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  width: 100%;
+  padding: 5px 8px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  cursor: pointer;
+  text-align: left;
+  transition: background 0.12s ease;
+}
+
+.sb-notes__material:hover {
+  background: var(--bg-hover);
+}
+
+.sb-notes__material-kind {
+  flex: 0 0 auto;
+  font-size: 10.5px;
+  font-weight: 500;
+  color: var(--color-accent-text);
+}
+
+.sb-notes__material-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12.5px;
+  color: var(--text-secondary);
+}
+
+/* 拖拽导入蒙层：拖着文件悬在窗口上时的全屏提示 */
+.sb-dropmask {
+  position: fixed;
+  inset: 0;
+  z-index: 2000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--color-accent-soft);
+  pointer-events: none;
+}
+
+.sb-dropmask__card {
+  padding: 26px 44px;
+  border: 2px dashed var(--color-accent);
+  border-radius: var(--radius-lg);
+  background: var(--bg-surface);
+  text-align: center;
+}
+
+.sb-dropmask__title {
+  font-size: 17px;
+  font-weight: 600;
+  color: var(--color-accent-text);
+}
+
+.sb-dropmask__hint {
+  margin-top: 6px;
+  font-size: 12.5px;
+  color: var(--text-secondary);
 }
 
 /* ---------------------------------------------------------------- 笔记页 */
@@ -1872,4 +2319,133 @@ h4 {
 
 .sb-toast--info {
   border-left: 3px solid var(--color-accent);
+}
+
+/* ---------------------------------------------------------------- AI 助手 */
+
+/* AI 对话框要同时放得下「要求输入框」和「一屏预览」，所以比通用表单宽。
+   限高 + 自己滚动：预览再长也不能把对话框顶出屏幕之外 */
+.sb-modal__card--ai {
+  width: min(680px, calc(100vw - 48px));
+  max-height: calc(100vh - 80px);
+  overflow: auto;
+}
+
+/* 常用要求的快捷按钮。做成 chip 而不是下拉：一屏看得到全部，点一下就填进输入框，
+   比「展开 → 选择」少一步——这些本来就是「按一下就能用」的起点 */
+.sb-ai__presets {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 14px 0;
+}
+
+.sb-chip {
+  padding: 4px 10px;
+  border: 1px solid var(--border-default);
+  border-radius: 999px;
+  background: var(--bg-surface);
+  color: var(--text-secondary);
+  font-family: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.sb-chip:hover {
+  border-color: var(--color-accent);
+  background: var(--bg-hover);
+  color: var(--color-accent-text);
+}
+
+.sb-ai__result {
+  margin-bottom: 4px;
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-md);
+  background: var(--bg-subtle);
+}
+
+/* 预览区限高并自己滚动：模型偶尔话多 */
+.sb-ai__preview {
+  max-height: 260px;
+  overflow: auto;
+  padding: 12px 14px;
+  font-size: 13px;
+  line-height: 1.65;
+}
+
+/* 预览里的 Markdown 元素要收紧一点：默认的段间距在对话框里太散，
+   一屏只能看到两三行 */
+.sb-ai__preview > :first-child {
+  margin-top: 0;
+}
+
+.sb-ai__preview > :last-child {
+  margin-bottom: 0;
+}
+
+.sb-ai__preview h1,
+.sb-ai__preview h2,
+.sb-ai__preview h3 {
+  margin: 14px 0 6px;
+  font-size: 14px;
+  color: var(--text-primary);
+}
+
+.sb-ai__preview p,
+.sb-ai__preview ul,
+.sb-ai__preview ol {
+  margin: 6px 0;
+}
+
+.sb-ai__preview ul,
+.sb-ai__preview ol {
+  padding-left: 20px;
+}
+
+.sb-ai__preview blockquote {
+  margin: 6px 0;
+  padding-left: 10px;
+  border-left: 2px solid var(--border-strong);
+  color: var(--text-secondary);
+}
+
+.sb-ai__preview code {
+  padding: 1px 4px;
+  border-radius: 4px;
+  background: var(--bg-hover);
+  font-family: var(--font-mono);
+  font-size: 12px;
+}
+
+.sb-ai__preview pre {
+  overflow: auto;
+  padding: 8px 10px;
+  border-radius: var(--radius-sm);
+  background: var(--bg-hover);
+}
+
+.sb-ai__preview pre code {
+  padding: 0;
+  background: none;
+}
+
+.sb-ai__preview table {
+  border-collapse: collapse;
+  font-size: 12px;
+}
+
+.sb-ai__preview th,
+.sb-ai__preview td {
+  padding: 4px 8px;
+  border: 1px solid var(--border-default);
+}
+
+.sb-ai__result .sb-hint {
+  padding: 0 14px;
+}
+
+.sb-ai__apply {
+  justify-content: flex-end;
+  padding: 10px 14px;
+  border-top: 1px solid var(--border-default);
 }

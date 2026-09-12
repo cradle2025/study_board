@@ -46,6 +46,10 @@ export const MAX_CARD_TEXT = 60
 export const MAX_CARD_LONG = 2000
 /** 难度与掌握程度都按 1–5 打分，0 表示没填 */
 export const MAX_CARD_LEVEL = 5
+/** 学期，如 "2025-2026 秋"。留够写 "2025-2026 学年第一学期" 这种长写法的余量 */
+export const MAX_CARD_SEMESTER = 32
+/** 想修理由。比正文短得多：这是一句话，不是一篇小作文 */
+export const MAX_CARD_REASON = 200
 
 /* ------------------------------------------------------------------ 笔记 */
 
@@ -76,4 +80,39 @@ export const EXPORT_EXTENSIONS = {
 
 /** 单篇笔记导出的等待上限：PDF 要起一个隐藏窗口，比另外三种慢得多 */
 export const EXPORT_TIMEOUT_MS = 30_000
+
+/* ------------------------------------------------------------------ AI 助手 */
+
+/**
+ * 各段输入的上限。
+ *
+ * 放 shared 而不是只写在主进程里，是因为**两边都要用**：
+ * 渲染层要提前拦一次给出人话提示（别等发出去才报错），主进程再兜一次底
+ * （渲染层的长度检查只是体验，不能当成防线）。
+ */
+export const MAX_AI_INSTRUCTION = 4000
+export const MAX_AI_CONTEXT = 60_000
+export const MAX_AI_FOCUS = 200
+
+/** 单次 AI 请求的等待上限。模型边想边说，给得比导出宽 */
+export const AI_TIMEOUT_MS = 60_000
+
+/* ------------------------------------------------------------------ 课程资料 */
+
+/** 资料条数上限：一门课一学期的课件 + 讲义 + 大纲，四年下来几百份足够 */
+export const MAX_MATERIALS = 500
+
+/**
+ * 单个资料文件的大小上限（100MB）。
+ *
+ * 课件 PDF 常见在几 MB 到几十 MB，上百 MB 的基本是扫描合集——
+ * 复制进库之前拦下来，别让一次误拖把磁盘占满。
+ */
+export const MAX_MATERIAL_BYTES = 100 * 1024 * 1024
+
+/** 资料标题（用户可读名）长度上限，同时是入库文件名的主要成分 */
+export const MAX_MATERIAL_TITLE = 80
+
+/** 一次导入的文件数上限：拖一个乱糟糟的下载目录进来也不至于导入几百个 */
+export const MAX_MATERIAL_BATCH = 30
 

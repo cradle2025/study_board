@@ -1,5 +1,5 @@
 import { CHANNELS } from '@shared/channels'
-import type { CourseCard, CourseCardInput } from '@shared/types'
+import type { CourseCard, CourseCardInput, CourseStatusInput } from '@shared/types'
 
 import { context } from '../context'
 import { handle } from './index'
@@ -74,5 +74,16 @@ export function registerCardsHandlers(): void {
   handle<unknown, CourseCard[]>(CHANNELS.CARDS_REORDER, (ids) => {
     if (!Array.isArray(ids)) throw new Error('ids 必须是数组')
     return context().cards.reorder(ids.map((id) => String(id)))
+  })
+
+  // 归档 / 移回在学 / 加入愿望单。
+  // 这里**不碰笔记**：状态变了不代表课程名变了，笔记标题该保持原样；
+  // 已学的卡片也仍然留着笔记，用户回头翻复习资料还得靠它
+  handle<unknown, CourseCard[]>(CHANNELS.CARDS_SET_STATUS, (raw) => {
+    if (!raw || typeof raw !== 'object') throw new Error('参数不合法')
+    const input = raw as CourseStatusInput
+    const id = String(input.id ?? '').trim()
+    if (id.length === 0) throw new Error('缺少卡片 id')
+    return context().cards.setStatus(id, input.status, input.semester)
   })
 }

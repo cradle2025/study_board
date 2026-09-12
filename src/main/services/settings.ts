@@ -2,6 +2,7 @@ import { existsSync, readFileSync, renameSync, unlinkSync, writeFileSync } from 
 import { join } from 'node:path'
 
 import { DEFAULT_PERIODS, DEFAULT_WEEKDAYS, MAX_PERIODS, MIN_PERIODS } from '@shared/limits'
+import { DEFAULT_AI_PROVIDER } from '@shared/aiProviders'
 import type { AppSettings, SettingsPatch } from '@shared/types'
 
 import { configFile, dataRoot, defaultNotesLibraryDir, ensureDir } from '../paths'
@@ -22,8 +23,9 @@ function buildDefaults(portable: boolean): AppSettings {
       weekdays: [...DEFAULT_WEEKDAYS]
     },
     ai: {
-      baseUrl: 'https://api.openai.com/v1',
-      model: 'gpt-4o-mini',
+      provider: DEFAULT_AI_PROVIDER.id,
+      baseUrl: DEFAULT_AI_PROVIDER.baseUrl,
+      model: DEFAULT_AI_PROVIDER.model,
       temperature: 0.3,
       hasApiKey: false
     },
@@ -31,6 +33,11 @@ function buildDefaults(portable: boolean): AppSettings {
       targetId: '',
       hasToken: false,
       lastSyncAt: null
+    },
+    // 空串 = 未配置，运行时按「系统下载目录 / StudyBoard收件箱」解析。
+    // 默认值不能在这里写死：app.getPath('downloads') 在模块加载期拿不到稳定值
+    materials: {
+      inboxDir: ''
     }
   }
 }
@@ -116,7 +123,10 @@ export class SettingsStore {
         ? { ...this.#cache.timetable, ...patch.timetable }
         : this.#cache.timetable,
       ai: patch.ai ? { ...this.#cache.ai, ...patch.ai } : this.#cache.ai,
-      notion: patch.notion ? { ...this.#cache.notion, ...patch.notion } : this.#cache.notion
+      notion: patch.notion ? { ...this.#cache.notion, ...patch.notion } : this.#cache.notion,
+      materials: patch.materials
+        ? { ...this.#cache.materials, ...patch.materials }
+        : this.#cache.materials
     }
 
     next.timetable.periodCount = clampPeriods(

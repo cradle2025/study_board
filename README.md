@@ -39,6 +39,27 @@
 - 可手动增删改，双击编辑
 - 如果课表用的是表格模式，课程名与老师会自动带入
 
+**课程资料库（PDF / PPT / Word / Excel）**
+- 下载好的课件直接**拖进窗口**（或点「导入资料」多选）→ 弹一次「归属哪门课」
+  → 自动复制入库、按 `课程名_资料名` 命名、按课程分组
+- 资料存在笔记库的 `attachments/` 目录，**Obsidian 原生能预览其中的 PDF**；
+  笔记里点「插资料」生成 `![[文件名]]` 引用，Obsidian 里也能直接打开
+- 卡片上显示资料份数，点一下直达这门课的资料
+- 打开用系统默认程序（PDF 阅读器 / Office / WPS）；删除只是移入系统回收站
+- **浏览器扩展**（仓库 `extension/` 目录，见其 README）：学校网站点下载后
+  自动改存「收件箱」，看板弹一次归属选择——彻底告别手动搬文件
+- 导入会校验文件头（挡伪装文件），单份上限 100MB；下载目录里的原件不动
+
+**课程归档（想学 / 在学 / 已学）**
+- 每张卡片有一个状态，三态各自一处：
+  - **在学 / 想学** —— 「课程与学习」页上的一个切换器，两边各自是独立的列表
+  - **已学** —— 单独的「已学库」页，按学期分组，新的排在上面
+- 卡片脚上直接点「归档」就收进已学库；在已学库里点「移回在学」随时可以捞回来
+- **归档不是把数据搬到别处**，只是把状态标成已学：笔记一篇都不会少，
+  双击还能补打分和给分标准（这些通常是修完之后才写得出来的）
+- 想学的卡片正面记的是**想修的理由 + 计划学期**，而不是一排空的评分
+- 每张卡片带一个学期字段，新建时按当前校历自动预填，也可以自己改
+
 **笔记**
 - 每张卡片对应一篇笔记，标题自动命名为 `课程名_授课老师`
 - 双模式编辑器：**Markdown** 与 **富文本**，同一份内容两种视图
@@ -48,8 +69,11 @@
 **笔记拓展**
 - 一键导出为 **Markdown / 网页 / Word / PDF** 四种格式，导出的都是正文本身
   （不含应用自己的簿记字段），标题进文件属性而不是正文里多顶一个标题
-- 与 **Obsidian** 天然互通；可选接入 **Notion** 做双向同步
+- 与 **Obsidian** 天然互通（笔记库就是一个 Obsidian Vault）
 - 接 **AI** 助手：按课程主题整理资料并写入笔记，写入方式（自己粘贴 / AI 直接写入）由你决定，且**不会改动你已有内容**
+
+> **Notion 双向同步目前还没做。** 代码里只留了通道与密钥存储的占位，
+> 界面上没有入口；等做出来再写进这里。计划见 [ARCHITECTURE.md](./docs/ARCHITECTURE.md) 第十一节。
 
 ---
 
@@ -59,8 +83,15 @@
 
 | 系统 | 文件 | 说明 |
 | --- | --- | --- |
-| Windows 10/11 | `StudyBoard-<版本>-win-x64-setup.exe` | 双击安装，可选安装目录，不写注册表之外的系统位置 |
+| Windows 10/11 **64 位** | `StudyBoard-<版本>-win-x64-setup.exe` | 双击安装，可选安装目录，不写注册表之外的系统位置 |
 | macOS | `StudyBoard-<版本>-mac-arm64.dmg`（Apple 芯片）<br>`StudyBoard-<版本>-mac-x64.dmg`（Intel） | 拖入「应用程序」即可 |
+
+> **Windows 只有 64 位版本。** 32 位 Windows 装不了，也不打算支持——
+> 32 位 Windows 11 根本不存在，Windows 10 的 32 位也已经停止支持了。
+> 需要在 Windows 上确认位数：`设置 → 系统 → 关于`，看「系统类型」那一行。
+>
+> x64 的安装包在 Windows 11 on ARM 上能装，系统会用内置的 x64 模拟跑起来
+> （能用，但比原生慢；目前没有做过 Windows ARM64 的原生包）。
 
 ### macOS 首次打开的注意事项
 
@@ -90,9 +121,12 @@
 
 ```
 StudyBoard/
-├── config.json           # 所有设置
+├── config.json           # 所有设置（含课表形状）
 ├── secrets.bin           # AI Key / Notion Token（系统钥匙串加密）
-├── study-board.db        # 课表、卡片、门户等结构化数据
+├── timetable.json        # 课程表内容
+├── cards.json            # 课程卡片（含状态与学期）
+├── portal.json           # 网站门户站点
+├── logs/                 # 主进程日志，崩溃排查用
 ├── notes_library/        # 笔记正文，纯 Markdown，可直接当 Obsidian 库
 ├── timetable_images/     # 课表截图
 └── icons_cache/          # 网站图标缓存
@@ -127,10 +161,13 @@ npm run build        # 构建到 out/
 npm run smoke             # 冒烟测试：起真实窗口，自检主进程 / preload / 界面
 npm run smoke:timetable   # 课程表端到端：写入单元格 + 图片导入 + 渲染 + 截图
 npm run smoke:portal      # 网站门户端到端：内置站点 + 图标显示 + 增删改隐藏
-npm run smoke:cards       # 课程卡片端到端：翻转 + 从课表带过课程 + 自动建笔记
+npm run smoke:cards       # 课程卡片端到端：翻转 + 从课表带过课程 + 自动建笔记 + 三态归档
 npm run smoke:notes       # 笔记编辑器端到端：双模式切换 + 工具栏 + md 往返
 npm run smoke:sync        # 笔记库文件监听：外部新增/改动/删除/改名 + 冲突追问
 npm run smoke:export      # 笔记导出：md / html / docx / pdf 四种产物落到磁盘
+npm run smoke:ai          # AI 助手与密钥：没配密钥拦在出网之前 + 密钥密文落盘
+npm run smoke:security    # 渗透测试：逃逸 / XSS / 协议穿越 / IPC 模糊 / 导航劫持 / 端口
+npm run smoke:materials   # 课程资料：导入闸口 / 改名往返 / 卡片角标 / 收件箱整链路
 npm run bench             # 性能与内存基准，报告打到 stdout 并写入 .preview/
 npm run bench:compare     # 对比两组基准报告（取中位数，并给出区间）
 npm run icon              # 重新生成应用图标（纯脚本绘制，无图像库依赖）
@@ -141,11 +178,13 @@ npm run package:mac  # 打 macOS dmg     -> release/<版本>/
 
 冒烟测试与基准都会把数据写到**系统临时目录**里，不会碰到你真实的学习数据。
 `npm run smoke:timetable` 会往 `.preview/` 里留两张截图（表格模式 / 图片模式），
-`npm run smoke:portal` 会留一张概览页截图，`npm run smoke:cards` 会留一张卡片页截图，
-在 CI 或没人盯着屏幕时也能确认渲染结果。
+`npm run smoke:portal` 会留一张概览页截图，`npm run smoke:cards` 会留两张卡片页截图
+（课程与学习 / 已学库），在 CI 或没人盯着屏幕时也能确认渲染结果。
 
 > `smoke:cards` 除了界面，还会**去磁盘上把自动创建的那篇 .md 翻出来验一遍**，
 > 并验证「外部编辑器丢进来的笔记能被认出来、外部删掉的不会留在列表里」。
+> 三态那一段还会去读 `cards.json`，确认归档真的把 `status` 和自动补的 `semester`
+> 写进了文件——「已学库里看得见」只证明内存里是对的，重启就没的东西不算数。
 > 界面说自己存好了不算数。
 >
 > `smoke:notes` 会走一遍「Markdown 打字 → 切富文本 → 插表格 → 切回 Markdown」，
@@ -244,7 +283,8 @@ src/
 - **Timetable**: table mode (8 columns, 1–20 periods) or image mode (up to 3 screenshots, incl. HEIF)
 - **Study hub**: quick links to learning sites, flip-able course cards, Markdown & rich-text note editor
 - **Notes** live as plain `.md` files in `notes_library/`, which works directly as an Obsidian vault
-- Export to PDF / Word / Markdown, optional Notion sync, optional AI assistant
+- Export to PDF / Word / Markdown; optional AI assistant (bring your own key)
+- Notion two-way sync is **not implemented yet** — only the channel stubs exist
 
 **Privacy by design**: no listening ports, no telemetry, no network access from the UI process. Everything stays on your machine.
 

@@ -335,6 +335,15 @@ export function createMarkdownEditor(options: MarkdownEditorOptions): EditorHand
       if (view.state.doc.toString() === md) return
       view.dispatch({ changes: { from: 0, to: view.state.doc.length, insert: md } })
     },
+    insertText(text) {
+      const range = view.state.selection.main
+      view.dispatch({
+        changes: { from: range.from, to: range.to, insert: text },
+        selection: { anchor: range.from + text.length }
+      })
+      view.focus()
+      return true
+    },
     focus: () => view.focus(),
     destroy: () => view.destroy(),
     run,

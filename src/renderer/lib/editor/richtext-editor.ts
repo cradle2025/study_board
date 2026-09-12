@@ -197,6 +197,12 @@ export function createRichTextEditor(options: RichTextEditorOptions): EditorHand
       editor.commands.setContent(html, { emitUpdate: false })
       syncPlaceholder()
     },
+    // 资料引用是一段 Markdown 语法（![[文件名]]），在富文本里就是普通文字；
+    // 插入后由 onChange 走正常的自动保存
+    insertText(text) {
+      editor.chain().focus().insertContent(text).run()
+      return true
+    },
     focus: () => editor.commands.focus(),
     destroy: () => editor.destroy(),
     run,

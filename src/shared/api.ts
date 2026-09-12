@@ -5,10 +5,15 @@ import type {
   AppSettings,
   CourseCard,
   CourseCardInput,
+  CourseStatusInput,
   ExportNoteRequest,
   ExportNoteResult,
   IpcResult,
   LibraryChangedEvent,
+  MaterialImportInput,
+  MaterialImportResult,
+  MaterialInboxCandidate,
+  MaterialItem,
   NoteDoc,
   NoteMeta,
   NoteWriteInput,
@@ -82,7 +87,37 @@ export interface StudyBoardApi {
     upsert(card: CourseCardInput): Promise<IpcResult<CourseCard[]>>
     remove(id: string): Promise<IpcResult<CourseCard[]>>
     reorder(ids: string[]): Promise<IpcResult<CourseCard[]>>
+    /** 归档 / 移回在学 / 加入愿望单；返回完整列表 */
+    setStatus(input: CourseStatusInput): Promise<IpcResult<CourseCard[]>>
   }
+
+  materials: {
+    list(): Promise<IpcResult<MaterialItem[]>>
+    /** 拖拽 / 文件对话框导入（绝对路径），返回整份列表与逐条成败 */
+    import(input: MaterialImportInput): Promise<IpcResult<MaterialImportResult>>
+    /** 收件箱导入：只传收件箱内的文件名，路径由主进程拼 */
+    importInbox(input: {
+      fileNames: string[]
+      courseCardId: string
+      title?: string
+    }): Promise<IpcResult<MaterialImportResult>>
+    rename(input: { id: string; title: string }): Promise<IpcResult<MaterialItem[]>>
+    /** 文件进系统回收站，索引摘除 */
+    remove(id: string): Promise<IpcResult<MaterialItem[]>>
+    setCard(input: { id: string; courseCardId: string }): Promise<IpcResult<MaterialItem[]>>
+    /** 用系统默认程序打开（PDF 阅读器 / Office / WPS） */
+    open(id: string): Promise<IpcResult<null>>
+    /** 磁盘上有、索引里没有的文件，供「扫描未登记」收编 */
+    unregistered(): Promise<IpcResult<MaterialInboxCandidate[]>>
+    claim(input: { fileName: string; courseCardId: string }): Promise<IpcResult<MaterialImportResult>>
+    /** 打开收件箱目录（资源管理器） */
+    openInbox(): Promise<IpcResult<null>>
+    /** 系统文件选择对话框（多选） */
+    pickFiles(): Promise<IpcResult<{ canceled: boolean; paths: string[] }>>
+  }
+
+  /** 非函数成员：preload 上的工具方法（不是 IPC，见 preload/index.ts） */
+  pathsFromDrop(files: File[]): string[]
 
   notes: {
     list(): Promise<IpcResult<NoteMeta[]>>
@@ -113,6 +148,8 @@ export interface StudyBoardApi {
   events: {
     onLibraryChanged(listener: (payload: LibraryChangedEvent) => void): () => void
     onSettingsChanged(listener: (payload: AppSettings) => void): () => void
+    /** 收件箱出现新的候选资料（浏览器扩展的下载落点） */
+    onMaterialsInbox(listener: (payload: { files: MaterialInboxCandidate[] }) => void): () => void
   }
 }
 

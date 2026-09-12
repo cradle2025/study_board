@@ -1,12 +1,10 @@
-import { MAX_CARD_LEVEL } from '@shared/limits'
-import type { CourseCard } from '@shared/types'
+import type { CourseStatus } from '@shared/course'
 
 import type { ViewContext, ViewInstance } from '../app-shell'
+import { openCardForm } from '../components/card-form'
 import { createCardController, type CardController } from '../components/card-controller'
 import { createPortalController } from '../components/portal-controller'
-import { escapeHtml } from '../lib/html'
-import { toast } from '../lib/ipc'
-import { openModalCard } from '../lib/overlay'
+import { bridge, toast, unwrap } from '../lib/ipc'
 
 /**
  * 模块二：课程与学习。
@@ -18,184 +16,27 @@ import { openModalCard } from '../lib/overlay'
  * 一个刻意的取舍：**新建卡片时课程名和老师可以从课表直接带过来**
  * （需求：「如果前面的课程表是以表格方式填写则……直接从表格中自动拷贝填写」）。
  * 但不强制——课表还没填、或者想加一门课表里没有的课，也应该能建卡片。
+ *
+ * 后来加的三态（想学 / 在学 / 已学）落成**这一页的两个页签 + 一个独立页面**：
+ * 「在学」和「想学」在这里切换，「已学」单独开一个「已学库」。
+ * 为什么不在这一页做三个页签：已学是「翻旧账」的场景，用的时候人已经不在学期里了，
+ * 混在一起只会让日常最常用的在学列表被挤短。
  */
 
-interface CardFormState {
-  courseName: string
-  teacher: string
-  score: string
-  difficulty: number
-  mastery: number
-  gradingPolicy: string
-  outline: string
+/** 本页负责的两档。已学不在这里 */
+type StudyTab = Extract<CourseStatus, 'learning' | 'wish'>
+
+const TAB_ORDER: readonly StudyTab[] = ['learning', 'wish']
+
+const TAB_LABEL: Record<StudyTab, string> = {
+  learning: '在学',
+  wish: '想学'
 }
 
-const FORM_HTML = `
-  <div class="sb-modal__title" data-role="title"></div>
-
-  <div class="sb-field" data-role="picker-field" hidden>
-    <label for="card-picker">从课表带过来</label>
-    <select class="sb-select" id="card-picker" data-field="picker"></select>
-  </div>
-
-  <div class="sb-form-pair">
-    <div class="sb-field">
-      <label for="card-name">课程名称</label>
-      <input class="sb-input" id="card-name" data-field="courseName" type="text" maxlength="60" />
-    </div>
-    <div class="sb-field">
-      <label for="card-teacher">授课老师</label>
-      <input class="sb-input" id="card-teacher" data-field="teacher" type="text" maxlength="60" />
-    </div>
-  </div>
-
-  <div class="sb-form-pair">
-    <div class="sb-field">
-      <label for="card-score">打分</label>
-      <input class="sb-input" id="card-score" data-field="score" type="text" maxlength="60" placeholder="95 / A / 优秀" />
-    </div>
-    <div class="sb-field">
-      <label for="card-difficulty">难度</label>
-      <select class="sb-select" id="card-difficulty" data-field="difficulty"></select>
-    </div>
-    <div class="sb-field">
-      <label for="card-mastery">掌握程度</label>
-      <select class="sb-select" id="card-mastery" data-field="mastery"></select>
-    </div>
-  </div>
-
-  <div class="sb-field">
-    <label for="card-grading">给分标准（背面，可空）</label>
-    <textarea class="sb-textarea" id="card-grading" data-field="gradingPolicy" rows="3"></textarea>
-  </div>
-  <div class="sb-field">
-    <label for="card-outline">课程大致结构（背面，可空）</label>
-    <textarea class="sb-textarea" id="card-outline" data-field="outline" rows="3"></textarea>
-  </div>
-
-  <p class="sb-hint" data-role="error" hidden></p>
-  <div class="sb-modal__actions">
-    <button class="sb-btn" type="button" data-role="cancel">取消</button>
-    <button class="sb-btn sb-btn--primary" type="button" data-role="save">保存</button>
-  </div>
-`
-
-function fillLevels(select: HTMLSelectElement | null): void {
-  if (!select) return
-  select.innerHTML = [
-    '<option value="0">未填</option>',
-    ...Array.from({ length: MAX_CARD_LEVEL }, (_, i) => `<option value="${i + 1}">${i + 1}</option>`)
-  ].join('')
-}
-
-/** 弹出新建 / 编辑表单；取消返回 null */
-function openCardForm(
-  existing: CourseCard | null,
-  courses: readonly { courseName: string; teacher: string }[]
-): Promise<CardFormState | null> {
-  return new Promise((resolve) => {
-    const modal = openModalCard({ className: 'sb-modal__card--form' })
-    modal.card.innerHTML = FORM_HTML
-
-    const title = modal.card.querySelector<HTMLElement>('[data-role="title"]')
-    const pickerField = modal.card.querySelector<HTMLElement>('[data-role="picker-field"]')
-    const picker = modal.card.querySelector<HTMLSelectElement>('[data-field="picker"]')
-    const nameInput = modal.card.querySelector<HTMLInputElement>('[data-field="courseName"]')
-    const teacherInput = modal.card.querySelector<HTMLInputElement>('[data-field="teacher"]')
-    const scoreInput = modal.card.querySelector<HTMLInputElement>('[data-field="score"]')
-    const difficulty = modal.card.querySelector<HTMLSelectElement>('[data-field="difficulty"]')
-    const mastery = modal.card.querySelector<HTMLSelectElement>('[data-field="mastery"]')
-    const grading = modal.card.querySelector<HTMLTextAreaElement>('[data-field="gradingPolicy"]')
-    const outline = modal.card.querySelector<HTMLTextAreaElement>('[data-field="outline"]')
-    const errorEl = modal.card.querySelector<HTMLElement>('[data-role="error"]')
-    const cancelBtn = modal.card.querySelector<HTMLButtonElement>('[data-role="cancel"]')
-    const saveBtn = modal.card.querySelector<HTMLButtonElement>('[data-role="save"]')
-
-    const isEdit = existing !== null
-    if (title) title.textContent = isEdit ? '修改课程卡片' : '新建课程卡片'
-    if (nameInput && existing) nameInput.value = existing.courseName
-    if (teacherInput && existing) teacherInput.value = existing.teacher
-    if (scoreInput && existing) scoreInput.value = existing.score
-    if (grading && existing) grading.value = existing.gradingPolicy
-    if (outline && existing) outline.value = existing.outline
-
-    fillLevels(difficulty)
-    fillLevels(mastery)
-    if (difficulty) difficulty.value = String(existing?.difficulty ?? 0)
-    if (mastery) mastery.value = String(existing?.mastery ?? 0)
-
-    // 课表里有课才显示挑选器；编辑已有卡片时不显示（避免误改成一门别的课）
-    const canPick = !isEdit && courses.length > 0
-    if (pickerField && picker && canPick) {
-      pickerField.hidden = false
-      picker.innerHTML = [
-        '<option value="">— 手动填写 —</option>',
-        ...courses.map(
-          (course, index) =>
-            `<option value="${index}">${escapeHtml(
-              course.teacher ? `${course.courseName} · ${course.teacher}` : course.courseName
-            )}</option>`
-        )
-      ].join('')
-      picker.addEventListener('change', () => {
-        const index = Number(picker.value)
-        const picked = courses[index]
-        if (!picked) return
-        if (nameInput) nameInput.value = picked.courseName
-        if (teacherInput) teacherInput.value = picked.teacher
-      })
-    }
-
-    let settled = false
-    const done = (value: CardFormState | null): void => {
-      if (settled) return
-      settled = true
-      document.removeEventListener('keydown', onKeyDown, true)
-      modal.close()
-      resolve(value)
-    }
-
-    function showError(message: string): void {
-      if (!errorEl) return
-      errorEl.textContent = message
-      errorEl.hidden = false
-    }
-
-    function submit(): void {
-      const courseName = (nameInput?.value ?? '').replace(/\s+/g, ' ').trim()
-      if (courseName.length === 0) {
-        showError('请填写课程名称')
-        nameInput?.focus()
-        return
-      }
-      done({
-        courseName,
-        teacher: (teacherInput?.value ?? '').replace(/\s+/g, ' ').trim(),
-        score: (scoreInput?.value ?? '').replace(/\s+/g, ' ').trim(),
-        difficulty: Number(difficulty?.value ?? 0),
-        mastery: Number(mastery?.value ?? 0),
-        gradingPolicy: grading?.value.trim() ?? '',
-        outline: outline?.value.trim() ?? ''
-      })
-    }
-
-    function onKeyDown(event: KeyboardEvent): void {
-      if (event.key !== 'Enter') return
-      // 多行文本框里回车是换行，不能当提交
-      const active = document.activeElement
-      if (active instanceof HTMLTextAreaElement) return
-      if (active instanceof HTMLSelectElement) return
-      event.preventDefault()
-      submit()
-    }
-
-    cancelBtn?.addEventListener('click', () => done(null))
-    saveBtn?.addEventListener('click', submit)
-    document.addEventListener('keydown', onKeyDown, true)
-
-    nameInput?.focus()
-    if (nameInput && existing) nameInput.select()
-  })
+const TAB_EMPTY: Record<StudyTab, string> = {
+  learning:
+    '还没有在学的课程。点「新建卡片」开始——课程名和老师可以直接从课表带过来；学完了点卡片上的「归档」，它就会挪进已学库。',
+  wish: '愿望单是空的。把想修但还没排上的课放进来，顺手写一句为什么想修——过一学期再回来看，这句话比课名有用。'
 }
 
 export function createStudyView(ctx: ViewContext): ViewInstance {
@@ -209,6 +50,7 @@ export function createStudyView(ctx: ViewContext): ViewInstance {
       </div>
       <div class="sb-toolbar">
         <button class="sb-btn" type="button" data-action="to-notes">全部笔记</button>
+        <button class="sb-btn" type="button" data-action="to-archived">已学库</button>
         <button class="sb-btn sb-btn--primary" type="button" data-action="add">新建卡片</button>
       </div>
     </div>
@@ -218,10 +60,21 @@ export function createStudyView(ctx: ViewContext): ViewInstance {
         <h2 class="sb-section__title">课程卡片</h2>
         <span class="sb-badge" data-role="meta">模块二</span>
       </div>
+      <div class="sb-switch" data-role="tabs" role="tablist" aria-label="按状态筛选">
+        ${TAB_ORDER.map(
+          (item) => `
+            <button class="sb-switch__item" type="button" role="tab" data-tab="${item}"
+                    aria-selected="${item === 'learning' ? 'true' : 'false'}">
+              <span>${TAB_LABEL[item]}</span>
+              <span class="sb-switch__count" data-count="${item}">0</span>
+            </button>
+          `
+        ).join('')}
+      </div>
       <div data-role="cards"></div>
       <p class="sb-hint">
         新建卡片时会自动在笔记库里建一篇同名笔记（标题为「课程名_老师」），
-        之后在卡片下方点「记笔记」就能直接跳过去。
+        之后在卡片下方点「记笔记」就能直接跳过去。学完一门课，点卡片上的「归档」收进已学库。
       </p>
     </section>
 
@@ -238,25 +91,66 @@ export function createStudyView(ctx: ViewContext): ViewInstance {
 
   const slot = element.querySelector<HTMLElement>('[data-role="cards"]')
   const meta = element.querySelector<HTMLElement>('[data-role="meta"]')
+  const tabsEl = element.querySelector<HTMLElement>('[data-role="tabs"]')
+
+  let tab: StudyTab = 'learning'
+
+  /** 每门课的资料份数（卡片角标用）。资料在别的页面/拖拽导入后由事件通知刷新 */
+  const materialCounts = new Map<string, number>()
+
+  async function loadMaterialCounts(): Promise<void> {
+    try {
+      const items = await unwrap(bridge().materials.list())
+      materialCounts.clear()
+      for (const item of items) {
+        if (item.courseCardId.length === 0) continue
+        materialCounts.set(item.courseCardId, (materialCounts.get(item.courseCardId) ?? 0) + 1)
+      }
+      // 角标是卡片渲染的一部分：数字变了就得重绘一次（顺带刷新筛选）
+      controller.setFilter((card) => card.status === tab)
+    } catch {
+      /* 资料加载失败不影响卡片本身 */
+    }
+  }
+
+  const onMaterialsChanged = (): void => {
+    void loadMaterialCounts()
+  }
+  window.addEventListener('sb:materials-changed', onMaterialsChanged)
 
   const controller: CardController = createCardController({
     editable: true,
-    onData(cards) {
+    filter: (card) => card.status === tab,
+
+    onData(all) {
+      // 页签上的数字统计的是**全部**卡片，不是当前筛选出来的那些；
+      // 否则「在学 3 / 想学 0」会让人以为愿望单也是空的
+      for (const value of TAB_ORDER) {
+        const count = all.filter((card) => card.status === value).length
+        const el = element.querySelector<HTMLElement>(`[data-count="${value}"]`)
+        if (el) el.textContent = String(count)
+      }
       if (!meta) return
-      const linked = cards.filter((card) => card.noteId.length > 0).length
+      const linked = all.filter((card) => card.noteId.length > 0).length
+      const learnedCount = all.filter((card) => card.status === 'learned').length
       meta.textContent =
-        cards.length === 0 ? '还没有卡片' : `${cards.length} 张 · ${linked} 张已连笔记`
+        all.length === 0
+          ? '还没有卡片'
+          : `共 ${all.length} 门 · ${linked} 张已连笔记 · 已学 ${learnedCount} 门`
     },
+
     onEdit(card) {
-      void openCardForm(card, controller.courses()).then(async (result) => {
+      void openCardForm(card, controller.courses(), tab).then(async (result) => {
         if (!result) return
         try {
           await controller.upsert({ id: card.id, ...result })
+          afterSave(result.status)
         } catch (error) {
           toast(error instanceof Error ? error.message : String(error), 'error')
         }
       })
     },
+
     onOpenNote(card) {
       if (card.noteId.length === 0) {
         toast('这门课还没有笔记，去笔记页新建一篇', 'info')
@@ -264,20 +158,59 @@ export function createStudyView(ctx: ViewContext): ViewInstance {
         return
       }
       ctx.openNote(card.noteId)
+    },
+
+    onMaterials(card) {
+      ctx.openMaterials(card.id)
+    },
+
+    materialCount(card) {
+      return materialCounts.get(card.id) ?? 0
     }
   })
 
   slot?.appendChild(controller.grid.element)
+
+  /**
+   * 保存之后如果卡片不在当前页签里，就跟着切过去。
+   *
+   * 否则会出现「点了保存、提示成功、界面上什么也没变」——卡片其实被存到了
+   * 另一档里。归档（已学）不在本页的页签里，所以说一句它去哪了。
+   */
+  function afterSave(status: CourseStatus): void {
+    if (status === 'learned') {
+      toast('已归档，可在「已学库」里看到', 'info')
+      return
+    }
+    if (status !== tab) setTab(status)
+  }
+
+  function setTab(next: StudyTab): void {
+    tab = next
+    controller.grid.setEmptyText(TAB_EMPTY[next])
+    tabsEl?.querySelectorAll<HTMLButtonElement>('[data-tab]').forEach((btn) => {
+      btn.setAttribute('aria-selected', btn.dataset['tab'] === next ? 'true' : 'false')
+    })
+    controller.setFilter((card) => card.status === next)
+  }
+
+  tabsEl?.addEventListener('click', (event) => {
+    const target = event.target as HTMLElement | null
+    const btn = target?.closest<HTMLButtonElement>('[data-tab]')
+    const next = btn?.dataset['tab'] as StudyTab | undefined
+    if (next && next !== tab) setTab(next)
+  })
 
   // 门户在这里只做快捷启动，管理动作在「网站门户」页——同一个渲染器，两种 editable
   const portal = createPortalController({ editable: false })
   element.querySelector<HTMLElement>('[data-role="portal"]')?.appendChild(portal.grid.element)
 
   element.querySelector('[data-action="add"]')?.addEventListener('click', () => {
-    void openCardForm(null, controller.courses()).then(async (result) => {
+    void openCardForm(null, controller.courses(), tab).then(async (result) => {
       if (!result) return
       try {
         await controller.upsert(result)
+        afterSave(result.status)
       } catch (error) {
         toast(error instanceof Error ? error.message : String(error), 'error')
       }
@@ -286,14 +219,20 @@ export function createStudyView(ctx: ViewContext): ViewInstance {
 
   element.querySelector('[data-action="to-notes"]')?.addEventListener('click', () => ctx.navigate('notes'))
   element.querySelector('[data-action="to-portal"]')?.addEventListener('click', () => ctx.navigate('portal'))
+  element
+    .querySelector('[data-action="to-archived"]')
+    ?.addEventListener('click', () => ctx.navigate('archived'))
 
   return {
     element,
     async onEnter() {
+      controller.grid.setEmptyText(TAB_EMPTY[tab])
       await controller.load()
+      await loadMaterialCounts()
       await portal.load()
     },
     dispose() {
+      window.removeEventListener('sb:materials-changed', onMaterialsChanged)
       controller.dispose()
       portal.dispose()
     }

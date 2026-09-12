@@ -91,6 +91,10 @@ function sanitizePatch(raw: unknown): SettingsPatch {
   if ('ai' in input && input.ai && typeof input.ai === 'object') {
     const a = input.ai as Record<string, unknown>
     const ai: AiPatch = {}
+    // 预设 id。**不按白名单校验**：它是拿来做查找用的（决定要不要密钥、
+    // 给模型名当候选），不认识的值落到「无预设」这条路上，不影响任何功能。
+    // 真正会影响行为的是下面的 baseUrl 与 model，那两个才是必须卡死的。
+    if ('provider' in a) ai.provider = asString(a.provider, 64).trim().replace(/[^\w.-]/g, '')
     if ('baseUrl' in a) ai.baseUrl = asUrl(a.baseUrl)
     if ('model' in a) ai.model = asString(a.model, 128).trim()
     if ('temperature' in a) {

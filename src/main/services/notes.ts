@@ -101,6 +101,11 @@ export function safeNoteTitle(raw: unknown): string {
     .trim()
     // 结尾的点和空格在 Windows 上会被静默吃掉，干脆提前去掉
     .replace(/[. ]+$/, '')
+    // 开头的点和空格也必须剥掉：#scan 会把 . 开头的文件当隐藏文件忽略
+    // （.study-board / .obsidian 这类），一旦写出 . 开头的文件名，
+    // 下一次对账就会把它当成「被外部删除」把索引摘掉——笔记明明还在磁盘上，
+    // 界面里却凭空消失。「能写出来的文件名」和「能扫回来的文件名」必须是一组集合
+    .replace(/^[. ]+/, '')
 
   if (title.length > MAX_NOTE_TITLE) title = title.slice(0, MAX_NOTE_TITLE).trim()
   if (title.length === 0) title = '未命名笔记'

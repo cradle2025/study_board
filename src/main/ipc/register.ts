@@ -1,9 +1,12 @@
+import { registerAiHandlers } from './ai'
 import { registerCardsHandlers } from './cards'
 import { registerExportHandlers } from './export'
 import { assertAllChannelsRegistered } from './index'
+import { registerMaterialsHandlers } from './materials'
 import { registerNotesHandlers } from './notes'
 import { registerPendingHandlers } from './pending'
 import { registerPortalHandlers } from './portal'
+import { registerSecretHandlers } from './secrets'
 import { registerSettingsHandlers } from './settings'
 import { registerSystemHandlers } from './system'
 import { registerTimetableHandlers } from './timetable'
@@ -15,11 +18,14 @@ import { registerTimetableHandlers } from './timetable'
 export function registerIpcHandlers(): void {
   registerSystemHandlers()
   registerSettingsHandlers()
+  registerSecretHandlers()
   registerTimetableHandlers()
   registerPortalHandlers()
   registerNotesHandlers()
   registerCardsHandlers()
+  registerMaterialsHandlers()
   registerExportHandlers()
+  registerAiHandlers()
 
   // 尚未实现的模块统一挂占位，等对应模块落地后从这里「顶掉」即可
   registerPendingHandlers()
