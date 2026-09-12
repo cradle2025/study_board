@@ -378,6 +378,86 @@ npm ls --omit=dev       # 看生产依赖树
    开发进程）。静态配置已审查，打包成品验证时再人工确认一次。
 4. **端口监听硬断言目前只在 Windows 上做**（netstat 参数各平台不同）。
 
+### 第二轮：非脚本执行面与闸口（同日补充）
+
+第一轮查的是「直球」——`process`/`require`、内联脚本、`fetch` 出网、`%2e%2e` 穿越。
+第二轮补上攻击者真正会用的第二梯队，共 9 组。**全部通过**，但过程中
+抓到了三个**探针自身的缺陷**与**一个真实代码缺陷**，后者见 S3。
+
+| 组 | 手法 | 结果 |
+| --- | --- | --- |
+| G1 间接逃逸 | `constructor.constructor`、`Function('return process')`、`window.opener` 链、iframe `contentWindow.constructor` | ✅ 全部 blocked |
+| G2 CSP 旁路 | `<base>`、`<form>`、`<object>`、`<meta refresh>`、内联 `style url()`、远程 `<link rel=stylesheet>`、`<iframe srcdoc>` | ✅ 全部未落地，`baseURI` 未变 |
+| G3 协议走私 | 大小写、前导空白、制表符、换行、协议相对 `//`、空主机、`data:`、`vbscript:`、UNC、userinfo | ✅ 全部拒绝（`https://` 带 userinfo 属合法 URL，按设计放行） |
+| G4 资源协议 | 双重编码 `%252e`、NUL 截断、5000 字符超长路径、空桶、未知桶、冒号注入、全编码 dotdot | ✅ 全部 404 |
+| G5 资料闸口 | 伪装扩展名 `.exe`、`paths` 类型混淆、31 个超批量、收件箱 `../` 穿越、认领不存在文件、资料 id 穿越 | ✅ 全部挡住 |
+| G6 出网闸口 | AI / Notion 未配密钥时调用 complete / test / push / pull / resolve / preview | ✅ 全部拦在出网之前，报「还没配置…」 |
+| G7 密钥面 | preload 上有没有读回明文的通道；set 通道对空值 / 超长 / 含换行 / 非字符串的反应 | ✅ 只有 set/clear 四个方法，四类垃圾输入全拒 |
+| G8 存储面 | `localStorage` 残留、Service Worker 是否接管页面 | ✅ 均干净 |
+| G9 IPC 面 | 能否摸到裸 `ipcRenderer` / `electron`；`studyBoard.notes.read` 可否被改写 | ✅ 都不行（桥已 frozen） |
+
+### S3（低危，行为一致性）资源桶名大小写影响是否命中
+
+- **现象**：渲染层请求 `sb-asset://TIMETABLE/<真课表图>` 时能读到文件。
+  表面上像是「大小写变形绕过了桶检查」。
+- **根因**：Electron 在把请求交给 `protocol.handle` 之前，**已经把 hostname
+  规范化成小写**了。所以 `pickBase` 收到的是 `'timetable'`——命中的正是那个
+  **合法**的桶，文件真实存在，当然读得到。真正越界的桶名仍然会被 `default: throw` 拒掉。
+- **为什么不算漏洞**：读到的始终是桶内文件，没有越界。
+- **但仍然修了**：行为不该由客户端的大小写写法决定。现在统一
+  `url.hostname.toLowerCase()` 再查桶，语义变成「桶名不区分大小写」这一条明确规则。
+- **教训**：这个差异**只跑 Node 的 `new URL()` 是发现不了的**——它不会把非特殊
+  scheme 的 hostname 转小写。只有真跑 Electron 才看得见。单测覆盖不到的地方，
+  必须靠真机探针。
+
+### 探针自身的三个缺陷（写对了才谈得上「验证」）
+
+这三条都不是产品问题，是**测试写错反而给出虚假安全感**，价值在于它们是怎么被发现的：
+
+1. **`typeof null === 'object'` 把安全误报成逃逸。**
+   原写法 `typeof (window.opener && window.opener.process)`：`opener` 为 `null`
+   （正是期望的安全状态）时表达式得到 `null`，`typeof` 返回 `'object'`。
+   必须先把 `null` 挑出来再取 `typeof`。
+2. **用 `fetch` 读 `sb-asset://` 是错的。** CSP 是 `connect-src 'self'`，
+   **不含 `sb-asset:`**，所以 `fetch` 一律 `Failed to fetch`——连正常图片都读不到，
+   这个探针退化成「什么都测不出来」。`img-src` 里才有 `sb-asset:`，
+   `<img>` 才是这条协议的真实消费者（攻击者能用的也正是它）。改回 `<img>`。
+3. **CSP 的 `base-uri 'none'` 挡的是效果、不是元素。**
+   `<base>` 照样能 append 进 DOM，所以「DOM 里有没有 base 元素」不能当判据。
+   改成比对注入前后 `document.baseURI` 是否变化。
+
+这三条有一个共同点：**断言在「没修好」时也照样为真**。与上一轮 Notion 探针那个
+恒真假通过是同一种病——凡是「拦住了没有」的断言，都要先确认它在「没拦住」时
+真的会失败。
+
+### 打包成品的验证（2026-09-12）
+
+安装包不是「构建成功」就算数的，得真的跑一遍。对
+`StudyBoard-0.1.0-win-x64-setup.exe` 的 `win-unpacked` 产物实测：
+
+| 检查项 | 方法 | 结果 |
+| --- | --- | --- |
+| 完整安全探针 | 对打包产物设 `STUDY_BOARD_SMOKE=1` 实跑 | ✅ **exit 0**，全部断言通过（路径确认为 `…app.asar/…`） |
+| 端口监听 | netstat 按主进程 PID 过滤 | ✅ 无任何 LISTENING |
+| devTools 真的关了 | 从 `app.asar` 解出 `out/main/index.js` 查配置 | ✅ `devTools: !app.isPackaged`，打包态为 `false` |
+| CSP 是否被正确替换 | 解出 `out/renderer/index.html` | ✅ 生产策略已写入（`%CSP%` 占位符已替换） |
+| 沙箱基线 | 解出主进程 bundle 查 `webPreferences` | ✅ `sandbox:true` / `contextIsolation:true` / `nodeIntegration:false` / `webSecurity:true` |
+| 源码泄漏 | `asar list` 找 `.map` / `.ts` | ✅ 无源码与 source map |
+| 卡死救援通道 | 实跑内检查窗口事件监听 | ✅ `unresponsive`/`responsive` 各 1、`render-process-gone` 3、`did-fail-load` 2，日志可写 |
+| 正常启动 | 直接运行 exe | ✅ 正常建数据目录，无报错 |
+
+### 已知并接受的打包问题
+
+- **冒烟测试代码进了生产包**。`smoke.ts`（含全部攻击探针与 payload 字符串）
+  被打了进去，体积约占了主进程 bundle 的大半。它由 `STUDY_BOARD_SMOKE=1`
+  环境变量门控，正常使用不会触发；但任何人都能设这个变量把它拉起来。
+  攻击载荷本身没有杀伤力（都是 `evil.example.com` 这类占位地址），
+  实际风险很低，**但它本不该出现在用户下载的东西里**。留待后续用构建期
+  别名或条件编译排除。
+- `docx@9.7.1` 把 `@types/node` 声明成了**运行时依赖**（上游的打包疏忽），
+  electron-builder 忠实地把它收进了 asar。只有 LICENSE 与 package.json 两个文件，
+  影响可忽略。
+
 ---
 
 ## 十、报告安全问题

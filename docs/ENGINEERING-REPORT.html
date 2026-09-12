@@ -1,0 +1,487 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>StudyBoard 工程报告</title>
+<style>
+  :root {
+    --bg: #faf9f6;
+    --surface: #ffffff;
+    --border: rgba(20, 20, 18, 0.12);
+    --border-strong: rgba(20, 20, 18, 0.24);
+    --text: #23231f;
+    --text-2: #5f5e58;
+    --text-3: #88867d;
+    --accent: #185fa5;
+    --accent-soft: #e6f1fb;
+    --ok: #0f6e56;
+    --ok-soft: #e1f5ee;
+    --warn: #854f0b;
+    --warn-soft: #faeeda;
+    --danger: #a32d2d;
+    --danger-soft: #fcebeb;
+    --purple: #534ab7;
+    --purple-soft: #eeedfe;
+    --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC",
+      "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+    font-size: 15px;
+    line-height: 1.75;
+    -webkit-font-smoothing: antialiased;
+  }
+  .wrap { max-width: 860px; margin: 0 auto; padding: 56px 28px 96px; }
+  header { border-bottom: 1px solid var(--border); padding-bottom: 28px; margin-bottom: 44px; }
+  .eyebrow {
+    font-size: 12px; letter-spacing: 0.12em; text-transform: uppercase;
+    color: var(--text-3); margin: 0 0 10px;
+  }
+  h1 { font-size: 30px; font-weight: 500; margin: 0 0 12px; letter-spacing: -0.01em; }
+  h2 {
+    font-size: 21px; font-weight: 500; margin: 56px 0 18px;
+    padding-bottom: 10px; border-bottom: 1px solid var(--border);
+  }
+  h3 { font-size: 16px; font-weight: 500; margin: 32px 0 12px; }
+  h4 { font-size: 14px; font-weight: 500; margin: 22px 0 8px; color: var(--text-2); }
+  p { margin: 0 0 14px; }
+  .lede { font-size: 16px; color: var(--text-2); margin-bottom: 0; }
+  a { color: var(--accent); text-decoration: none; border-bottom: 1px solid rgba(24,95,165,0.3); }
+  code {
+    font-family: var(--mono); font-size: 0.88em;
+    background: rgba(20,20,18,0.055); padding: 1.5px 5px; border-radius: 4px;
+  }
+  pre {
+    font-family: var(--mono); font-size: 12.5px; line-height: 1.7;
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: 10px; padding: 16px 18px; overflow-x: auto; margin: 0 0 18px;
+  }
+  pre code { background: none; padding: 0; font-size: inherit; }
+  ul, ol { margin: 0 0 16px; padding-left: 22px; }
+  li { margin-bottom: 7px; }
+  li::marker { color: var(--text-3); }
+
+  .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; margin: 0 0 20px; }
+  .metric { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 14px 16px; }
+  .metric .k { font-size: 12px; color: var(--text-3); margin: 0 0 4px; }
+  .metric .v { font-size: 23px; font-weight: 500; margin: 0; letter-spacing: -0.01em; }
+  .metric .s { font-size: 12px; color: var(--text-3); margin: 3px 0 0; }
+
+  table { width: 100%; border-collapse: collapse; margin: 0 0 20px; font-size: 13.5px; table-layout: fixed; }
+  th, td { text-align: left; padding: 9px 10px; border-bottom: 1px solid var(--border); vertical-align: top; word-wrap: break-word; }
+  th { font-weight: 500; color: var(--text-2); font-size: 12px; letter-spacing: 0.03em; }
+  td code { font-size: 0.85em; }
+
+  .note {
+    background: var(--surface); border: 1px solid var(--border);
+    border-left: 3px solid var(--border-strong);
+    border-radius: 8px; padding: 14px 18px; margin: 0 0 18px;
+  }
+  .note.ok { border-left-color: var(--ok); background: var(--ok-soft); }
+  .note.warn { border-left-color: var(--warn); background: var(--warn-soft); }
+  .note.danger { border-left-color: var(--danger); background: var(--danger-soft); }
+  .note.info { border-left-color: var(--accent); background: var(--accent-soft); }
+  .note .tag {
+    display: inline-block; font-size: 11px; font-weight: 500; letter-spacing: 0.04em;
+    padding: 1.5px 7px; border-radius: 4px; margin-bottom: 7px;
+  }
+  .note.ok .tag { background: rgba(15,110,86,0.14); color: var(--ok); }
+  .note.warn .tag { background: rgba(133,79,11,0.14); color: var(--warn); }
+  .note.danger .tag { background: rgba(163,45,45,0.13); color: var(--danger); }
+  .note.info .tag { background: rgba(24,95,165,0.13); color: var(--accent); }
+  .note p:last-child, .note ul:last-child { margin-bottom: 0; }
+
+  .pill { display: inline-block; font-size: 11.5px; padding: 1.5px 8px; border-radius: 20px; font-weight: 500; white-space: nowrap; }
+  .pill.ok { background: var(--ok-soft); color: var(--ok); }
+  .pill.no { background: var(--danger-soft); color: var(--danger); }
+  .pill.mid { background: var(--warn-soft); color: var(--warn); }
+  .pill.hi { background: var(--danger-soft); color: var(--danger); }
+  .pill.lo { background: rgba(20,20,18,0.06); color: var(--text-2); }
+
+  .layer { display: flex; flex-direction: column; gap: 7px; margin: 0 0 20px; }
+  .layer > div {
+    border: 1px solid var(--border); border-radius: 8px; padding: 11px 15px; background: var(--surface);
+  }
+  .layer b { font-weight: 500; }
+  .layer .meta { font-size: 12.5px; color: var(--text-3); }
+
+  footer { margin-top: 64px; padding-top: 22px; border-top: 1px solid var(--border); font-size: 13px; color: var(--text-3); }
+  .kicker { font-size: 13px; color: var(--text-3); }
+  hr { border: none; border-top: 1px solid var(--border); margin: 40px 0; }
+  @media (max-width: 620px) { .wrap { padding: 32px 18px 64px; } h1 { font-size: 24px; } }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header>
+  <p class="eyebrow">工程报告 · 2026-09-12</p>
+  <h1>StudyBoard 学习看板</h1>
+  <p class="lede">
+    一个离线优先的桌面学习工具。这份报告讲四件事：它长什么样、用的什么方法、
+    踩过什么坑、以及我认为<b>做得不合理、该改</b>的地方——包括产品交互和我们协作的流程。
+  </p>
+</header>
+
+<h2>一、它是什么</h2>
+
+<p>
+  课程表、笔记库、课程卡片、网站门户、资料库、AI 助手、Notion 同步，装在一个
+  约 110 MB 的安装包里。核心特征有三个：
+</p>
+
+<table>
+  <colgroup><col style="width:26%"><col></colgroup>
+  <tr><th>特征</th><th>含义</th></tr>
+  <tr>
+    <td><b>离线优先</b></td>
+    <td>不监听任何端口，不依赖网络。数据全在你本机，断网照常用。</td>
+  </tr>
+  <tr>
+    <td><b>笔记就是文件</b></td>
+    <td>笔记库目录就是一个 Obsidian Vault。你随时可以用别的编辑器改它，应用会自己跟上。</td>
+  </tr>
+  <tr>
+    <td><b>零框架</b></td>
+    <td>界面用原生 TypeScript + Web Components 写的，没有 React/Vue 那层。体积小、启动快、不会因为框架升级而失效。</td>
+  </tr>
+</table>
+
+<h2>二、技术构成</h2>
+
+<div class="layer">
+  <div>
+    <b>界面层</b> <span class="meta">· 34 个文件</span><br />
+    <span class="meta">课表 / 门户 / 卡片 / 资料 / 编辑器 / 设置。沙箱开启，没有系统权限。</span>
+  </div>
+  <div>
+    <b>安全边界（preload）</b> <span class="meta">· 1 个文件</span><br />
+    <span class="meta">只暴露一份固定的方法清单，通道名写死——界面拼不出别的调用。</span>
+  </div>
+  <div>
+    <b>能力层（主进程）</b> <span class="meta">· 39 个文件</span><br />
+    <span class="meta">文件读写与监听、数据存储、图片解码、AI 与 Notion 代理、密钥加密。唯一有系统权限的地方。</span>
+  </div>
+  <div>
+    <b>契约层（shared）</b> <span class="meta">· 11 个文件</span><br />
+    <span class="meta">类型、通道名、接口签名、共享的纯逻辑（Markdown 解析、Notion id 解析）。</span>
+  </div>
+</div>
+
+<p><b>没有数据库。</b>结构化数据是原子写入的 JSON 文件，笔记本体是磁盘上的 <code>.md</code>。这么选是因为：数据库会把你的数据锁进一个二进制文件，而「你能用 Obsidian 直接打开改」恰恰是这个应用最值钱的地方。</p>
+
+<div class="cards">
+  <div class="metric"><p class="k">TypeScript 代码</p><p class="v">约 19000 行</p><p class="s">不含依赖</p></div>
+  <div class="metric"><p class="k">自动化测试</p><p class="v">11 个</p><p class="s">真跑窗口的场景</p></div>
+  <div class="metric"><p class="k">安装包</p><p class="v">110 MB</p><p class="s">Windows 64 位</p></div>
+  <div class="metric"><p class="k">运行时依赖</p><p class="v">4 个</p><p class="s">全部纯 JS</p></div>
+</div>
+
+<h2>三、主要功能</h2>
+
+<table>
+  <colgroup><col style="width:22%"><col></colgroup>
+  <tr><th>模块</th><th>做法</th></tr>
+  <tr><td><b>课程表</b></td><td>8 列 × 1–20 行可调。「形状」（几行几列）和「内容」分开存，改行列数不会碰到你填的内容。</td></tr>
+  <tr><td><b>笔记库</b></td><td>整个目录就是一个 Obsidian Vault。你在外部增删改名，应用对账跟上，卡片关联不断。删除进回收站，不真删。</td></tr>
+  <tr><td><b>双模式编辑器</b></td><td>Markdown 与富文本随时切换，底层是同一个 <code>.md</code> 文件。切换不丢格式。</td></tr>
+  <tr><td><b>导出</b></td><td>Markdown / 网页 / Word / PDF 四种。都只导正文（不含应用自己的簿记字段）。</td></tr>
+  <tr><td><b>课程卡片</b></td><td>想学 / 在学 / 已学三种状态。「已学库」只是一个筛选视图，不是第二份数据——从已学挪回在学不会变成搬家。</td></tr>
+  <tr><td><b>网站门户</b></td><td>收藏学习站点。图标按需抓取，抓到的图片会重新编码一遍，挡掉伪装文件。</td></tr>
+  <tr><td><b>资料库</b></td><td>PDF / PPT / Word / Excel。四道检查：数量 → 扩展名 → 体积 → 文件头。改扩展名骗不过去。</td></tr>
+  <tr><td><b>AI 助手</b></td><td>8 家厂商预设，密钥加密存在本机，界面只读得到「配了没配」。</td></tr>
+  <tr><td><b>Notion 同步</b></td><td>双向同步。冲突逐条问你，绝不自动替你选边。</td></tr>
+</table>
+
+<h2>四、方法：这个工程是怎么做的</h2>
+
+<h3>4.1 一切能自动验证的，都固化成测试</h3>
+
+<p>
+  11 个测试场景，每一个都真的启动应用、注入探针、操作界面，而不是「跑一遍看它没崩」。
+  这里有一条硬规矩：<b>断言的是数据到位，不是元素存在</b>。
+</p>
+
+<p>
+  举个例子——输入框是页面搭好就存在的，里面的值要等异步加载才填上。
+  如果测试看到输入框在就往下走，它会拿到一个空值然后报一堆假错。
+  所以测试里专门有「等到值等于某内容」这类等待函数。
+</p>
+
+<p>更关键的是：<b>状态变化要断言在磁盘上</b>。「已学库里看得见这张卡片」只说明内存里是已学，重启就没了。所以卡片测试会直接去读 <code>cards.json</code>，确认字段真的写进去了。</p>
+
+<h3>4.2 安全：把攻击者写进测试</h3>
+
+<p>
+  安全不是靠「我们考虑到了」，是靠固化成探针、每次改动都重跑。
+  威胁模型设成最坏情况：<b>假设界面里已经住进了一段攻击者的内容</b>——
+  这很现实，因为这个应用本来就要渲染你导入的 Markdown。
+</p>
+
+<p>两轮共约 15 组攻击手法，全部通过。第二轮补的是「不用脚本」的攻击面：</p>
+
+<table>
+  <colgroup><col style="width:30%"><col></colgroup>
+  <tr><th>攻击面</th><th>结果</th></tr>
+  <tr><td>间接拿系统权限（构造器链、iframe）</td><td><span class="pill ok">全部挡住</span></td></tr>
+  <tr><td>用 base / form / object / meta 绕过安全策略</td><td><span class="pill ok">全部未生效</span></td></tr>
+  <tr><td>地址伪装（空白、换行、协议相对、UNC 路径）</td><td><span class="pill ok">全部拒绝</span></td></tr>
+  <tr><td>资源协议穿越（编码、NUL 截断、超长路径）</td><td><span class="pill ok">全部 404</span></td></tr>
+  <tr><td>资料伪装（exe 改名叫 pdf）、批量超限</td><td><span class="pill ok">全部挡住</span></td></tr>
+  <tr><td>没配密钥时偷发请求到 AI / Notion</td><td><span class="pill ok">拦在发请求之前</span></td></tr>
+  <tr><td>从界面读回明文密钥</td><td><span class="pill ok">不存在这种接口</span></td></tr>
+</table>
+
+<div class="note danger">
+  <span class="tag">真实缺陷 · 已修</span>
+  <p><b>用系统默认程序打开一个 <code>cmd.exe</code> 链接。</b> 笔记里写一行指向本机程序的链接，Markdown 会原样渲染，用户一点，系统就执行了那个程序。根因是两处代码注册同一个监听器时，后注册的把带协议白名单的版本整个顶掉了——白名单静默失效。</p>
+  <p>修法：这类监听器只允许在一处注册。回归测试里加了「点这个链接必须被拒」的断言。</p>
+</div>
+
+<div class="note warn">
+  <span class="tag">真实缺陷 · 已修</span>
+  <p><b>改个笔记名，笔记就「消失」了。</b> 把标题改成 <code>.. .. x</code> 这类以点开头的内容后，文件写出来了、索引也更新了，但目录扫描会跳过点开头的文件，于是下一次对账判定「它被外部删除了」，就摘掉索引、解绑卡片——文件明明还在磁盘上，界面里凭空没了。</p>
+  <p>根因是「应用能写出来的文件名」和「应用能扫回来的文件名」不是同一组集合。修法是让清洗规则两侧对称。</p>
+</div>
+
+<h3>4.3 打包成品也要验，不是构建成功就算数</h3>
+
+<p>对打包出来的安装包实测，而不只是看构建日志：</p>
+
+<table>
+  <colgroup><col style="width:34%"><col></colgroup>
+  <tr><th>检查项</th><th>结果</th></tr>
+  <tr><td>完整安全探针（对成品实跑）</td><td><span class="pill ok">通过，退出码 0</span></td></tr>
+  <tr><td>有没有监听端口</td><td><span class="pill ok">无</span></td></tr>
+  <tr><td>开发者工具是否真的关闭</td><td><span class="pill ok">已关闭</span></td></tr>
+  <tr><td>安全策略是否写入成品</td><td><span class="pill ok">已写入</span></td></tr>
+  <tr><td>有没有泄漏源码</td><td><span class="pill ok">无</span></td></tr>
+  <tr><td>卡死时的救援通道是否就位</td><td><span class="pill ok">就位</span></td></tr>
+  <tr><td>正常启动</td><td><span class="pill ok">正常</span></td></tr>
+</table>
+
+<h2>五、经验与教训</h2>
+
+<h3>5.1 最危险的测试失败：恒真的「假通过」</h3>
+
+<p>
+  这一轮抓到的四个例子，全都是同一个病——<b>断言在「没修好」的时候也照样为真</b>。
+</p>
+
+<ul>
+  <li><b>类型判断陷阱。</b> <code>typeof null</code> 的结果是 <code>"object"</code>。有段探针写出了「空值也会被当成拿到了权限」的写法，于是安全状态被报成了漏洞。</li>
+  <li><b>用错工具测协议。</b> 安全策略里只允许图片走自定义协议，不允许 <code>fetch</code> 走。探针却用 <code>fetch</code> 去测——结果连正常图片都读不到，它还以为自己验的是「有没有被拦住」。</li>
+  <li><b>把「效果被阻止」当成「元素不存在」。</b> 安全策略禁止 base 标签生效，但标签本身仍然能插进页面。用「页面里有没有这个标签」当判据，永远为真。</li>
+  <li><b>把「没抛异常」当成「被拦住了」。</b> 我们的接口在拒绝时是<b>返回</b>一个失败对象，而不是抛异常。探针写成 <code>try { ...; 没报错就是拦住了 } catch {}</code>，这个分支永远会走到——即使把整个门禁删掉也照样通过。</li>
+</ul>
+
+<div class="note info">
+  <span class="tag">规矩</span>
+  <p>凡是「拦住了没有 / 拒绝了没有」的断言，写完先<b>故意破坏一下被测的那道关卡</b>，看断言会不会变红。不会红的断言比不写更糟，因为它给的是虚假的安全感。</p>
+</div>
+
+<h3>5.2 单例监听器：后注册覆盖先注册</h3>
+<p>就是第四节那个高危缺陷的通用形态。「注册一个监听器」听起来是人畜无害的操作，但在 Electron 里，某些监听器是全窗口唯一的一个——后注册的把先注册的整个替换掉，而不是叠加。安全代码被业务代码悄悄顶掉，没有任何报错。</p>
+
+<h3>5.3 读写两侧的合法集合必须成对设计</h3>
+<p>就是那个「笔记消失」缺陷的通用形态。<b>能写出来的东西，必须能被读回来</b>——这句话听起来像废话，但实际代码里，「写入时清洗」和「扫描时过滤」经常写在两个不同的文件里，各自看着都对。</p>
+
+<h3>5.4 注释要写「为什么」，不是「做什么」</h3>
+<p>这个项目的注释密度很高，但几乎都在解释<b>取舍和反直觉的地方</b>。比如：</p>
+<pre><code>// 先落盘再收尾：移入回收站是 Windows 的 Shell 操作，
+// 可能要等上几百毫秒甚至更久，放在 persist 前会让 IPC
+// 迟迟不返回、界面卡在「导入中」。</code></pre>
+<p>「移入回收站」这个调用本身一看就懂。值钱的是<b>为什么它必须排在落盘之后</b>——这是踩过才知道的。</p>
+
+<h2>六、我认为交互逻辑不合理的地方</h2>
+
+<p>以下是读代码时觉得别扭、但当时没改的。按严重程度排。</p>
+
+<h3>6.1 资料删除没有二次确认 <span class="pill hi">该改</span></h3>
+<p>
+  资料卡片上的删除按钮，点下去直接就删了，<b>没有任何确认</b>。而笔记删除是有两道确认的。
+  更麻烦的是，资料进的是回收站——但这件事只写在悬停提示里，不悬停就看不到。
+</p>
+<p>资料常常是从课程网站扒下来的，原处可能已经没有了。<b>建议</b>：要么加确认，要么在按钮旁边常驻一行「将移入回收站」的小字。</p>
+
+<h3>6.2 冲突解决像做 20 道判断题 <span class="pill mid">建议改</span></h3>
+<p>
+  Notion 同步的冲突处理是「逐条问你」——方向是对的，你也明确要求「每次都问」。
+  但一次最多报 20 条冲突，真出现的时候，你要点 20 次。
+</p>
+<p><b>建议</b>：保留「每次都问」，但加一个「剩下的都按本地为准 / 都按远端为准」的批量按钮。决定权还在你手上，只是不用重复 20 次同样的判断。</p>
+
+<h3>6.3 导入失败时，真正的原因会被淹掉 <span class="pill mid">建议改</span></h3>
+<p>
+  一次拖 31 个文件进去，你会看到 31 条错误：1 条「一次最多导入 30 个」，
+  外加 30 条「文件不存在」。后 30 条是噪音——它们只是因为前 30 个被跳过了。
+  真正该看的只有第一条。
+</p>
+<p><b>建议</b>：超批量时直接返回，不要继续逐个试；或者把「整体性失败」和「单文件失败」分开显示。</p>
+
+<h3>6.4 给不存在的资料改归属，界面毫无反应 <span class="pill mid">建议改</span></h3>
+<p>
+  如果某份资料因为外部改动已经没了，你再点「归属到某课程」，
+  界面会<b>什么都不发生</b>，也没有任何提示。你会以为是点歪了。
+</p>
+<p><b>建议</b>：至少弹一句「这份资料已经不在了」。</p>
+
+<h3>6.5 内部的指纹字段出现在你可见的笔记里 <span class="pill lo">开放问题</span></h3>
+<p>
+  同步用的笔记 ID 写进 frontmatter 是对的（跨系统绑定必须显式）。
+  但另有一个纯粹是应用内部簿记的指纹字段也写了进去——你用 Obsidian 打开会看到它，
+  而它对你毫无意义，还让文件头变长。
+</p>
+<p>
+  之所以没改：把它挪进应用索引的话，换机器或重建索引后会全量重推一次同步。
+  <b>这个取舍我没想清楚</b>，所以维持了现状。列为开放问题。
+</p>
+
+<h3>6.6 选了「再等一会儿」之后就没有下文 <span class="pill lo">小问题</span></h3>
+<p>
+  界面卡住时会弹一个对话框，两个选项：「重新载入界面」和「再等一会儿」。
+  选后者之后，如果界面<b>一直</b>不恢复，你不会再收到任何提示——只能自己想起来还有这么个对话框。
+</p>
+<p><b>建议</b>：等 N 秒仍然卡着的话，再弹一次，明确说「还是没有响应」。</p>
+
+<h2>七、协作流程上可以优化的地方</h2>
+
+<p>回看这个项目的记录，我发现几个<b>流程层面</b>的问题——它们跟代码质量无关，但确实让效率打了折扣。</p>
+
+<h3>7.1 「写完了」和「提交了」没有及时对齐</h3>
+<p>
+  这一轮开始的时候，我重新验证发现：上一轮的资料库、AI、韧性那批代码
+  <b>写完而且测试全过，但没有提交</b>。工作停在了「代码写好了」，而不是「这一轮结束了」。
+</p>
+<p>后果是我得先花时间摸清「哪些是完成未提交、哪些是真没做」，才能判断该怎么继续。</p>
+<div class="note warn">
+  <span class="tag">改进</span>
+  <p>每轮收尾的完成定义里应该包含提交。<b>测试通过 ≠ 这一轮结束。</b></p>
+</div>
+
+<h3>7.2 有脚本，但从来没跑过</h3>
+<p>
+  项目里一直有「打 Windows 安装包 / 打 Mac 安装包」这几个命令，但打包工具
+  <b>从来没有被装进依赖里</b>。也就是说——这个仓库此前<b>从没真正打过包</b>。
+</p>
+<p>
+  而「必须有打包好的安装包」是项目最早定下的硬约束之一。它一直停留在纸面上，
+  没有人发现，直到这次真的去跑。
+</p>
+<div class="note warn">
+  <span class="tag">改进</span>
+  <p>硬约束要有对应的、<b>真的跑过一次</b>的证据。加脚本的同时跑一次，或者明确标注「未验证」。</p>
+</div>
+
+<h3>7.3 「已知未做」是个平铺列表，没有优先级</h3>
+<p>
+  项目记录里有一个「已知未做」清单，这是好习惯。但里面五件事平铺在一起：
+  Linux 支持、工程报告、打包验证、同步的联网实测、一个偶发失败的测试。
+  它们的紧急程度完全不同，却长得一模一样。
+</p>
+<div class="note warn">
+  <span class="tag">改进</span>
+  <p>给每条加上「为什么没做」和「什么情况下必须做」，否则接手的人无法判断该先动哪个。</p>
+</div>
+
+<h3>7.4 偶发失败的记录方式不够可操作</h3>
+<p>
+  有个测试偶发失败过一次，当时的判断是「机器负载高时文件监听来不及触发」，
+  记录成了「没复现到稳定失败，未修」。
+</p>
+<p>
+  这个判断可能是对的，但记录方式让下一个人没法接续：没写清当时的负载情况、
+  失败时的具体输出、重跑了几次。它只会变成一条永远没人碰的脚注。
+</p>
+<div class="note warn">
+  <span class="tag">改进</span>
+  <p>偶发失败要留下<b>可复现的配方</b>——并发场景、机器状态、具体输出。</p>
+</div>
+
+<h3>7.5 测试代码被打进了安装包</h3>
+<p>
+  那 1000 多行测试代码（包含所有攻击探针和攻击载荷字符串）被打进了生产安装包，
+  只靠一个环境变量控制开关。正常使用不会触发，任何人都能设那个变量把它拉起来。
+</p>
+<p>
+  实际风险很低——里面的攻击载荷都是 <code>evil.example.com</code> 这类占位地址，
+  没有杀伤力。<b>但它本不该出现在你下载的东西里。</b>
+</p>
+
+<h3>7.6 我自己的一次疏忽</h3>
+<p>
+  这一轮我改了资源协议的路径处理代码，当时只跑了安全测试，<b>是后来才补跑全套</b>确认没有连带影响。
+  路径处理是被多个模块间接依赖的公共代码，改它理应立刻跑全套。
+</p>
+<div class="note warn">
+  <span class="tag">改进</span>
+  <p>改动公共代码后立即跑全套测试，不要等「顺便」再跑。</p>
+</div>
+
+<h2>八、当前状态</h2>
+
+<h3>已完成</h3>
+<ul>
+  <li>11 个测试场景全部通过，类型检查与构建干净</li>
+  <li>两轮安全渗透测试约 15 组手法全部通过；<b>打包成品实跑探针通过</b></li>
+  <li>Windows 安装包已产出：<code>StudyBoard-0.1.0-win-x64-setup.exe</code></li>
+  <li>成品验证：开发者工具确认关闭、无监听端口、安全策略正确、无源码泄漏</li>
+  <li>卡死救援通道实测就位（界面卡住可重载、界面进程崩了会自动恢复、日志可交出）</li>
+</ul>
+
+<h3>已知未做</h3>
+<table>
+  <colgroup><col style="width:14%"><col style="width:34%"><col></colgroup>
+  <tr><th>优先级</th><th>事项</th><th>为什么要做</th></tr>
+  <tr><td><span class="pill hi">高</span></td><td>Mac 安装包打包验证</td><td>「Win 与 Mac 一套代码」是硬约束，但 Mac 侧从没打过包</td></tr>
+  <tr><td><span class="pill hi">高</span></td><td>从生产包排除测试代码</td><td>见 7.5</td></tr>
+  <tr><td><span class="pill mid">中</span></td><td>资料删除加确认</td><td>见 6.1</td></tr>
+  <tr><td><span class="pill mid">中</span></td><td>Notion 真实联网验证</td><td>代码与测试都就位，但从没对着真工作区跑过</td></tr>
+  <tr><td><span class="pill mid">中</span></td><td>冲突解决的批量按钮</td><td>见 6.2</td></tr>
+  <tr><td><span class="pill lo">低</span></td><td>Linux 支持</td><td>需要时再做</td></tr>
+  <tr><td><span class="pill lo">低</span></td><td>排查那个偶发测试</td><td>见 7.4</td></tr>
+</table>
+
+<h3>还没想清楚的</h3>
+<ul>
+  <li>内部指纹字段该不该留在你可见的笔记里（见 6.5）</li>
+  <li><b>应用主进程自己卡死时无法自救。</b> 界面卡死有救援，但主进程卡死连对话框都弹不出来，只能靠系统强杀。目前只靠「主进程不干重活」这条纪律缓解，没有真正的兜底。</li>
+</ul>
+
+<h2>九、回答你最关心的几个问题</h2>
+
+<div class="note ok">
+  <span class="tag">安全吗</span>
+  <p>是。约 15 组攻击手法全部通过，而且不是只测开发版——<b>打包出来的安装包实跑了一遍完整探针，退出码 0</b>。没有监听端口，开发者工具在生产包里确实关着，源码没有泄漏。</p>
+</div>
+
+<div class="note ok">
+  <span class="tag">别人下载后会崩吗</span>
+  <p>不会。实测正常启动、建数据目录、无报错。而且即使真出问题也有分层兜底：首屏加载失败会提示「可能安装包不完整，建议重新下载」；界面进程崩了会自动重载（限 3 次，防止死循环）；反复崩就停下来告诉你日志文件在哪。</p>
+</div>
+
+<div class="note warn">
+  <span class="tag">程序卡死有救吗</span>
+  <p><b>界面卡死：有救。</b> 卡住超过阈值会弹对话框，让你选择「重新载入界面」。笔记有自动保存，最多丢最近一次自动保存之后敲的字。已实测确认这条通道确实挂在窗口上。</p>
+  <p><b>主进程自己卡死：没有真正的好办法。</b> 连对话框都弹不出来，只能靠任务管理器强杀。这是 Electron 这类架构的固有限制，项目里如实写明了，没有假装能解决——能缓解的只是「主进程不干重活」这条纪律：所有可能耗时的活儿（图片解码、PDF 排版、网络请求）都不在主进程的启动路径上。</p>
+</div>
+
+<div class="note ok">
+  <span class="tag">数据安全吗</span>
+  <p>所有内容都是原子写入的——写入过程中断电或被强杀，只会留下一个临时文件，<b>不会损坏已有数据</b>。删除的笔记进回收站而不是真删。密钥用系统钥匙串加密，界面读不回明文。</p>
+</div>
+
+<footer>
+  <p>本项目 17 次提交，约 19000 行 TypeScript。完整的技术细节在同目录的
+  <code>ARCHITECTURE.md</code>（设计取舍）、<code>SECURITY.md</code>（威胁模型与渗透记录）、
+  <code>ENGINEERING-REPORT.md</code>（工程方法与教训）。</p>
+</footer>
+
+</div>
+</body>
+</html>
