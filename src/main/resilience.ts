@@ -32,6 +32,14 @@ const MAX_LOG_BYTES = 512 * 1024
 const RELOAD_WINDOW_MS = 60_000
 const MAX_AUTO_RELOADS = 3
 
+/**
+ * 用户选「再等一会儿」之后，过多久回去看它活过来没有。
+ *
+ * 不能指望 `unresponsive` 事件再响一次——那要看 Chromium 的诊断时机，
+ * 同一次卡死它通常只报一遍。所以这里自己起一个定时器主动回访。
+ */
+const UNRESPONSIVE_RECHECK_MS = 30_000
+
 let cachedLogFile: string | null = null
 
 function logFilePath(): string {
@@ -105,6 +113,10 @@ export function installMainProcessGuards(): void {
 export function attachWindowResilience(win: BrowserWindow): void {
   let recentReloads: number[] = []
   let recovering = false
+  /** 回访定时器。同一时刻只该有一个：重复挂会让对话框叠着弹出来 */
+  let recheckTimer: NodeJS.Timeout | null = null
+  /** 用户点了「重新载入」之后，`unresponsive` 又报一次也不该再问一遍 */
+  let askedAfterHang = false
 
   const noteReload = (): void => {
     recentReloads.push(Date.now())
@@ -116,33 +128,77 @@ export function attachWindowResilience(win: BrowserWindow): void {
     return recentReloads.length < MAX_AUTO_RELOADS
   }
 
-  win.on('unresponsive', () => {
-    logLine('unresponsive', '界面超过阈值没有响应')
+  const clearRecheck = (): void => {
+    if (recheckTimer) {
+      clearTimeout(recheckTimer)
+      recheckTimer = null
+    }
+  }
+
+  /**
+   * 问用户「现在要不要重新载入界面」。
+   *
+   * 为什么是一个能自己再叫自己的函数，而不是一段内联逻辑：
+   * 用户选「再等一会儿」之后，如果界面**一直**不恢复，他不会收到任何后续提示——
+   * 只能自己想起来「刚才好像弹出过什么东西」。所以延迟之后再问一次，
+   * 并且**明说这是第几次问**，否则用户会以为弹了个重复的框。
+   */
+  const askReload = (attempt: number): void => {
+    clearRecheck()
     void dialog
       .showMessageBox(win, {
         type: 'warning',
         title: '界面没有响应',
-        message: '学习看板的界面卡住了',
+        message: attempt <= 1 ? '学习看板的界面卡住了' : '学习看板的界面仍然没有响应',
         detail:
-          '通常是一篇特别长的笔记、或者一张特别大的课表照片拖住了界面。\n\n' +
+          (attempt <= 1
+            ? '通常是一篇特别长的笔记、或者一张特别大的课表照片拖住了界面。\n\n'
+            : `你刚才选择了再等一会儿，但界面到现在还没有恢复（已经等了 ${Math.round(
+                UNRESPONSIVE_RECHECK_MS / 1000
+              )} 秒）。\n\n`) +
           '点「重新载入界面」可以恢复。笔记有自动保存，' +
-          '最多丢失最近一次自动保存（停手 0.8 秒）之后敲进去的内容。',
-        buttons: ['重新载入界面', '再等一会儿'],
+          '最多丢失最近一次自动保存（停手 0.8 秒）之后敲进去的内容。\n\n' +
+          '如果反复出现，日志在这里：\n' +
+          mainLogPath(),
+        buttons: ['重新载入界面', '继续等待'],
         defaultId: 0,
         cancelId: 1,
         noLink: true
       })
       .then(({ response }) => {
-        if (response !== 0) return
-        logLine('unresponsive', '用户选择重新载入界面')
-        noteReload()
-        win.webContents.reload()
+        if (response === 0) {
+          askedAfterHang = true
+          logLine('unresponsive', `用户选择重新载入界面（第 ${attempt} 次询问）`)
+          noteReload()
+          win.webContents.reload()
+          return
+        }
+        // 用户愿意再等：挂个定时器回访。窗口已经恢复就别再打扰他
+        logLine('unresponsive', `用户选择再等一会儿（第 ${attempt} 次询问），${UNRESPONSIVE_RECHECK_MS / 1000} 秒后回访`)
+        recheckTimer = setTimeout(() => {
+          recheckTimer = null
+          // 期间已经恢复响应的话，`responsive` 回调会把这次卡死清零并清掉定时器；
+          // 能走到这儿只可能是「一直没恢复」或者「恢复后又卡住了」，两种情况都该再问
+          if (win.isDestroyed() || win.webContents.isCrashed()) return
+          askReload(attempt + 1)
+        }, UNRESPONSIVE_RECHECK_MS)
       })
       .catch(() => undefined)
+  }
+
+  win.on('unresponsive', () => {
+    logLine('unresponsive', '界面超过阈值没有响应')
+    // 这次卡死已经问过一轮（用户选了「重新载入」或「继续等待」）就不再叠加，
+    // 回访由上面那个定时器负责
+    if (askedAfterHang || recheckTimer) return
+    askReload(1)
   })
 
   win.on('responsive', () => {
     logLine('responsive', '界面恢复响应')
+    // 活过来了：把回访撤掉，并把「这次卡死」标记复位，下次卡死还能正常问
+    clearRecheck()
+    askedAfterHang = false
   })
 
   win.webContents.on('render-process-gone', (_event, details) => {

@@ -214,11 +214,21 @@ export class MaterialsStore {
     let added = 0
     const paths = Array.isArray(input?.paths) ? input.paths.map((p) => String(p)) : []
 
+    // 超批量**直接返回**，不进入下面的逐条循环。
+    //
+    // 这是一次「整体性失败」，不是「每个文件各自失败」：继续跑循环只会对前 30 个
+    // 路径各报一条失败（用户拖进来的多半是 31 个真实存在的好文件，那 30 条是
+    // ENOENT 噪音），把唯一值得看的那句话淹掉。宁可少一次「尽力而为」，
+    // 也不要让用户在一屏报错里找原因。
     if (paths.length > MAX_MATERIAL_BATCH) {
-      errors.push(`一次最多导入 ${MAX_MATERIAL_BATCH} 个文件`)
+      return {
+        materials: this.list(),
+        added: 0,
+        errors: [`一次最多导入 ${MAX_MATERIAL_BATCH} 个文件（这次选了 ${paths.length} 个）`]
+      }
     }
 
-    for (const rawPath of paths.slice(0, MAX_MATERIAL_BATCH)) {
+    for (const rawPath of paths) {
       try {
         const source = String(rawPath ?? '')
         if (source.length === 0) throw new Error('空路径')
@@ -345,10 +355,17 @@ export class MaterialsStore {
     return this.list()
   }
 
-  /** 改归属。卡片删除后这里留着悬空的 id，界面上显示成「未归类」 */
+  /**
+   * 改归属。卡片删除后这里留着悬空的 id，界面上显示成「未归类」。
+   *
+   * 资料不存在时**必须报错**，不能像 remove 那样静默返回列表：
+   * 删除是幂等的（再点一次「删掉一个已经不在的东西」，结果是「它不在了」，没毛病），
+   * 而改归属不是——用户点「归属到某课程」却什么都没发生，界面上一片安静，
+   * 他只会以为自己没点到。这多半发生在索引与磁盘不同步、或资料刚在别处被删掉时。
+   */
   setCard(id: unknown, courseCardId: unknown): MaterialItem[] {
     const item = this.find(id)
-    if (!item) return this.list()
+    if (!item) throw new Error('资料不存在（可能已被删除或移动，点「刷新」重新扫描）')
     item.courseCardId = String(courseCardId ?? '').slice(0, 64)
     this.#persist()
     return this.list()

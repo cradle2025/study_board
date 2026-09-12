@@ -2155,6 +2155,77 @@ h4 {
   width: 440px;
 }
 
+/* ---------------------------------------------------------------- 冲突问询 */
+
+/* 远端预览可能是一大段 markdown，所以比表单框再宽一点、且限高可滚 */
+.sb-modal__card--conflict {
+  width: 520px;
+}
+
+/* 「第 3 / 20 篇」这种进度感：用户最怕的是不知道还剩多少 */
+.sb-conflict__step {
+  margin-left: 6px;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-tertiary);
+}
+
+/* 默认折叠：用户在决定「留哪边」之前偶尔才想细看远端，
+   一上来就铺 800 字会让两个按钮被挤出视野 */
+.sb-conflict__preview {
+  margin-top: 10px;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.sb-conflict__preview > summary {
+  cursor: pointer;
+  user-select: none;
+}
+
+.sb-conflict__pre {
+  max-height: 180px;
+  margin: 8px 0 0;
+  padding: 8px 10px;
+  overflow: auto;
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-sm);
+  background: var(--bg-subtle);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+/* 两个主选择上下摞起来：它们是一对互斥的重决定，
+   横排容易被手快点到、也分不清主次 */
+.sb-modal__actions--stack {
+  flex-direction: column;
+  align-items: stretch;
+}
+
+.sb-modal__actions--stack > .sb-btn {
+  width: 100%;
+}
+
+/* 批量出口。视觉上明显弱于上面两个按钮——它是「省事的捷径」，
+   不是推荐做法，不能让用户觉得「默认就该点这个」 */
+.sb-modal__batch {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border-default);
+}
+
+.sb-modal__batch > .sb-hint {
+  flex: 1 1 100%;
+  margin: 0;
+}
+
 .sb-portal__check {
   display: flex;
   align-items: center;

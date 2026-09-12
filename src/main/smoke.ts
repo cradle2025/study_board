@@ -1302,6 +1302,11 @@ const PORTAL_PROBE = `(async () => {
 /* ------------------------------------------------------------------ 主流程 */
 
 export function runSmokeTestIfRequested(win: BrowserWindow): void {
+  // 自证：能执行到这一行，就说明包里的是**真身**而不是生产替身。
+  //
+  // 生产构建会把本文件换成 smoke.stub.ts（见 electron.vite.config.ts），
+  // 那个替身的 smokeEnabled() 恒为 false，永远不会走到这里。
+  // 详情见下方 runSmokeTestIfRequested 的调用方与 scripts/smoke.mjs 的构建校验。
   if (!smokeEnabled()) return
 
   const scenario = smokeScenario()
@@ -3022,7 +3027,12 @@ const SECURITY_PROBE = `(async () => {
   out.materialGatesRejected = [
     out.materialGates.inboxTraversal,
     out.materialGates.claimMissing,
-    out.materialGates.openTraversal
+    out.materialGates.openTraversal,
+    // 传一个不存在的 id 改归属：和上面三条同类——明确报错，不静默成功。
+    // 穿越形态（'../../../x'）与普通不存在（'x'）走的是同一条路径：
+    // 都先经过 find() 查表，查不到就报错，没有任何字符串被当成路径用过
+    out.materialGates.openStringTraversal,
+    out.materialGates.setBadCard
   ].every((r) => r && r.ok === false)
   // 类型混淆：paths 传字符串时绝不能被当成路径用。
   // 导入的契约是「逐条独立成败、失败原因回传」（见 materials.import 的注释），
@@ -3041,16 +3051,19 @@ const SECURITY_PROBE = `(async () => {
     out.materialGates.notArray.data.added === 0 &&
     out.materialGates.notArray.data.errors.length === 0
   // 超批量：必须点名「最多导入 N 个」，不能悄悄截断当成成功。
-  // 31 个假路径里前 30 个会被逐个尝试（ENOENT），但超限那句话必须在 errors 里
+  // 而且**只能有这一条**——31 个路径若逐个尝试，会额外产生 30 条 ENOENT，
+  // 把那句真正的原因淹掉。早返回就是为了这个，所以这里连条数一起断言
   out.materialGatesOverBatchNamed =
     out.materialGates.overBatch?.ok === true &&
     Array.isArray(out.materialGates.overBatch.data.errors) &&
+    out.materialGates.overBatch.data.errors.length === 1 &&
     out.materialGates.overBatch.data.errors.some((e) => String(e).includes('最多导入')) &&
     out.materialGates.overBatch.data.added === 0
-  // 不存在的资料 id 必须原样返回列表，不能把别人改掉、也不能丢数据
+  // 不存在的资料 id 改归属必须明确报错，不能静默成功——
+  // 静默成功的界面表现是「点了没反应」，用户会以为是自己点歪了
   out.materialGatesSetBadCardNoop =
-    out.materialGates.setBadCard?.ok === true &&
-    Array.isArray(out.materialGates.setBadCard.data)
+    out.materialGates.setBadCard?.ok === false &&
+    String(out.materialGates.setBadCard.error ?? '').includes('资料不存在')
   out.materialGatesOk =
     out.materialGatesSurvived &&
     out.materialGatesRejected &&

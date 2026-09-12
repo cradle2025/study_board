@@ -7,9 +7,119 @@ import {
 import type { AppSettings, ThemeMode, UiLanguage, NoteEditorMode, NotionConflict } from '@shared/types'
 
 import type { ViewContext, ViewInstance } from '../app-shell'
+import { escapeHtml } from '../lib/html'
 import { bridge, formatError, toast, unwrap } from '../lib/ipc'
-import { confirmAction } from '../lib/overlay'
+import { openModalCard } from '../lib/overlay'
 import { describePlatform } from '../lib/platform'
+
+/* ------------------------------------------------------------ 冲突问询 */
+
+interface ConflictPrompt {
+  /** 第几条（从 1 开始），给用户「还剩多少」的实感 */
+  index: number
+  total: number
+  /** 包括本条在内还剩几篇没定 */
+  remaining: number
+  localTitle: string
+  remoteTitle: string
+  remoteTime: string
+  preview: string
+}
+
+interface ConflictAnswer {
+  keepLocal: boolean
+  /** true = 剩下的都用这个选择，不再逐条问 */
+  batch: boolean
+}
+
+/**
+ * 问一篇冲突「保留哪边」。
+ *
+ * 为什么不用现成的 `confirmAction`：它有且只有两个按钮，而这里需要第三、第四个
+ * 出口（「剩下的都按本地 / 都按远端」）。硬塞进「取消」的位置会让语义拧掉——
+ * 用户点「取消」时以为是「先跳过这篇」，实际却会连带跳过后面全部。
+ *
+ * 返回值三种：`{keepLocal, batch}` 表示选定；`null` 表示用户关掉了对话框
+ * （不想继续了），与「选了远端」必须区分开。
+ */
+function askConflict(prompt: ConflictPrompt): Promise<ConflictAnswer | null> {
+  return new Promise((resolve) => {
+    let settled = false
+    const finish = (value: ConflictAnswer | null): void => {
+      if (settled) return
+      settled = true
+      resolve(value)
+    }
+
+    // 关掉对话框（Esc、点遮罩、`close()`）= 「我不想继续处理了」。
+    // 挂在这里而不是自己再监听一遍键盘：`openModalCard` 有三条关闭路径，
+    // 自己再加两条迟早会漏掉第四条，Promise 就那么永远悬着了——
+    // 表现是设置页里「冲突处理完」的提示再也不会出现
+    const modal = openModalCard({
+      className: 'sb-modal__card--conflict',
+      onClose: () => finish(null)
+    })
+    const many = prompt.remaining > 1
+
+    modal.card.innerHTML = `
+      <div class="sb-modal__title">
+        这一篇两边都改过
+        <span class="sb-conflict__step">${prompt.index} / ${prompt.total}</span>
+      </div>
+      <p class="sb-modal__message">
+        本地：《${escapeHtml(prompt.localTitle)}》<br />
+        远端：《${escapeHtml(prompt.remoteTitle)}》（最后编辑 ${escapeHtml(prompt.remoteTime)}）
+      </p>
+      <details class="sb-conflict__preview">
+        <summary>看看远端长什么样</summary>
+        <pre class="sb-conflict__pre">${escapeHtml(prompt.preview)}</pre>
+      </details>
+      <p class="sb-hint">
+        保留本地会把它推上去覆盖远端；用远端会覆盖你本地这一篇。
+      </p>
+      <div class="sb-modal__actions sb-modal__actions--stack">
+        <button class="sb-btn sb-btn--danger" type="button" data-role="local">
+          保留本地
+        </button>
+        <button class="sb-btn sb-btn--primary" type="button" data-role="remote">
+          用远端覆盖本地
+        </button>
+      </div>
+      ${
+        many
+          ? `<div class="sb-modal__batch">
+               <span class="sb-hint">还有 ${prompt.remaining} 篇待定，想一次说完的话：</span>
+               <button class="sb-btn sb-btn--sm" type="button" data-role="all-local">
+                 剩下的都按本地为准
+               </button>
+               <button class="sb-btn sb-btn--sm" type="button" data-role="all-remote">
+                 剩下的都按远端为准
+               </button>
+             </div>`
+          : ''
+      }
+    `
+
+    const on = (role: string, keepLocal: boolean, batch: boolean): void => {
+      modal.card
+        .querySelector<HTMLButtonElement>(`[data-role="${role}"]`)
+        ?.addEventListener('click', () => {
+          // 先记下答案再关：`close()` 会同步触发 onClose → finish(null)，
+          // 顺序反了的话用户点的选择会被当成「关掉了」
+          settled = true
+          resolve({ keepLocal, batch })
+          modal.close()
+        })
+    }
+
+    on('local', true, false)
+    on('remote', false, false)
+    on('all-local', true, true)
+    on('all-remote', false, true)
+
+    modal.card.querySelector<HTMLButtonElement>('[data-role="local"]')?.focus()
+  })
+}
 
 /** 设置页：骨架阶段已经全部接通真实设置读写 */
 export function createSettingsView(ctx: ViewContext): ViewInstance {
@@ -523,40 +633,74 @@ export function createSettingsView(ctx: ViewContext): ViewInstance {
    *
    * 一条一条来而不是一次列一张表：每条都要看到两边的正文才能决定，
    * 并排摆 20 条只会逼着人选个大概。宁可慢一点。
+   *
+   * 但「宁可慢」不等于「必须点满 20 次」——冲突上限是 20，真撞满时要重复
+   * 20 遍同样的判断，第 15 遍开始人就不看了，那反而更容易点错。
+   * 所以从第二条起多给一组「剩下的都按本地 / 都按远端」的出口：
+   * 仍然是用户做的决定，只是不必把同一个决定做 20 遍。
+   * **默认仍然是逐条问**——批量是用户主动选的，不是我们替他选的。
    */
   async function resolveConflicts(conflicts: NotionConflict[]): Promise<void> {
-    for (const conflict of conflicts) {
+    let settled = 0
+    let failed = 0
+
+    for (let index = 0; index < conflicts.length; index += 1) {
+      const conflict = conflicts[index]
+      if (!conflict) continue
+
+      const remaining = conflicts.length - index
       const remote = await unwrap(bridge().notion.preview(conflict.noteId)).catch(() => null)
       const preview = remote ? remote.content.slice(0, 800) : '（读不到远端内容）'
       const remoteTime = conflict.remoteEditedAt
         ? new Date(conflict.remoteEditedAt).toLocaleString()
         : '（未知）'
 
-      const keepLocal = await confirmAction({
-        title: '这一篇两边都改过',
-        message:
-          `本地：《${conflict.noteTitle}》\n` +
-          `远端：《${conflict.remoteTitle}》（最后编辑 ${remoteTime}）\n\n` +
-          `远端内容预览：\n${preview}`,
-        confirmText: '保留本地（推上去覆盖远端）',
-        cancelText: '用远端覆盖本地',
-        danger: true
+      const answer = await askConflict({
+        index: index + 1,
+        total: conflicts.length,
+        remaining,
+        localTitle: conflict.noteTitle,
+        remoteTitle: conflict.remoteTitle,
+        remoteTime,
+        preview
       })
 
-      try {
-        await unwrap(
-          bridge().notion.resolve({
-            noteId: conflict.noteId,
-            choice: keepLocal ? 'local' : 'remote'
-          })
-        )
-      } catch (error) {
-        toast(`处理失败：${formatError(error)}`, 'error')
+      // 用户按 Esc / 点遮罩关掉对话框：不是「跳过这一条」，而是「我不想处理了」。
+      // 直接停下，别把剩下的当成默认值处理掉——那是最不该替他做的决定
+      if (answer === null) break
+
+      // 「剩下的都按 X」：本条按 X 处理，后面所有条目一并按 X 处理
+      const batch = answer.batch
+      const targets = batch ? conflicts.slice(index) : [conflict]
+
+      for (const target of targets) {
+        try {
+          await unwrap(
+            bridge().notion.resolve({
+              noteId: target.noteId,
+              choice: answer.keepLocal ? 'local' : 'remote'
+            })
+          )
+          settled += 1
+        } catch (error) {
+          failed += 1
+          toast(`《${target.noteTitle}》处理失败：${formatError(error)}`, 'error')
+        }
+      }
+
+      if (batch) {
+        const label = answer.keepLocal ? '本地' : '远端'
+        toast(`剩下的 ${remaining} 篇都按「${label}为准」处理了`, 'info')
+        break
       }
     }
+
     await ctx.reloadSettings()
     renderForm()
-    toast('冲突已处理完', 'success')
+
+    if (settled === 0) return
+    const tail = failed > 0 ? `，${failed} 篇失败` : ''
+    toast(`冲突已处理 ${settled} 篇${tail}`, failed > 0 ? 'info' : 'success')
   }
 
   element.querySelector('[data-action="choose-library"]')?.addEventListener('click', async () => {

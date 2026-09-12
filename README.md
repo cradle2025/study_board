@@ -177,6 +177,35 @@ npm run package:win  # 打 Windows 安装包 -> release/<版本>/
 npm run package:mac  # 打 macOS dmg     -> release/<版本>/
 ```
 
+### 跑测试前必须知道的两件事
+
+**一、冒烟测试自己会先构建一次产物。** 不用手动 `npm run build`。
+
+生产构建会把 `smoke.ts` / `bench.ts` 换成空实现（见 `electron.vite.config.ts` 里的
+`stubTestsInProduction`），所以测试代码**不在**生产安装包里。
+
+而 `scripts/smoke.mjs` 启动的 Electron 读的正是 `out/`。它因此会先带
+`STUDY_BOARD_TEST_BUILD=1` 重建一次「含测试」的产物，并在构建后**检查产物里确实有
+测试代码**——搜不到就直接拒绝运行。
+
+> 这道检查不是多余的：如果替换开关意外失效，所有场景都会「正常退出、退出码 0」，
+> 也就是一次全绿的假通过。宁可当场报错，也不要一份看起来没问题的报告。
+
+**二、如果本机启用了批量删除保护（`CODEBUDDY_SAFE_DELETE_BULK_THRESHOLD`），
+把它调到一个很大的值。**
+
+构建时 Vite 会清空 `out/`，那里的文件数超过 100。而**这个计数是累计的**——
+跑第 2、第 3 个场景时会接着上一次的数往上加，所以「调到刚好够用」会在中途失效：
+前几个场景通过，后面几个突然全部失败，报错信息看起来还和测试本身毫无关系。
+
+```
+[vite:prepare-out-dir] [safe-delete][SAFE_DELETE_BULK_CONFIRM_REQUIRED] {"count":202,...}
+```
+
+```bash
+export CODEBUDDY_SAFE_DELETE_BULK_THRESHOLD=100000
+```
+
 冒烟测试与基准都会把数据写到**系统临时目录**里，不会碰到你真实的学习数据。
 `npm run smoke:timetable` 会往 `.preview/` 里留两张截图（表格模式 / 图片模式），
 `npm run smoke:portal` 会留一张概览页截图，`npm run smoke:cards` 会留两张卡片页截图

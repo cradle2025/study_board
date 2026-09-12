@@ -20,8 +20,8 @@
  *
  * 它们都跑在系统临时目录里，不会碰你真实的学习数据。
  */
-import { spawn } from 'node:child_process'
-import { mkdirSync, writeFileSync } from 'node:fs'
+import { spawn, spawnSync } from 'node:child_process'
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -59,6 +59,58 @@ if (bench) {
 }
 
 const TIMEOUT_MS = bench ? 150_000 : 90_000
+
+/**
+ * 先构建一份**带测试代码**的 out/。
+ *
+ * 生产构建会把 smoke.ts / bench.ts 换成空实现（见 electron.vite.config.ts），
+ * 而这里是 `spawn(electron, ['.'])`，读的正是 `out/`。
+ * 不重新构建的话，测的就是那个空壳：所有场景都会「通过」，
+ * 却一行断言都没跑——比失败更危险，因为它看起来是绿的。
+ *
+ * 所以每次都显式重建，用 STUDY_BOARD_TEST_BUILD=1 告诉构建器「这次要带测试」。
+ * 这也顺手保证了测的是**当前源码**，而不是上次留下的产物。
+ */
+console.log(`[${label}] 构建测试版产物…`)
+const build = spawnSync('npm', ['run', 'build'], {
+  cwd: root,
+  stdio: 'inherit',
+  shell: true,
+  env: { ...process.env, STUDY_BOARD_TEST_BUILD: '1' }
+})
+if (build.status !== 0) {
+  console.error(`[${label}] 构建失败，退出码 ${build.status}`)
+  process.exit(1)
+}
+
+/**
+ * 构建完就地验一次「测试代码真的在产物里」。
+ *
+ * 这一步看着冗余，其实是整套自动化的保险丝：
+ * 上面那个开关一旦失效（比如构建器升级后插件不再被调用），
+ * 产物会变回空壳，而**所有场景仍然会报通过**——因为替身的函数什么都不做，
+ * 进程正常退出、退出码 0。没有这条校验，我们会拿着一堆假绿继续往前走。
+ *
+ * 做法很土：直接在打包产物里搜一个只可能来自真身的字符串。
+ * 用测试自身的入口文案，而不是 `smoke.ts` 里的某个变量名——
+ * 变量名会被压缩器改名，字符串字面量不会。
+ * 实测「自检」在测试构建里出现 22 次、生产构建里 0 次，是个干净的判据。
+ */
+const MAIN_BUNDLE = resolve(root, 'out', 'main', 'index.js')
+const MARKER = '自检'
+let bundleSource = ''
+try {
+  bundleSource = readFileSync(MAIN_BUNDLE, 'utf-8')
+} catch {
+  console.error(`[${label}] 找不到主进程产物：${MAIN_BUNDLE}`)
+  process.exit(1)
+}
+if (!bundleSource.includes(MARKER)) {
+  console.error(`[${label}] 产物里没有测试代码，拒绝跑一次「空通过」`)
+  console.error('  这通常意味着 STUDY_BOARD_TEST_BUILD 没有生效，')
+  console.error('  检查 electron.vite.config.ts 里的 stubTestsInProduction 插件。')
+  process.exit(1)
+}
 
 console.log(`[${label}] 启动 Electron…`)
 const child = spawn(electronPath, ['.'], { stdio: 'inherit', env })
