@@ -29,6 +29,7 @@ import {
 } from './paths'
 import { resolveNotesDir } from './services/settings'
 import { encodePng } from './services/png'
+import { logLine, mainLogPath } from './resilience'
 import { SecretsStore } from './services/secrets'
 
 /**
@@ -1556,7 +1557,8 @@ export function runSmokeTestIfRequested(win: BrowserWindow): void {
             console.error('[smoke] 渲染层把窗口导航到了外部地址：', hijack.after)
           }
           const noListeners = verifyNoListeningPorts()
-          finalPassed = passed && !hijack.hijacked && noListeners
+          const resilience = verifyResilienceHooks(win)
+          finalPassed = passed && !hijack.hijacked && noListeners && resilience.ok
         }
 
         if (scenario === 'timetable') {
@@ -1783,6 +1785,54 @@ function verifyNoListeningPorts(): boolean {
     console.error('[smoke] netstat 跑不起来，无法确认：', error)
     return false
   }
+}
+
+/**
+ * 「卡死了有没有救」这条到底成不成立。
+ *
+ * 用户问的原话是「如果程序卡死，系统有办法挽救卡死状态吗」。这个问题没法靠
+ * 伪造一次真卡死来回答——真让渲染进程转不出来，探针自己也就跟着卡住，
+ * 什么都报不回来（而且还得靠超时硬杀，在 CI 里变成随机失败）。
+ *
+ * 能确凿验证的是**前提条件**：救援所依赖的那几个事件监听确实挂在活着的窗口上。
+ * 卸载了监听、或者监听挂在了一个不是主窗口的对象上，救援就是空谈——
+ * 而那正是重构时最容易悄悄弄丢的东西（这个项目已经有过一次同类事故：
+ * S1 的 setWindowOpenHandler 被后注册顶掉）。
+ *
+ * 所以这里查的是「通道在不在」：
+ *  - `unresponsive` / `responsive`：界面卡住后能不能弹「重新载入」
+ *  - `render-process-gone`：界面进程崩了能不能有限次自动重载
+ *  - `did-fail-load`：首屏加载失败（安装包不完整）能不能给提示
+ *
+ * 顺带确认日志落点可写——救援现场全靠那个文件。
+ */
+function verifyResilienceHooks(win: BrowserWindow): { ok: boolean; detail: Record<string, number> } {
+  const detail = {
+    unresponsive: win.listenerCount('unresponsive'),
+    responsive: win.listenerCount('responsive'),
+    renderProcessGone: win.webContents.listenerCount('render-process-gone'),
+    didFailLoad: win.webContents.listenerCount('did-fail-load')
+  }
+  // 日志文件必须写得进去：写不进去的话崩溃现场就丢了，
+  // 而用户反馈「它有时候就不动了」时那是唯一能还原现场的东西
+  let logWritable = false
+  try {
+    logLine('smoke', '韧性自检：写日志探针')
+    logWritable = existsSync(mainLogPath())
+  } catch {
+    logWritable = false
+  }
+
+  const ok =
+    detail.unresponsive > 0 &&
+    detail.renderProcessGone > 0 &&
+    detail.didFailLoad > 0 &&
+    logWritable
+
+  console.info(
+    `[smoke] 卡死救援通道：${JSON.stringify(detail)} 日志可写=${logWritable} → ${ok ? '就位' : '缺失'}`
+  )
+  return { ok, detail }
 }
 
 /**
