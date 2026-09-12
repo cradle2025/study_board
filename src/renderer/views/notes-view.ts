@@ -99,6 +99,7 @@ export function createNotesView(ctx: ViewContext): ViewInstance {
               <button class="sb-btn sb-btn--ghost" type="button" data-action="materials">插资料</button>
               <button class="sb-btn sb-btn--ghost" type="button" data-action="ai">AI 助手</button>
               <button class="sb-btn sb-btn--ghost" type="button" data-action="export">导出</button>
+              <button class="sb-btn sb-btn--ghost" type="button" data-action="notion">推送到 Notion</button>
               <button class="sb-btn sb-btn--ghost" type="button" data-action="rename">重命名</button>
               <button class="sb-btn sb-btn--ghost" type="button" data-action="delete">删除</button>
             </div>
@@ -866,6 +867,35 @@ export function createNotesView(ctx: ViewContext): ViewInstance {
 
   element.querySelector('[data-action="export"]')?.addEventListener('click', (event) => {
     openExportMenu(event.currentTarget as HTMLElement)
+  })
+
+  /**
+   * 推送当前这篇到 Notion。
+   *
+   * 推之前先把编辑器里还没落盘的内容写下去——与导出同一个道理：
+   * 少了这一步，用户刚敲的一段话不会跟着上去，而界面上还显示「推送成功」。
+   */
+  element.querySelector('[data-action="notion"]')?.addEventListener('click', async (event) => {
+    if (!activeId) return
+    const button = event.currentTarget as HTMLButtonElement
+    button.disabled = true
+    setStatus('正在推送到 Notion…')
+    try {
+      await flush()
+      const result = await unwrap(bridge().notion.push([activeId]))
+      setStatus('已推送到 Notion')
+      toast(
+        result.skipped > 0 && result.pushed === 0
+          ? '这篇没有变化，已跳过'
+          : `已推送到 Notion（${result.pushed} 篇）`,
+        'success'
+      )
+    } catch (error) {
+      setStatus('')
+      toast(`推送失败：${formatError(error)}`, 'error')
+    } finally {
+      button.disabled = false
+    }
   })
 
   element.querySelector('[data-action="rename"]')?.addEventListener('click', async () => {

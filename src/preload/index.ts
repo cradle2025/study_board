@@ -21,6 +21,11 @@ import type {
   NoteDoc,
   NoteMeta,
   NoteWriteInput,
+  NotionPullResult,
+  NotionPushResult,
+  NotionResolveInput,
+  NotionResolveResult,
+  NotionTestResult,
   PortalSite,
   PortalSiteInput,
   SettingsPatch,
@@ -158,9 +163,13 @@ const api = {
   },
 
   notion: {
-    test: () => invoke<{ ok: boolean; name: string }>(CHANNELS.NOTION_TEST),
-    push: (noteIds: string[]) => invoke<{ pushed: number }>(CHANNELS.NOTION_PUSH, noteIds),
-    pull: () => invoke<{ pulled: number }>(CHANNELS.NOTION_PULL)
+    test: () => invoke<NotionTestResult>(CHANNELS.NOTION_TEST),
+    push: (noteIds: string[]) => invoke<NotionPushResult>(CHANNELS.NOTION_PUSH, noteIds),
+    pull: () => invoke<NotionPullResult>(CHANNELS.NOTION_PULL),
+    resolve: (input: NotionResolveInput) =>
+      invoke<NotionResolveResult>(CHANNELS.NOTION_RESOLVE, input),
+    preview: (noteId: string) =>
+      invoke<{ title: string; content: string }>(CHANNELS.NOTION_PREVIEW, noteId)
   },
 
   events: {

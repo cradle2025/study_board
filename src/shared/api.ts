@@ -17,6 +17,11 @@ import type {
   NoteDoc,
   NoteMeta,
   NoteWriteInput,
+  NotionPullResult,
+  NotionPushResult,
+  NotionResolveInput,
+  NotionResolveResult,
+  NotionTestResult,
   PortalSite,
   PortalSiteInput,
   SettingsPatch,
@@ -140,9 +145,13 @@ export interface StudyBoardApi {
   }
 
   notion: {
-    test(): Promise<IpcResult<{ ok: boolean; name: string }>>
-    push(noteIds: string[]): Promise<IpcResult<{ pushed: number }>>
-    pull(): Promise<IpcResult<{ pulled: number }>>
+    test(): Promise<IpcResult<NotionTestResult>>
+    push(noteIds: string[]): Promise<IpcResult<NotionPushResult>>
+    pull(): Promise<IpcResult<NotionPullResult>>
+    /** 用户为一条冲突选定「以哪边为准」之后提交 */
+    resolve(input: NotionResolveInput): Promise<IpcResult<NotionResolveResult>>
+    /** 拉冲突之前先看看远端那篇长什么样 */
+    preview(noteId: string): Promise<IpcResult<{ title: string; content: string }>>
   }
 
   events: {

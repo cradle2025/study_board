@@ -78,9 +78,20 @@ export interface AiSettings {
   hasApiKey: boolean
 }
 
+/**
+ * Notion 目标对象的类型。
+ *
+ * 光看 id 分不出它是数据库还是普通页面（两者都是 32 位十六进制），
+ * 而「往哪儿写」的 API 完全不同，所以必须让用户明确选一次。
+ * 默认 database：课程笔记按数据库组织是最常见的用法。
+ */
+export type NotionTargetKind = 'database' | 'page'
+
 export interface NotionSettings {
   /** 目标数据库或页面 id */
   targetId: string
+  /** 目标是数据库还是页面 */
+  targetKind: NotionTargetKind
   hasToken: boolean
   lastSyncAt: string | null
 }
@@ -306,6 +317,14 @@ export interface NoteWriteInput {
   /** 不传则沿用当前模式 */
   mode?: NoteEditorMode
   title?: string
+  /**
+   * 要合并进 frontmatter 的额外键值。
+   *
+   * 目前只有 Notion 同步用（写 `notionId` / `notionHash`）。
+   * 走这个字段而不是让调用方直接改文件，是为了让「写笔记」只有一个入口——
+   * 绕过它就会漏掉索引更新与「自己写盘」的指纹登记。
+   */
+  extra?: Record<string, string>
 }
 
 /* ------------------------------------------------------------------ 导出 */
@@ -403,6 +422,69 @@ export interface AiCompleteResult {
     promptTokens: number
     completionTokens: number
   }
+}
+
+/* ------------------------------------------------------------------ Notion 同步 */
+
+/**
+ * 一篇笔记在远端（Notion）上的身份。
+ *
+ * 写在笔记 frontmatter 的 `notionId` 里，是「本地这篇」与「远端那篇」之间
+ * 唯一的对应关系。刻意**不用标题**去对：标题是用户随时会改的东西，
+ * 拿它当主键的话，改个标题就会被当成「删一篇 + 加一篇」。
+ */
+export interface NotionPushResult {
+  /** 成功推送的篇数 */
+  pushed: number
+  /** 跳过的篇数（内容与上次推送时一致，没必要再发一遍） */
+  skipped: number
+}
+
+/**
+ * 拉取时发现的冲突：同一个 notionId 在两边都有，且内容不一致。
+ *
+ * 这一类**不自动处理**，原样报给用户：
+ * 「以哪边为准」会直接改掉用户写的东西，替他决定是不负责任的。
+ */
+export interface NotionConflict {
+  /** 本地笔记 id */
+  noteId: string
+  noteTitle: string
+  /** 远端页面标题（两边标题可能已经被改得不一样了） */
+  remoteTitle: string
+  /** 远端最后编辑时间（ISO），给用户一个「哪边更新」的参考 */
+  remoteEditedAt: string
+}
+
+/**
+ * 拉取结果。
+ *
+ * `pulled` 是**已经落盘**的（本地没有的，或用户选择以远端为准的）；
+ * `conflicts` 是需要用户逐条决定的，本次没有动它们。
+ */
+export interface NotionPullResult {
+  pulled: number
+  conflicts: NotionConflict[]
+  /** 因为超出单次上限而没来得及检查的条数，>0 时提示用户再同步一次 */
+  deferred: number
+}
+
+/** 冲突解决：用户为某一篇选的哪边为准 */
+export interface NotionResolveInput {
+  noteId: string
+  /** local = 保留本地版本；remote = 用远端覆盖本地 */
+  choice: 'local' | 'remote'
+}
+
+export interface NotionResolveResult {
+  /** 真正改了本地的篇数（选 local 的只是记下「已确认」，不动文件） */
+  applied: number
+}
+
+export interface NotionTestResult {
+  ok: boolean
+  /** 目标数据库 / 页面的标题，用来让用户确认「连的是不是这个地方」 */
+  name: string
 }
 
 /* ------------------------------------------------------------------ 事件 */

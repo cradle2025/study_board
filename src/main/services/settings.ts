@@ -31,6 +31,7 @@ function buildDefaults(portable: boolean): AppSettings {
     },
     notion: {
       targetId: '',
+      targetKind: 'database',
       hasToken: false,
       lastSyncAt: null
     },
@@ -147,6 +148,18 @@ export class SettingsStore {
   markSecretPresence(kind: 'ai' | 'notion', present: boolean): void {
     if (kind === 'ai') this.#cache.ai.hasApiKey = present
     else this.#cache.notion.hasToken = present
+  }
+
+  /**
+   * 记下一次同步成功的时间。
+   *
+   * 这个值只用来在界面上显示「上次同步：…」，不参与任何同步判断
+   * （判断靠的是每篇笔记自己的指纹）。所以要落盘，但失败了也不影响功能——
+   * 它记录的是既成事实，不是状态机的输入。
+   */
+  markNotionSynced(): void {
+    this.#cache.notion.lastSyncAt = new Date().toISOString()
+    this.#persist()
   }
 
   /** 数据目录变化时，把默认位置的配置整体搬到新目录 */

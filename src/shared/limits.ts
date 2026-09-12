@@ -116,3 +116,30 @@ export const MAX_MATERIAL_TITLE = 80
 /** 一次导入的文件数上限：拖一个乱糟糟的下载目录进来也不至于导入几百个 */
 export const MAX_MATERIAL_BATCH = 30
 
+/* ------------------------------------------------------------------ Notion 同步 */
+
+/**
+ * 目标数据库 / 页面 id 的长度上限。
+ *
+ * Notion 的 id 是 32 位十六进制（带连字符是 36 位），但用户从地址栏复制时
+ * 常常把整个 URL 粘进来，所以留够一个 URL 的余量，由主进程去截取 id。
+ */
+export const MAX_NOTION_TARGET_ID = 512
+
+/** 单篇笔记推送时的正文上限：Notion 单个富文本块也有长度限制，留出余量 */
+export const MAX_NOTION_PUSH_BYTES = 1_000_000
+
+/** 一次推送 / 拉取的篇数上限：一次同步动作不要变成一次全库搬运 */
+export const MAX_NOTION_BATCH = 50
+
+/** Notion API 单次请求的等待上限。它比大模型快，比导出慢 */
+export const NOTION_TIMEOUT_MS = 30_000
+
+/**
+ * 拉取时最多报告多少条冲突。
+ *
+ * 冲突是要用户逐条决定的，一次弹出几百条没人会看完；
+ * 超出部分留在这一次不处理，下次同步还会再报一次。
+ */
+export const MAX_NOTION_CONFLICTS = 20
+

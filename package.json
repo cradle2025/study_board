@@ -30,6 +30,7 @@
     "smoke:sync": "node scripts/smoke.mjs sync",
     "smoke:export": "node scripts/smoke.mjs export",
     "smoke:ai": "node scripts/smoke.mjs ai",
+    "smoke:notion": "node scripts/smoke.mjs notion",
     "smoke:security": "node scripts/smoke.mjs security",
     "smoke:materials": "node scripts/smoke.mjs materials",
     "bench": "node scripts/smoke.mjs bench",

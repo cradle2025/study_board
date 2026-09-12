@@ -84,6 +84,10 @@ export const CHANNELS = {
   NOTION_TEST: 'notion:test',
   NOTION_PUSH: 'notion:push',
   NOTION_PULL: 'notion:pull',
+  /** 用户为某一条冲突选了「以哪边为准」之后回到主进程 */
+  NOTION_RESOLVE: 'notion:resolve',
+  /** 拉取时预览远端那篇的内容（用户决定保留哪边之前得先看得见） */
+  NOTION_PREVIEW: 'notion:preview',
 
   /* 主进程 -> 渲染层 事件 */
   EVENT_LIBRARY_CHANGED: 'event:library-changed',

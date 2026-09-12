@@ -4,10 +4,11 @@ import {
   findAiProvider,
   isLoopbackBaseUrl
 } from '@shared/aiProviders'
-import type { AppSettings, ThemeMode, UiLanguage, NoteEditorMode } from '@shared/types'
+import type { AppSettings, ThemeMode, UiLanguage, NoteEditorMode, NotionConflict } from '@shared/types'
 
 import type { ViewContext, ViewInstance } from '../app-shell'
 import { bridge, formatError, toast, unwrap } from '../lib/ipc'
+import { confirmAction } from '../lib/overlay'
 import { describePlatform } from '../lib/platform'
 
 /** 设置页：骨架阶段已经全部接通真实设置读写 */
@@ -111,6 +112,45 @@ export function createSettingsView(ctx: ViewContext): ViewInstance {
     </section>
 
     <section class="sb-section">
+      <div class="sb-section__head"><h2 class="sb-section__title">Notion 同步</h2></div>
+      <div class="sb-card" style="padding:16px">
+        <div class="sb-field" style="max-width:420px">
+          <label for="set-notion-kind">目标类型</label>
+          <select id="set-notion-kind" class="sb-select">
+            <option value="database">数据库（课程笔记按数据库组织）</option>
+            <option value="page">单个页面（笔记作为其子页面）</option>
+          </select>
+        </div>
+        <div class="sb-field">
+          <label for="set-notion-target">目标数据库 / 页面</label>
+          <input id="set-notion-target" class="sb-input" type="text"
+                 placeholder="粘贴页面链接，或直接填 32 位 id" />
+        </div>
+        <div class="sb-field" data-role="notion-key-field">
+          <label for="set-notion-token">集成 Token</label>
+          <div class="sb-inline">
+            <input id="set-notion-token" class="sb-input" type="password"
+                   placeholder="留空表示不修改" autocomplete="off" />
+            <button class="sb-btn" type="button" data-action="save-notion-token">保存</button>
+            <button class="sb-btn" type="button" data-action="clear-notion-token">清除</button>
+          </div>
+        </div>
+        <div class="sb-inline" style="margin-top:12px">
+          <button class="sb-btn" type="button" data-action="test-notion">测试连接</button>
+          <span class="sb-hint" data-role="notion-state"></span>
+        </div>
+        <p class="sb-hint">
+          同步是手动的：在笔记页选中若干篇点「推送到 Notion」，或在下方点「从 Notion 拉取」。
+          拉取遇到两边都有、内容却不一样的篇时**不会自动覆盖**，会逐条问你要保留哪一边。
+          Token 与备注正文都只在本机与 Notion 之间传输，不经第三方。
+        </p>
+        <div class="sb-inline" style="margin-top:12px">
+          <button class="sb-btn" type="button" data-action="pull-notion">从 Notion 拉取</button>
+        </div>
+      </div>
+    </section>
+
+    <section class="sb-section">
       <div class="sb-section__head"><h2 class="sb-section__title">课程资料</h2></div>
       <div class="sb-card" style="padding:16px">
         <div class="sb-field">
@@ -144,6 +184,26 @@ export function createSettingsView(ctx: ViewContext): ViewInstance {
   const aiModelList = $<HTMLDataListElement>('#set-ai-models')
   const aiNote = element.querySelector<HTMLElement>('[data-role="ai-note"]')
   const aiStateEl = element.querySelector<HTMLElement>('[data-role="ai-state"]')
+  const notionStateEl = element.querySelector<HTMLElement>('[data-role="notion-state"]')
+
+  /**
+   * Notion 那一栏的状态行。
+   *
+   * 三件事都要说清楚：有没有 Token、有没有目标、上次什么时候同步过。
+   * 缺一个都会让用户点了按钮之后收到一句「还没配置」，却不知道缺的是哪个。
+   */
+  function renderNotionPanel(settings: AppSettings): void {
+    if (!notionStateEl) return
+    const bits: string[] = []
+    bits.push(settings.notion.hasToken ? '已保存 Token' : '尚未配置 Token')
+    bits.push(settings.notion.targetId ? '已设置目标' : '尚未设置目标')
+
+    if (settings.notion.lastSyncAt) {
+      const when = new Date(settings.notion.lastSyncAt)
+      bits.push(`上次同步 ${Number.isNaN(when.getTime()) ? settings.notion.lastSyncAt : when.toLocaleString()}`)
+    }
+    notionStateEl.textContent = bits.join(' · ')
+  }
 
   /** 抽掉末尾斜杠再比：用户手抄地址时常常会多写一个 `/`，那不叫「换了服务商」 */
   function normalizeUrl(value: string): string {
@@ -256,7 +316,12 @@ export function createSettingsView(ctx: ViewContext): ViewInstance {
     if (aiModel) aiModel.value = settings.ai.model
     const inbox = $<HTMLInputElement>('[data-role="inbox"]')
     if (inbox) inbox.value = settings.materials.inboxDir
+    const notionKind = $<HTMLSelectElement>('#set-notion-kind')
+    const notionTarget = $<HTMLInputElement>('#set-notion-target')
+    if (notionKind) notionKind.value = settings.notion.targetKind
+    if (notionTarget) notionTarget.value = settings.notion.targetId
     renderAiPanel(settings)
+    renderNotionPanel(settings)
     renderAbout()
   }
 
@@ -366,6 +431,133 @@ export function createSettingsView(ctx: ViewContext): ViewInstance {
       button.disabled = false
     }
   })
+
+  $<HTMLSelectElement>('#set-notion-kind')?.addEventListener('change', (event) => {
+    const value = (event.target as HTMLSelectElement).value === 'page' ? 'page' : 'database'
+    void patch({ notion: { targetKind: value } })
+  })
+
+  // 目标 id：失焦即存。这里**不做格式校验**——用户可能粘的是带参数的完整链接，
+  // 解析成 id 是主进程的事。在这拦一道只会让人以为「链接不对」，
+  // 而实际上只是我们截得太急
+  $<HTMLInputElement>('#set-notion-target')?.addEventListener('change', (event) => {
+    const value = (event.target as HTMLInputElement).value.trim()
+    void patch({ notion: { targetId: value } })
+  })
+
+  element.querySelector('[data-action="save-notion-token"]')?.addEventListener('click', async () => {
+    const input = $<HTMLInputElement>('#set-notion-token')
+    const value = input?.value.trim() ?? ''
+    if (!value) {
+      toast('请输入 Notion Token', 'error')
+      return
+    }
+    try {
+      await unwrap(bridge().secrets.setNotionToken(value))
+      if (input) input.value = ''
+      await ctx.reloadSettings()
+      renderForm()
+      toast('Token 已保存到系统钥匙串', 'success')
+    } catch (error) {
+      toast(`保存失败：${formatError(error)}`, 'error')
+    }
+  })
+
+  element.querySelector('[data-action="clear-notion-token"]')?.addEventListener('click', async () => {
+    try {
+      await unwrap(bridge().secrets.clearNotionToken())
+      await ctx.reloadSettings()
+      renderForm()
+      toast('Token 已清除', 'success')
+    } catch (error) {
+      toast(`清除失败：${formatError(error)}`, 'error')
+    }
+  })
+
+  element.querySelector('[data-action="test-notion"]')?.addEventListener('click', async (event) => {
+    const button = event.currentTarget as HTMLButtonElement
+    button.disabled = true
+    if (notionStateEl) notionStateEl.textContent = '正在测试…'
+    try {
+      const result = await unwrap(bridge().notion.test())
+      // 把目标名字带出来：连上了但连的是别的库，是最容易「看着没报错」的错误
+      if (notionStateEl) notionStateEl.textContent = `连接正常 · 目标「${result.name}」`
+      toast('连接正常', 'success')
+    } catch (error) {
+      if (notionStateEl) notionStateEl.textContent = ''
+      toast(`测试失败：${formatError(error)}`, 'error')
+    } finally {
+      button.disabled = false
+    }
+  })
+
+  element.querySelector('[data-action="pull-notion"]')?.addEventListener('click', async (event) => {
+    const button = event.currentTarget as HTMLButtonElement
+    button.disabled = true
+    if (notionStateEl) notionStateEl.textContent = '正在拉取…'
+    try {
+      const result = await unwrap(bridge().notion.pull())
+      await ctx.reloadSettings()
+      renderForm()
+      if (result.conflicts.length > 0) {
+        // 有冲突：交给用户逐条决定。这里不替他选，
+        // 所以只把数量说清楚，具体的问询由下面的流程走
+        toast(`拉取完成（新增 ${result.pulled} 篇），有 ${result.conflicts.length} 篇需要你决定保留哪边`, 'info')
+        await resolveConflicts(result.conflicts)
+      } else if (result.deferred > 0) {
+        toast(`拉取完成（新增 ${result.pulled} 篇），还有 ${result.deferred} 篇未处理，可再点一次`, 'info')
+      } else {
+        toast(`拉取完成，新增 ${result.pulled} 篇`, 'success')
+      }
+    } catch (error) {
+      if (notionStateEl) notionStateEl.textContent = ''
+      toast(`拉取失败：${formatError(error)}`, 'error')
+      renderForm()
+    } finally {
+      button.disabled = false
+    }
+  })
+
+  /**
+   * 逐条问用户「这一篇保留哪边」。
+   *
+   * 一条一条来而不是一次列一张表：每条都要看到两边的正文才能决定，
+   * 并排摆 20 条只会逼着人选个大概。宁可慢一点。
+   */
+  async function resolveConflicts(conflicts: NotionConflict[]): Promise<void> {
+    for (const conflict of conflicts) {
+      const remote = await unwrap(bridge().notion.preview(conflict.noteId)).catch(() => null)
+      const preview = remote ? remote.content.slice(0, 800) : '（读不到远端内容）'
+      const remoteTime = conflict.remoteEditedAt
+        ? new Date(conflict.remoteEditedAt).toLocaleString()
+        : '（未知）'
+
+      const keepLocal = await confirmAction({
+        title: '这一篇两边都改过',
+        message:
+          `本地：《${conflict.noteTitle}》\n` +
+          `远端：《${conflict.remoteTitle}》（最后编辑 ${remoteTime}）\n\n` +
+          `远端内容预览：\n${preview}`,
+        confirmText: '保留本地（推上去覆盖远端）',
+        cancelText: '用远端覆盖本地',
+        danger: true
+      })
+
+      try {
+        await unwrap(
+          bridge().notion.resolve({
+            noteId: conflict.noteId,
+            choice: keepLocal ? 'local' : 'remote'
+          })
+        )
+      } catch (error) {
+        toast(`处理失败：${formatError(error)}`, 'error')
+      }
+    }
+    await ctx.reloadSettings()
+    renderForm()
+    toast('冲突已处理完', 'success')
+  }
 
   element.querySelector('[data-action="choose-library"]')?.addEventListener('click', async () => {
     try {

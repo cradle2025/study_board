@@ -4,6 +4,7 @@ import { registerExportHandlers } from './export'
 import { assertAllChannelsRegistered } from './index'
 import { registerMaterialsHandlers } from './materials'
 import { registerNotesHandlers } from './notes'
+import { registerNotionHandlers } from './notion'
 import { registerPendingHandlers } from './pending'
 import { registerPortalHandlers } from './portal'
 import { registerSecretHandlers } from './secrets'
@@ -26,6 +27,7 @@ export function registerIpcHandlers(): void {
   registerMaterialsHandlers()
   registerExportHandlers()
   registerAiHandlers()
+  registerNotionHandlers()
 
   // 尚未实现的模块统一挂占位，等对应模块落地后从这里「顶掉」即可
   registerPendingHandlers()

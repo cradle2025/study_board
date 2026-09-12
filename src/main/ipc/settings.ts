@@ -107,7 +107,13 @@ function sanitizePatch(raw: unknown): SettingsPatch {
   if ('notion' in input && input.notion && typeof input.notion === 'object') {
     const n = input.notion as Record<string, unknown>
     const notion: NotionPatch = {}
-    if ('targetId' in n) notion.targetId = asString(n.targetId, 128).trim()
+    // 只存原始输入：解析成 id 是同步时的事。
+    // 在这里就掐成 id 的话，用户粘错了地址会立刻看到「格式不对」，
+    // 却不知道是被截断的还是本来就不对——留着原文，报错时才解释得清
+    if ('targetId' in n) notion.targetId = asString(n.targetId, 512).trim()
+    if ('targetKind' in n) {
+      notion.targetKind = assertEnum(n.targetKind, ['database', 'page'] as const, 'notion.targetKind')
+    }
     patch.notion = notion
   }
 

@@ -14,6 +14,7 @@ import { tmpdir } from 'node:os'
 import { dirname, extname, join } from 'node:path'
 import { inflateRawSync } from 'node:zlib'
 
+import { NOTION_HASH_KEY, NOTION_ID_KEY, parseNotionId, pushFingerprint } from '@shared/notion'
 import { EXPORT_EXTENSIONS } from '@shared/limits'
 import type { ExportFormat } from '@shared/types'
 
@@ -78,6 +79,7 @@ export type SmokeScenario =
   | 'sync'
   | 'export'
   | 'ai'
+  | 'notion'
   | 'security'
   | 'materials'
 
@@ -94,6 +96,7 @@ export function smokeScenario(): SmokeScenario {
   if (value === 'sync') return 'sync'
   if (value === 'export') return 'export'
   if (value === 'ai') return 'ai'
+  if (value === 'notion') return 'notion'
   if (value === 'security') return 'security'
   if (value === 'materials') return 'materials'
   return 'basic'
@@ -1323,6 +1326,8 @@ export function runSmokeTestIfRequested(win: BrowserWindow): void {
               ? exportProbe(exportDir)
               : scenario === 'ai'
                 ? aiProbe()
+                : scenario === 'notion'
+                  ? notionProbe()
               : scenario === 'security'
                 ? SECURITY_PROBE
                 : scenario === 'materials'
@@ -1475,6 +1480,23 @@ export function runSmokeTestIfRequested(win: BrowserWindow): void {
                             parsed['restored'] &&
                             verifySecretsOnDisk())
                     )
+                  : scenario === 'notion'
+                  ? Boolean(
+                      parsed['hasSection'] &&
+                        parsed['hasTarget'] &&
+                        parsed['hasKind'] &&
+                        parsed['hasToken'] &&
+                        parsed['hasTest'] &&
+                        parsed['hasPull'] &&
+                        parsed['hasPushButton'] &&
+                        // 缺配置必须拦在出网之前——这条是安全底线，
+                        // 不能只是「界面上有个提示」
+                        parsed['blockedBeforeNetwork'] &&
+                        parsed['blockedNoNetwork'] &&
+                        // 冲突判据与 id 解析：纯逻辑，磁盘/字符串层面验
+                        verifyNotionIdParsing() &&
+                        verifyConflictRules()
+                    )
                   : scenario === 'security'
                   ? Boolean(
                       // 渲染层主探针：逃逸、暴露面、XSP 执行面、网络面、协议穿越、fuzz
@@ -1608,6 +1630,23 @@ export function runSmokeTestIfRequested(win: BrowserWindow): void {
             )
             .catch(() => undefined)
           await captureIfRequested(win, 'ai.png')
+        } else if (scenario === 'notion') {
+          // 收尾停在设置页的 Notion 区块
+          await win.webContents
+            .executeJavaScript(
+              `(async () => {
+                 const wait = (ms) => new Promise((r) => setTimeout(r, ms))
+                 document.querySelector('[data-route="settings"]')?.click()
+                 await wait(600)
+                 const anchor = document.querySelector('#set-notion-target')
+                 if (anchor) anchor.scrollIntoView({ block: 'center' })
+                 await wait(400)
+                 return 'ok'
+               })()`,
+              true
+            )
+            .catch(() => undefined)
+          await captureIfRequested(win, 'notion.png')
         } else if (scenario === 'security') {
           // 安全场景收尾停在概览页，截图里能看到「页面本身没被攻击搞坏」
           await captureIfRequested(win, 'security.png')
@@ -1652,6 +1691,7 @@ export async function prepareSmokeDataIfRequested(): Promise<void> {
   else if (scenario === 'sync') seedNotes()
   else if (scenario === 'export') seedExport()
   else if (scenario === 'ai') seedAi()
+  else if (scenario === 'notion') seedNotion()
   else if (scenario === 'security') await seedSecurity()
   else if (scenario === 'materials') await seedMaterials()
 }
@@ -1979,6 +2019,181 @@ const AI_SEED_BODY = [
 
 /** 一个一眼就能认出来的假密钥：等下要在文件里按字节搜它 */
 const AI_SMOKE_KEY = 'sk-smoke-3f9c1d7a-not-a-real-key'
+
+/* ------------------------------------------------------- Notion 同步 */
+
+const NOTION_SEED_TITLE = 'Notion 自检'
+
+/**
+ * Notion 场景的自检。
+ *
+ * 与 AI 场景同一个思路：**不发真实请求**。真实同步需要网络、一个真 Token
+ * 和一个真实的 Notion 工作区，在自动化里只会变成随机失败。
+ *
+ * 所以这一趟专门测「不需要网络就能验的那部分」——而它恰好也是最容易写错的
+ * 那部分：
+ *   1. 用户粘进来的链接能不能被正确解析成 id（这是最常见的卡点）；
+ *   2. 没配 Token / 没配目标时，是不是**拦在出网之前**就给出人话提示
+ *      （这是安全底线：缺配置绝不该发出一个没有凭据的请求）；
+ *   3. 冲突检测的判据是否正确——两边内容一致时不该报冲突，
+ *      不一致时必须报，而且**绝不能自动覆盖**。
+ *
+ * 第 3 条是本场景的核心：把「冲突不自动处理」写成可执行的断言，
+ * 而不是留在注释里的一句承诺。
+ */
+function notionProbe(): string {
+  return `(async () => {
+  ${PROBE_HELPERS}
+  const TITLE = ${JSON.stringify(NOTION_SEED_TITLE)}
+  const out = {}
+
+  // —— 1. 界面：设置页里有 Notion 那一栏，且各控件都在
+  const nav = await waitFor('[data-route="settings"]')
+  if (!nav) return JSON.stringify({ error: '导航未就绪' })
+  nav.click()
+  await wait(500)
+
+  out.hasSection = Array.from(document.querySelectorAll('.sb-section__title'))
+    .some((el) => el.textContent.includes('Notion'))
+  out.hasTarget = Boolean(document.querySelector('#set-notion-target'))
+  out.hasKind = Boolean(document.querySelector('#set-notion-kind'))
+  out.hasToken = Boolean(document.querySelector('#set-notion-token'))
+  out.hasTest = Boolean(document.querySelector('[data-action="test-notion"]'))
+  out.hasPull = Boolean(document.querySelector('[data-action="pull-notion"]'))
+
+  // —— 2. 缺配置时必须拦在出网之前。
+  // 判据：报错信息里要明确说缺什么，而不是一句笼统的「请求失败」——
+  // 后者意味着请求真的发出去了，那才是安全问题
+  //
+  // 注意 preload 的 invoke 是**返回 { ok:false, error } 而不是抛异常**，
+  // 所以这里必须读返回值。写成 try/catch 会永远走到「没报错」那条路，
+  // 那是一个永远为真的假通过——比不测更糟
+  let blocked = ''
+  try {
+    const result = await window.studyBoard.notion.test()
+    blocked = result && result.ok === false ? String(result.error ?? '') : ''
+  } catch (error) {
+    // 真抛了也算一种「拦住了」，但下面的判据仍要求它说的是缺配置
+    blocked = String(error && error.message ? error.message : error)
+  }
+  out.blockedMessage = blocked || '（没有报错，说明缺配置也发出去了）'
+  // 抛出的错必须是「没配置」，不是网络错误
+  out.blockedBeforeNetwork =
+    Boolean(blocked) &&
+    (blocked.includes('Token') || blocked.includes('目标') || blocked.includes('配置'))
+  out.blockedNoNetwork =
+    Boolean(blocked) && !/fetch|network|ENOTFOUND|ECONNREFUSED|超时/i.test(blocked)
+
+  // —— 3. 笔记页上那个「推送到 Notion」入口
+  document.querySelector('[data-route="notes"]')?.click()
+  await wait(600)
+  out.hasPushButton = Boolean(document.querySelector('[data-action="notion"]'))
+
+  return JSON.stringify(out)
+})()`
+}
+
+function seedNotion(): void {
+  context().notes.create(NOTION_SEED_TITLE, '# 待同步的笔记\n\n这一段要能原样出现在 Notion 里。\n')
+}
+
+/**
+ * 冲突检测的判据自检：**纯逻辑，不出网**。
+ *
+ * 这里直接验的是主进程里那两条规则，不经过界面：
+ *  - 内容一致 → 不算冲突；
+ *  - 内容不一致 → 算冲突，且**本地文件没被动过**。
+ *
+ * 第二条是重点。它担保的是「报冲突」与「改文件」是两件事——
+ * 只要这一条成立，「不会偷偷覆盖用户的东西」就有了可执行的证据。
+ */
+function verifyConflictRules(): boolean {
+  const notes = context().notes
+  const seeded = notes.list().find((note) => note.title === NOTION_SEED_TITLE)
+  if (!seeded) {
+    console.error('[smoke] Notion 场景的种子笔记不见了')
+    return false
+  }
+
+  const doc = notes.read(seeded.id)
+  const before = doc.content
+
+  // 认领之后（模拟一次成功推送）指纹应该被写进 frontmatter，
+  // 而且原正文一个字都不能变
+  const fingerprint = pushFingerprint(doc.title, before)
+  notes.write({
+    id: seeded.id,
+    content: before,
+    title: doc.title,
+    extra: { [NOTION_ID_KEY]: '0f1e2d3c-4b5a-6978-8796-a5b4c3d2e1f0', [NOTION_HASH_KEY]: fingerprint }
+  })
+
+  const after = notes.read(seeded.id).frontmatter
+  if (after[NOTION_ID_KEY] !== '0f1e2d3c-4b5a-6978-8796-a5b4c3d2e1f0') {
+    console.error('[smoke] 写回 frontmatter 之后 notionId 没存住')
+    return false
+  }
+  if (after[NOTION_HASH_KEY] !== fingerprint) {
+    console.error('[smoke] 写回 frontmatter 之后指纹没存住')
+    return false
+  }
+  if (notes.read(seeded.id).content !== before) {
+    console.error('[smoke] 写 notionId 的时候把正文改动了')
+    return false
+  }
+
+  // 指纹一致 → 不该认为是变化（推送时会被跳过）
+  const sameAgain = pushFingerprint(doc.title, before)
+  if (sameAgain !== fingerprint) {
+    console.error('[smoke] 同样内容算出了不同的指纹，跳过逻辑会失效')
+    return false
+  }
+  // 内容变了 → 指纹必须跟着变，否则冲突永远检测不出来
+  if (pushFingerprint(doc.title, before + '\\n\\n外部追加') === fingerprint) {
+    console.error('[smoke] 内容变了但指纹没变，冲突将无法被发现')
+    return false
+  }
+  // 标题变了也要变：只比正文会漏掉「在 Notion 那边改了标题」这种情况
+  if (pushFingerprint(doc.title + '改', before) === fingerprint) {
+    console.error('[smoke] 标题变了但指纹没变')
+    return false
+  }
+
+  console.info('[smoke] 冲突判据成立：内容一致不算冲突，内容或标题变了必然报出，且写回不动正文')
+  return true
+}
+
+/**
+ * id 解析的边界自检。
+ *
+ * 用户粘进来的东西五花八门，这一段把常见的几种都过一遍。
+ * 解析错了的表现是「同步到一个空的、或者别人的地方」——很难查，所以在这里卡死。
+ */
+function verifyNotionIdParsing(): boolean {
+  const cases: Array<[string, string]> = [
+    // 裸 id（带连字符 / 不带）
+    ['0f1e2d3c4b5a69788796a5b4c3d2e1f0', '0f1e2d3c-4b5a-6978-8796-a5b4c3d2e1f0'],
+    ['0f1e2d3c-4b5a-6978-8796-a5b4c3d2e1f0', '0f1e2d3c-4b5a-6978-8796-a5b4c3d2e1f0'],
+    // 完整链接（最常见的粘贴形态）
+    ['https://www.notion.so/StudyBoard-0f1e2d3c4b5a69788796a5b4c3d2e1f0', '0f1e2d3c-4b5a-6978-8796-a5b4c3d2e1f0'],
+    // 带 query（数据库视图链接）
+    ['https://www.notion.so/abc?v=0f1e2d3c4b5a69788796a5b4c3d2e1f0', '0f1e2d3c-4b5a-6978-8796-a5b4c3d2e1f0'],
+    // 空 / 垃圾 → 空串，绝不能瞎猜出一个 id 来
+    ['', ''],
+    ['随便写的', '']
+  ]
+
+  for (const [input, expected] of cases) {
+    const actual = parseNotionId(input)
+    if (actual !== expected) {
+      console.error(`[smoke] id 解析不对：「${input}」期望 ${expected || '（空）'}，实际 ${actual || '（空）'}`)
+      return false
+    }
+  }
+
+  console.info('[smoke] Notion id 解析正确：裸 id、完整链接、带 query 都能认，垃圾输入不瞎猜')
+  return true
+}
 
 function seedAi(): void {
   context().notes.create(AI_SEED_TITLE, AI_SEED_BODY)

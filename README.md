@@ -71,9 +71,9 @@
   （不含应用自己的簿记字段），标题进文件属性而不是正文里多顶一个标题
 - 与 **Obsidian** 天然互通（笔记库就是一个 Obsidian Vault）
 - 接 **AI** 助手：按课程主题整理资料并写入笔记，写入方式（自己粘贴 / AI 直接写入）由你决定，且**不会改动你已有内容**
-
-> **Notion 双向同步目前还没做。** 代码里只留了通道与密钥存储的占位，
-> 界面上没有入口；等做出来再写进这里。计划见 [ARCHITECTURE.md](./docs/ARCHITECTURE.md) 第十一节。
+- 接 **Notion**：在笔记页点「推送到 Notion」把当前这篇同步过去；设置页里可以「从 Notion 拉取」。
+  拉取时若两边都改过同一篇，**不会替你选**，会逐条问你保留哪一边——这一步会动你写的东西，所以必须由你来定。
+  笔记与远端页面的对应关系记在 frontmatter 的 `notionId` 里（不靠标题猜），所以改标题不会把关联弄断。
 
 ---
 
@@ -166,6 +166,7 @@ npm run smoke:notes       # 笔记编辑器端到端：双模式切换 + 工具�
 npm run smoke:sync        # 笔记库文件监听：外部新增/改动/删除/改名 + 冲突追问
 npm run smoke:export      # 笔记导出：md / html / docx / pdf 四种产物落到磁盘
 npm run smoke:ai          # AI 助手与密钥：没配密钥拦在出网之前 + 密钥密文落盘
+npm run smoke:notion      # Notion 同步：id 解析 + 缺配置拦在出网之前 + 冲突不自动覆盖
 npm run smoke:security    # 渗透测试：逃逸 / XSS / 协议穿越 / IPC 模糊 / 导航劫持 / 端口
 npm run smoke:materials   # 课程资料：导入闸口 / 改名往返 / 卡片角标 / 收件箱整链路
 npm run bench             # 性能与内存基准，报告打到 stdout 并写入 .preview/
@@ -284,7 +285,7 @@ src/
 - **Study hub**: quick links to learning sites, flip-able course cards, Markdown & rich-text note editor
 - **Notes** live as plain `.md` files in `notes_library/`, which works directly as an Obsidian vault
 - Export to PDF / Word / Markdown; optional AI assistant (bring your own key)
-- Notion two-way sync is **not implemented yet** — only the channel stubs exist
+- Optional Notion sync (push a note, or pull with **per-note** conflict prompts — nothing is overwritten silently)
 
 **Privacy by design**: no listening ports, no telemetry, no network access from the UI process. Everything stays on your machine.
 

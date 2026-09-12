@@ -501,6 +501,9 @@ export class NotesStore {
     const now = new Date().toISOString()
     const data: Frontmatter = {
       ...existing,
+      // 额外键放在展开之后：调用方（目前是 Notion 同步）明确要写的值优先，
+      // 否则写回一个已存在的 notionId 会被文件里的旧值盖掉
+      ...(input?.extra ?? {}),
       id: current.id,
       mode,
       createdAt: current.createdAt,
