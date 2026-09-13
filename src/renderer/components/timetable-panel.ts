@@ -1,6 +1,7 @@
 import { MAX_TIMETABLE_IMAGES } from '@shared/limits'
 import type { CourseImage, TimetableCell, TimetableData } from '@shared/types'
 
+import { assetUrl } from '../lib/asset'
 import { escapeHtml } from '../lib/html'
 import { openLightbox, showFloating } from '../lib/overlay'
 import { markLimited } from '../lib/perf'
@@ -55,9 +56,9 @@ export interface RenderHint {
   key: string
 }
 
-export function assetUrl(bucket: string, fileName: string): string {
-  return `sb-asset://${bucket}/${fileName.split('/').map(encodeURIComponent).join('/')}`
-}
+// 拼地址的实现搬去了 lib/asset（笔记里显示图片也要用同一份）。
+// 这里 import 进来自己用，同时转出去，免得已有的引用全要改一遍。
+export { assetUrl }
 
 function formatBytes(bytes: number): string {
   if (bytes <= 0) return ''

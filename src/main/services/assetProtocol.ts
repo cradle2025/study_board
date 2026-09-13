@@ -20,7 +20,14 @@ export interface AssetBuckets {
   icons: string
 }
 
-const MIME: Record<string, string> = {
+/**
+ * 扩展名 → MIME。
+ *
+ * 导出（`noteImagePath.ts`）也要用它来判断「这个引用指向的是不是一张图」，
+ * 所以导出而不是各留一份——两份表迟早会漂，而漂的那次表现为
+ * 「某个格式在应用里能看、导出就没了」，很难查。
+ */
+export const MIME: Record<string, string> = {
   '.png': 'image/png',
   '.jpg': 'image/jpeg',
   '.jpeg': 'image/jpeg',

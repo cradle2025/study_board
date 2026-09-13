@@ -1,9 +1,8 @@
 import { nativeImage } from 'electron'
-import { fileURLToPath } from 'node:url'
-import { isAbsolute, normalize, resolve, sep } from 'node:path'
 
 import { markdownToTokens, type MarkdownToken } from '@shared/markdown'
 
+import { resolveNoteImagePath } from './noteImagePath'
 import { BorderStyle, Document, ExternalHyperlink, HeadingLevel, ImageRun, Packer, Paragraph, ShadingType, Table, TableCell, TableRow, TextRun, WidthType } from 'docx'
 
 /**
@@ -64,46 +63,6 @@ function styleOf(style: InlineStyle): {
   return { bold: style.bold, italics: style.italics, strike: style.strike }
 }
 
-/**
- * 把一段 Markdown 的 src 解析成可读的本地路径。
- *
- * 只认三种来源：data: URI、file: URL、以及**笔记库目录下的相对路径**。
- * http(s) 一律返回 null —— 导出过程不出网，这是全项目一致的约束，
- * 不能因为「导出一张网图」就破例。
- */
-function resolveImagePath(src: string, notesDir: string): string | null {
-  const raw = src.trim()
-  if (!raw) return null
-  if (/^https?:/i.test(raw)) return null
-
-  if (raw.startsWith('data:')) return null // data: 走另一条路，这里只处理文件
-
-  if (raw.startsWith('file://')) {
-    try {
-      return fileURLToPath(raw)
-    } catch {
-      return null
-    }
-  }
-  // 去掉可能带的查询串与锚点（`img.png?raw=1`），再解 URL 编码
-  const cleaned = raw.split(/[?#]/)[0] ?? ''
-  let decoded = cleaned
-  try {
-    decoded = decodeURIComponent(cleaned)
-  } catch {
-    /* 编码坏了就按原样用 */
-  }
-  if (!decoded) return null
-
-  if (isAbsolute(decoded)) return null // 绝对路径一律拒绝：它几乎总是渲染层拼错的东西
-
-  const base = resolve(normalize(notesDir))
-  const target = resolve(base, decoded)
-  // 越界（`../../etc/passwd` 这种）直接拒掉，与 safeJoin 同一套判据
-  if (target !== base && !target.startsWith(base + sep)) return null
-  return target
-}
-
 /** 读一张图并统一转成 PNG，顺带拿到尺寸 */
 function loadImage(src: string, ctx: DocxContext): LoadedImage | null {
   const cached = ctx.images.get(src)
@@ -124,7 +83,7 @@ function loadImage(src: string, ctx: DocxContext): LoadedImage | null {
         }
       }
     } else {
-      const path = resolveImagePath(src, ctx.notesDir)
+      const path = resolveNoteImagePath(src, ctx.notesDir)
       if (path) {
         const image = nativeImage.createFromPath(path)
         if (!image.isEmpty()) {

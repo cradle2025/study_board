@@ -8,11 +8,16 @@ import {
   undo
 } from '@codemirror/commands'
 import { markdown, markdownLanguage } from '@codemirror/lang-markdown'
-import { HighlightStyle, syntaxHighlighting } from '@codemirror/language'
+import { HighlightStyle, syntaxHighlighting, syntaxTree } from '@codemirror/language'
 import { highlightSelectionMatches, searchKeymap } from '@codemirror/search'
-import { EditorSelection, EditorState } from '@codemirror/state'
+import { EditorSelection, EditorState, RangeSetBuilder } from '@codemirror/state'
 import {
+  Decoration,
+  type DecorationSet,
   EditorView,
+  ViewPlugin,
+  type ViewUpdate,
+  WidgetType,
   drawSelection,
   dropCursor,
   highlightActiveLine,
@@ -22,7 +27,9 @@ import {
 } from '@codemirror/view'
 import { tags } from '@lezer/highlight'
 
+import { noteImageSrc } from '../asset'
 import type { EditorCommand, EditorHandle } from './commands'
+import { parseHeadings } from './outline'
 
 /**
  * Markdown 编辑器（CodeMirror 6）。
@@ -79,6 +86,134 @@ const markdownHighlight = HighlightStyle.define([
   { tag: tags.contentSeparator, color: 'var(--md-dim)' },
   { tag: tags.processingInstruction, color: 'var(--md-marker)' }
 ])
+
+/* ------------------------------------------------------------ 图片实时预览 */
+
+/**
+ * 把 `![说明](attachments/x.png)` 这一整段替换成一张真的图片。
+ *
+ * Markdown 模式是「直接看源码」，本来没必要渲染图片。但笔记里一旦有了插图，
+ * 纯源码体验会很糟：`![2024-03-15 摄于实验室](attachments/IMG_2231.png)`
+ * 这种又长又占行的东西夹在正文里，读起来比一张图费劲得多。
+ *
+ * 取舍：**光标所在的行始终显示源码**。这样点进去就能改地址、改说明，
+ * 不会出现「图在那儿但不知道怎么写出来的」。这也是绝大多数
+ * Markdown 编辑器的做法（Typora、Obsidian 实时预览都是这个规则）。
+ */
+class ImageWidget extends WidgetType {
+  constructor(
+    private readonly src: string,
+    private readonly alt: string
+  ) {
+    super()
+  }
+
+  override eq(other: ImageWidget): boolean {
+    return other.src === this.src && other.alt === this.alt
+  }
+
+  override toDOM(): HTMLElement {
+    const wrap = document.createElement('span')
+    wrap.className = 'sb-md__image'
+    const img = document.createElement('img')
+    img.src = noteImageSrc(this.src) ?? this.src
+    img.alt = this.alt
+    img.loading = 'lazy'
+    img.decoding = 'async'
+    wrap.appendChild(img)
+    return wrap
+  }
+
+  /**
+   * 返回 false 是**故意的**：让 CodeMirror 正常处理点击，
+   * 光标落到这一行 → 下一帧这行就切回源码，用户可以接着改。
+   * 默认的 true（忽略事件）会让图片「点不动」，像是卡住了。
+   */
+  override ignoreEvent(): boolean {
+    return false
+  }
+}
+
+/** 从 `![alt](src "title")` 里拆出 alt 与 src */
+function imageParts(text: string): { src: string; alt: string } | null {
+  const match = /^!\[([^\]]*)\]\(([^)]*)\)/.exec(text)
+  if (!match) return null
+  const alt = match[1] ?? ''
+  // 去掉可选的 title（`path "说明"`）与包裹用的尖括号
+  const src = (match[2] ?? '')
+    .replace(/\s+"[^"]*"\s*$/, '')
+    .replace(/^<|>$/g, '')
+    .trim()
+  if (src.length === 0) return null
+  return { src, alt }
+}
+
+/**
+ * 找出可视区里所有该被渲染成图片的位置。
+ *
+ * 用**语法树**而不是正则扫全篇：正则会误伤代码块里的 `![x](y)`
+ * （用户可能就在写一段讲 Markdown 语法的笔记），而语法树知道
+ * 哪个 `Image` 节点是真的图片节点。这一点值得多引一个 `syntaxTree`。
+ */
+function buildImageDecorations(view: EditorView): DecorationSet {
+  const builder = new RangeSetBuilder<Decoration>()
+  const { state } = view
+
+  // 光标/选区碰到的行：这些行保持源码形态
+  const editingLines = new Set<number>()
+  for (const range of state.selection.ranges) {
+    const first = state.doc.lineAt(range.from).number
+    const last = state.doc.lineAt(range.to).number
+    for (let n = first; n <= last; n += 1) editingLines.add(n)
+  }
+
+  for (const visible of view.visibleRanges) {
+    syntaxTree(state).iterate({
+      from: visible.from,
+      to: visible.to,
+      enter: (node) => {
+        if (node.name !== 'Image') return
+        const first = state.doc.lineAt(node.from).number
+        const last = state.doc.lineAt(node.to).number
+        for (let n = first; n <= last; n += 1) {
+          if (editingLines.has(n)) return
+        }
+        const parts = imageParts(state.sliceDoc(node.from, node.to))
+        if (!parts) return
+        builder.add(
+          node.from,
+          node.to,
+          Decoration.replace({ widget: new ImageWidget(parts.src, parts.alt) })
+        )
+      }
+    })
+  }
+
+  return builder.finish()
+}
+
+/**
+ * 预览插件。
+ *
+ * `selectionSet` 也要重算——不然「点进图片那一行，源码不出现」，
+ * 用户会以为这行改不了。
+ */
+const imagePreview = ViewPlugin.fromClass(
+  class {
+    decorations: DecorationSet
+
+    constructor(view: EditorView) {
+      this.decorations = buildImageDecorations(view)
+    }
+
+    update(update: ViewUpdate): void {
+      if (update.docChanged || update.viewportChanged || update.selectionSet) {
+        this.decorations = buildImageDecorations(update.view)
+      }
+    }
+  },
+  { decorations: (instance) => instance.decorations }
+)
 
 /* ---------------------------------------------------------------- 编辑动作 */
 
@@ -210,6 +345,7 @@ export function createMarkdownEditor(options: MarkdownEditorOptions): EditorHand
         highlightActiveLine(),
         syntaxHighlighting(markdownHighlight, { fallback: true }),
         markdown({ base: markdownLanguage, codeLanguages: [] }),
+        imagePreview,
         EditorView.lineWrapping,
         cmPlaceholder(options.placeholder ?? ''),
         keymap.of([
@@ -344,7 +480,46 @@ export function createMarkdownEditor(options: MarkdownEditorOptions): EditorHand
       view.focus()
       return true
     },
+    /**
+     * 插图片：写进源码的是**相对路径**（`attachments/x.png`），
+     * 不是显示用的 sb-asset 地址——磁盘上的 .md 必须保持 Obsidian 能直接用。
+     *
+     * 说明文字里的 `]` 与 `)` 会把语法咬断，换成方括号/圆括号全角形态；
+     * 这比转义反斜杠好读，而且在 Markdown 里是合法字符。
+     */
+    insertImage(src, alt) {
+      const safeAlt = alt.replace(/]/g, '］').replace(/\r?\n/g, ' ').trim()
+      const line = view.state.doc.lineAt(view.state.selection.main.from)
+      const block = `![${safeAlt}](${src})`
+      // 图片单独成行更好读，也方便之后上下加文字
+      const needsBreak = line.text.trim().length > 0
+      const insert = needsBreak ? `\n\n${block}\n` : `${block}\n`
+      const range = view.state.selection.main
+      view.dispatch({
+        changes: { from: range.from, to: range.to, insert },
+        selection: { anchor: range.from + insert.length }
+      })
+      view.focus()
+      return true
+    },
     focus: () => view.focus(),
+    /**
+     * 跳到第 index 个标题。
+     *
+     * 走的是**行号**而不是「搜索这一行文字」：同一篇笔记里两个同名标题
+     * （比如两段都叫「小结」）非常常见，按文字找永远只会停在第一个。
+     * 解析复用大纲面板那一份 `parseHeadings`，两边对「什么算标题」的理解必须一致，
+     * 否则会出现「面板上点得到、但跳不到」。
+     */
+    revealHeading(index) {
+      const heading = parseHeadings(view.state.doc.toString())[index]
+      if (!heading) return false
+      // parseHeadings 给的是 0 起算的行号，CodeMirror 的行号从 1 起算
+      const line = view.state.doc.line(Math.min(heading.line + 1, view.state.doc.lines))
+      view.dispatch({ selection: EditorSelection.cursor(line.from), scrollIntoView: true })
+      view.focus()
+      return true
+    },
     destroy: () => view.destroy(),
     run,
     isActive

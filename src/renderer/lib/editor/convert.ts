@@ -1,6 +1,8 @@
 import TurndownService from 'turndown'
 
-import { markdownToHtml } from '@shared/markdown'
+import { markdownToHtml as renderMarkdown } from '@shared/markdown'
+
+import { noteImageSrc, noteImageSrcToPath } from '../asset'
 
 /**
  * Markdown ↔ HTML 的互转。
@@ -139,6 +141,31 @@ turndown.addRule('highlight', {
   replacement: (content) => (content.trim().length > 0 ? `==${content}==` : '')
 })
 
+/**
+ * 图片：必须**把地址换回库内相对路径**再写进 .md。
+ *
+ * turndown 自带的 image 规则只做 `![alt](src)` 的字面搬运，
+ * 而此刻的 src 是显示用的 `sb-asset://notes/...`（打开笔记时被换过）。
+ * 照搬的后果是磁盘上的 .md 里存着自定义协议地址——
+ * 拿到 Obsidian 里打开全是破图，换台机器也失效。
+ * 覆盖掉默认规则，把地址还原回去。
+ *
+ * 不是我们换出来的地址（网图、data:、别人写的绝对路径）原样保留：
+ * 那些本来就不是我们该改的。
+ */
+turndown.addRule('noteImage', {
+  filter: 'img',
+  replacement: (_content, node) => {
+    const image = node as HTMLImageElement
+    const raw = image.getAttribute('src') ?? ''
+    if (raw.trim().length === 0) return ''
+    const src = noteImageSrcToPath(raw) ?? raw
+    const alt = image.getAttribute('alt') ?? ''
+    const title = image.getAttribute('title')
+    return `![${alt}](${src}${title ? ` "${title}"` : ''})`
+  }
+})
+
 // 下划线在 Markdown 里没有对应语法，退化成加粗——
 // 至少让「这里是重点」这个意图留下来，而不是直接丢掉字
 turndown.addRule('underline', {
@@ -147,8 +174,15 @@ turndown.addRule('underline', {
 })
 
 // 转发给「Markdown → HTML」搬到 shared 之后的新位置，让编辑器这边的
-// 调用点（richtext-editor）不用关心它到底住在哪一层
-export { markdownToHtml }
+// 调用点（richtext-editor）不用关心它到底住在哪一层。
+//
+// 但**不能原样转出去**：shared 那份是给全项目用的默认渲染，
+// 而编辑器里显示的图片必须换成 sb-asset:// 才加载得到。
+// 包一层把改写器固定住，调用方就不会忘了传——忘了的表现是「图片全裂」，
+// 而那种问题在富文本模式里看着像编辑器坏了，很难联想到是地址没换。
+export function markdownToHtml(source: string): string {
+  return renderMarkdown(source, { resolveImageSrc: (src) => noteImageSrc(src) })
+}
 
 export function htmlToMarkdown(html: string): string {
   const out = turndown.turndown(html)

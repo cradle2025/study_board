@@ -44,6 +44,7 @@
     "audit:prod": "npm audit --omit=dev"
   },
   "dependencies": {
+    "@tiptap/extension-image": "^3.31.3",
     "chokidar": "^5.0.0",
     "docx": "^9.7.1",
     "libheif-js": "^1.23.2",

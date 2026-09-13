@@ -16,6 +16,15 @@ export interface ToolbarOptions {
   handle: EditorHandle
   /** 需要用户输入点什么的时候（比如链接地址）由外面接管 */
   onNotice?(message: string): void
+  /**
+   * 需要**视图层**接管的命令。返回 true 表示这条命令已经被处理掉了。
+   *
+   * 「插入图片」是第一个用上它的：它要弹一个选择器、走 IPC 读资料库，
+   * 是异步的，而 `EditorHandle.run()` 是同步返回 boolean 的。
+   * 硬把异步塞进那个签名会让两个编辑器都要多背一个 Promise，
+   * 而它们其实一点都不关心图片是从哪来的——图片地址是视图层拼好传进去的。
+   */
+  onCommand?(command: EditorCommand): boolean
 }
 
 export interface ToolbarHandle {
@@ -84,6 +93,12 @@ export function createEditorToolbar(options: ToolbarOptions): ToolbarHandle {
     if (!button || button.disabled) return
     const command = button.dataset['command'] as EditorCommand | undefined
     if (!command) return
+
+    // 视图层先挑：需要弹选择器这类异步动作由它接走
+    if (options.onCommand?.(command)) {
+      refresh()
+      return
+    }
 
     const done = handle.run(command)
     if (!done && options.onNotice) {

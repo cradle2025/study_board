@@ -258,6 +258,96 @@ export function confirmAction(options: ConfirmOptions): Promise<boolean> {
   })
 }
 
+/* ------------------------------------------------------------------ 输入框 */
+
+export interface PromptOptions {
+  title: string
+  label?: string
+  /** 初始值（改名场景就是原名） */
+  value?: string
+  placeholder?: string
+  confirmText?: string
+  maxLength?: number
+  /** 输入框下方的说明 */
+  hint?: string
+}
+
+/**
+ * 单行文本输入框。确定返回输入内容（已 trim），取消返回 null。
+ *
+ * **不要用 `window.prompt`**。Electron 根本没有实现它——调用会返回 null
+ * 并在控制台打一句 "prompt() is and will not be supported"，
+ * 于是「插链接」这类功能在开发时的浏览器里能用、打包后一点反应都没有。
+ * 这正是本项目「开发能跑、打包才暴露」清单上的一员。
+ */
+export function promptText(options: PromptOptions): Promise<string | null> {
+  return new Promise((resolve) => {
+    const modal = openModalCard({ className: 'sb-modal__card--prompt' })
+    const maxLength = options.maxLength ?? 200
+    modal.card.innerHTML = `
+      <div class="sb-modal__title"></div>
+      <div class="sb-field">
+        <label for="sb-prompt-input"></label>
+        <input class="sb-input" id="sb-prompt-input" type="text" />
+      </div>
+      <p class="sb-hint"></p>
+      <div class="sb-modal__actions">
+        <button class="sb-btn" type="button" data-role="cancel">取消</button>
+        <button class="sb-btn sb-btn--primary" type="button" data-role="confirm"></button>
+      </div>
+    `
+
+    const titleEl = modal.card.querySelector<HTMLElement>('.sb-modal__title')
+    const labelEl = modal.card.querySelector<HTMLLabelElement>('label')
+    const input = modal.card.querySelector<HTMLInputElement>('#sb-prompt-input')
+    const hintEl = modal.card.querySelector<HTMLElement>('.sb-hint')
+    const cancelBtn = modal.card.querySelector<HTMLButtonElement>('[data-role="cancel"]')
+    const confirmBtn = modal.card.querySelector<HTMLButtonElement>('[data-role="confirm"]')
+
+    if (titleEl) titleEl.textContent = options.title
+    if (labelEl) labelEl.textContent = options.label ?? ''
+    if (hintEl) {
+      if (options.hint) hintEl.textContent = options.hint
+      else hintEl.remove()
+    }
+    if (input) {
+      input.maxLength = maxLength
+      input.value = options.value ?? ''
+      if (options.placeholder) input.placeholder = options.placeholder
+    }
+    if (cancelBtn) cancelBtn.textContent = '取消'
+    if (confirmBtn) confirmBtn.textContent = options.confirmText ?? '确定'
+
+    let settled = false
+    const finish = (value: string | null): void => {
+      if (settled) return
+      settled = true
+      document.removeEventListener('keydown', onKeyDown, true)
+      modal.close()
+      resolve(value)
+    }
+
+    function onKeyDown(event: KeyboardEvent): void {
+      if (event.key !== 'Enter') return
+      event.preventDefault()
+      // 空输入按取消处理，别让调用方拿到一个空串还要自己判一遍
+      const value = input?.value.trim() ?? ''
+      finish(value.length > 0 ? value : null)
+    }
+
+    cancelBtn?.addEventListener('click', () => finish(null))
+    confirmBtn?.addEventListener('click', () => {
+      const value = input?.value.trim() ?? ''
+      finish(value.length > 0 ? value : null)
+    })
+    document.addEventListener('keydown', onKeyDown, true)
+
+    input?.focus()
+    // 改名场景：预选原文，用户直接打字就是替换
+    input?.select()
+  })
+}
+
 /* ------------------------------------------------------------------ 图片查看器 */
 
 export interface LightboxImage {

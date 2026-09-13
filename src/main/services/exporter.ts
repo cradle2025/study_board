@@ -11,6 +11,7 @@ import { context } from '../context'
 import { ensureDir, tempDir } from '../paths'
 import { renderDocx } from './exportDocx'
 import { renderExportHtml } from './exportHtml'
+import { readNoteImageDataUri } from './noteImagePath'
 import { safeNoteTitle } from './notes'
 
 /**
@@ -123,6 +124,25 @@ export async function exportNote(request: ExportNoteRequest): Promise<ExportNote
   const extension = EXPORT_EXTENSIONS[format]
   const markdown = doc.content
 
+  /**
+   * HTML 与 PDF 走同一条渲染路径，图片也要用同一种处理：**内联成 data: URI**。
+   *
+   * 不内联的话导出的是一份到处破图的文件——正文里写的是相对路径
+   * （那是为了 Obsidian 里也能用），而导出文件多半会被拷到别处。
+   *
+   * 缓存按 src 去重：同一张图在正文里引用多次时只读一次盘、只编一次 base64。
+   * 一份笔记里同一张图被引用五六次很常见（比如反复贴同一张表）。
+   */
+  const imageCache = new Map<string, string | null>()
+  const resolveImageSrc = (src: string): string | null => {
+    const key = src.trim()
+    const cached = imageCache.get(key)
+    if (cached !== undefined) return cached
+    const resolved = readNoteImageDataUri(key, store.dir)
+    imageCache.set(key, resolved)
+    return resolved
+  }
+
   let target = ''
   if (typeof request.targetPath === 'string' && request.targetPath.length > 0) {
     target = resolveTarget(request.targetPath, format)
@@ -144,15 +164,23 @@ export async function exportNote(request: ExportNoteRequest): Promise<ExportNote
       break
 
     case 'html':
-      writeFileSync(target, renderExportHtml(doc.title, markdownToHtml(markdown)), 'utf-8')
+      writeFileSync(
+        target,
+        renderExportHtml(doc.title, markdownToHtml(markdown, { resolveImageSrc })),
+        'utf-8'
+      )
       break
 
     case 'docx':
+      // DOCX 直接嵌字节，不经过 data: —— 由 exportDocx 自己按相对路径读盘
       writeFileSync(target, await renderDocx(doc.title, markdown, store.dir))
       break
 
     case 'pdf':
-      await renderPdf(renderExportHtml(doc.title, markdownToHtml(markdown)), target)
+      await renderPdf(
+        renderExportHtml(doc.title, markdownToHtml(markdown, { resolveImageSrc })),
+        target
+      )
       break
   }
 

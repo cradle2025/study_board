@@ -36,6 +36,7 @@ export type EditorCommand =
   | 'hr'
   /* 插入 */
   | 'link'
+  | 'image'
   | 'table'
   | 'tableRow'
   | 'tableCol'
@@ -62,6 +63,24 @@ export interface EditorHandle {
   setMarkdown(md: string): void
   /** 在光标处插入纯文本（选区被替换）。两种编辑器都要支持——「插入资料引用」走这里 */
   insertText(text: string): boolean
+  /**
+   * 插入一张图片。`src` 是**笔记库内的相对路径**（`attachments/x.png`）。
+   *
+   * 为什么要单开一个方法而不是让调用方 `insertText('![alt](src)')`：
+   * 富文本模式下那串语法会被当成**普通文字**插进去，用户看到的是一行
+   * `![...](...)` 而不是图。两个编辑器对「插入一张图」的内部表示本来就不同
+   * （Markdown 是一段语法，富文本是一个 image 节点），
+   * 把差异收在各自的实现里，调用方只需要说「插这张图」。
+   */
+  insertImage(src: string, alt: string): boolean
+  /**
+   * 跳到第 `index` 个标题（按文档顺序，跨级别统一计数，从 0 开始）。
+   *
+   * 用**序号**而不是文字来定位，是因为同名标题完全合法
+   * （一篇笔记里两个「小结」很正常），按文字找永远只会跳到第一个。
+   * 返回 false 表示这个序号超出了当前文档的标题数。
+   */
+  revealHeading(index: number): boolean
   focus(): void
   destroy(): void
   /** 执行命令；返回 false 表示这个编辑器不支持它 */
@@ -98,6 +117,12 @@ export const TOOLBAR: readonly ToolbarItem[] = [
   { command: 'underline', label: 'U', title: '下划线（Markdown 不支持，仅富文本）', group: 1, richOnly: true },
   { command: 'highlight', label: '▨', title: '高亮（Markdown 不支持，仅富文本）', group: 1, richOnly: true },
   { command: 'link', label: '🔗', title: '插入链接', group: 1 },
+  {
+    command: 'image',
+    label: '🖼',
+    title: '插入图片（从资料库选，或直接拖图片进编辑器）',
+    group: 1
+  },
 
   { command: 'h1', label: 'H1', title: '一级标题', group: 2 },
   { command: 'h2', label: 'H2', title: '二级标题', group: 2 },

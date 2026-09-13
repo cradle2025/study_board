@@ -49,8 +49,55 @@ md.renderer.rules['link_open'] = (tokens, idx, options, env, self) => {
 }
 
 /** Markdown → HTML 片段（不含 `<html>` 外壳） */
-export function markdownToHtml(source: string): string {
-  return md.render(source)
+export function markdownToHtml(source: string, options?: MarkdownRenderOptions): string {
+  const resolver = options?.resolveImageSrc
+  // 通过 markdown-it 的 env 把解析器递进去，而不是改 `md` 这个共享单例：
+  // 同一进程里渲染层要把它换成 sb-asset://，导出要把它换成 data:，
+  // 改单例会让「上一次调用留下的规则」影响下一次，而且看不出来。
+  // env 本来就是 markdown-it 为这类逐次调用数据准备的通道。
+  return md.render(source, resolver ? { resolveImageSrc: resolver } : {})
+}
+
+/**
+ * 图片地址改写器。返回改写后的地址；返回 null 表示保持原样。
+ *
+ * 存在的原因是**同一份 .md 在不同场景要用不同的地址**：
+ *  - 应用里显示：相对路径要变成 `sb-asset://notes/...`，否则渲染层是 file://
+ *    加载不到笔记库里的图；
+ *  - 导出 HTML / PDF：要内联成 `data:`，否则导出文件换个地方打开就全是破图。
+ *
+ * 注意这是**渲染期**的改写，磁盘上的 .md 始终写相对路径——
+ * 这样笔记库拿到 Obsidian 里打开，图片同样是通的。
+ */
+export type ImageSrcResolver = (src: string, alt: string) => string | null
+
+export interface MarkdownRenderOptions {
+  resolveImageSrc?: ImageSrcResolver
+}
+
+/**
+ * 默认的 image 规则之外，额外把地址交给改写器过一遍。
+ *
+ * 不用 `attrSet` 之后自己拼 HTML，而是改完属性继续走 markdown-it 原生的
+ * 渲染器——标题、alt 转义、`title` 属性这些细节原生的都处理好了，
+ * 自己拼字符串迟早会在某个带引号的 alt 上翻车。
+ */
+const defaultImageRule =
+  md.renderer.rules['image'] ??
+  ((tokens, idx, options, _env, self) => self.renderToken(tokens, idx, options))
+
+md.renderer.rules['image'] = (tokens, idx, options, env, self) => {
+  const token = tokens[idx]
+  const resolver = (env as { resolveImageSrc?: ImageSrcResolver } | null)?.resolveImageSrc
+  if (token && resolver) {
+    // attrGet 的类型在不同版本的 markdown-it 里是 `string | null` 或 `string | number | null`，
+    // 统一 String() 一下，别让类型差异影响行为
+    const src = String(token.attrGet('src') ?? '')
+    const alt = token.children?.map((child) => String(child.content)).join('') ?? ''
+    const resolved = resolver(src, alt)
+    if (resolved) token.attrSet('src', resolved)
+  }
+  return defaultImageRule(tokens, idx, options, env, self)
 }
 
 /**
