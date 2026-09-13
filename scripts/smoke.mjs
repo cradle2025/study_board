@@ -61,22 +61,34 @@ if (bench) {
 const TIMEOUT_MS = bench ? 150_000 : 90_000
 
 /**
- * 先构建一份**带测试代码**的 out/。
+ * 先构建一份 out/，再启动。
  *
- * 生产构建会把 smoke.ts / bench.ts 换成空实现（见 electron.vite.config.ts），
- * 而这里是 `spawn(electron, ['.'])`，读的正是 `out/`。
- * 不重新构建的话，测的就是那个空壳：所有场景都会「通过」，
- * 却一行断言都没跑——比失败更危险，因为它看起来是绿的。
+ * 这里是 `spawn(electron, ['.'])`，读的正是 `out/`，所以**必须先构建**——
+ * 否则测的是上一次留下的产物，源码改了也看不出来。
  *
- * 所以每次都显式重建，用 STUDY_BOARD_TEST_BUILD=1 告诉构建器「这次要带测试」。
- * 这也顺手保证了测的是**当前源码**，而不是上次留下的产物。
+ * 但两种模式要的产物不一样，这一点必须分清：
+ *
+ *   自检（smoke）要**带测试代码**的产物。
+ *     生产构建会把 smoke.ts 换成空实现（见 electron.vite.config.ts），
+ *     用一个空壳去跑自检，所有场景都会「通过」却一行断言都没跑——
+ *     比失败更危险，因为它看起来是绿的。
+ *
+ *   性能基准（bench）要**跟出厂一致**的产物。
+ *     基准数字是要拿来跟历史数据比、用来判断「这次改动有没有变慢」的。
+ *     拿一份掺了测试代码的构建去测，量出来的既不是用户装到的那个东西，
+ *     也不跟历史基线可比——数字全是假的。
+ *
+ * 所以：只有 smoke 才传 STUDY_BOARD_TEST_BUILD=1。
+ * 历史上这里漏了 `!bench` 这个判断，于是 bench 一直在量测试版构建，
+ * 产物是 321 KB 而真实产物 182 KB。别再把这两个模式混在一起了。
  */
-console.log(`[${label}] 构建测试版产物…`)
+const TEST_BUILD = !bench
+console.log(`[${label}] 构建${TEST_BUILD ? '测试版' : '生产版'}产物…`)
 const build = spawnSync('npm', ['run', 'build'], {
   cwd: root,
   stdio: 'inherit',
   shell: true,
-  env: { ...process.env, STUDY_BOARD_TEST_BUILD: '1' }
+  env: TEST_BUILD ? { ...process.env, STUDY_BOARD_TEST_BUILD: '1' } : { ...process.env }
 })
 if (build.status !== 0) {
   console.error(`[${label}] 构建失败，退出码 ${build.status}`)
@@ -84,17 +96,18 @@ if (build.status !== 0) {
 }
 
 /**
- * 构建完就地验一次「测试代码真的在产物里」。
+ * 构建完就地验一次「产物的形态和这次要跑的模式对得上」。
  *
- * 这一步看着冗余，其实是整套自动化的保险丝：
- * 上面那个开关一旦失效（比如构建器升级后插件不再被调用），
- * 产物会变回空壳，而**所有场景仍然会报通过**——因为替身的函数什么都不做，
- * 进程正常退出、退出码 0。没有这条校验，我们会拿着一堆假绿继续往前走。
+ * 这一步看着冗余，其实是整套自动化的保险丝：判据一旦失效，
+ * 我们会拿着一堆假绿继续往前走。
  *
  * 做法很土：直接在打包产物里搜一个只可能来自真身的字符串。
  * 用测试自身的入口文案，而不是 `smoke.ts` 里的某个变量名——
  * 变量名会被压缩器改名，字符串字面量不会。
  * 实测「自检」在测试构建里出现 22 次、生产构建里 0 次，是个干净的判据。
+ *
+ * 注意是**双向**校验：smoke 少了测试代码要拦（空通过），
+ * bench 混进了测试代码也要拦（量出来的数字不反映出厂形态）。
  */
 const MAIN_BUNDLE = resolve(root, 'out', 'main', 'index.js')
 const MARKER = '自检'
@@ -105,10 +118,16 @@ try {
   console.error(`[${label}] 找不到主进程产物：${MAIN_BUNDLE}`)
   process.exit(1)
 }
-if (!bundleSource.includes(MARKER)) {
+if (TEST_BUILD && !bundleSource.includes(MARKER)) {
   console.error(`[${label}] 产物里没有测试代码，拒绝跑一次「空通过」`)
   console.error('  这通常意味着 STUDY_BOARD_TEST_BUILD 没有生效，')
   console.error('  检查 electron.vite.config.ts 里的 stubTestsInProduction 插件。')
+  process.exit(1)
+}
+if (!TEST_BUILD && bundleSource.includes(MARKER)) {
+  console.error(`[${label}] 产物里混进了测试代码，拒绝拿它量性能`)
+  console.error('  基准必须跑在跟出厂一致的构建上，否则数字跟历史基线不可比。')
+  console.error('  检查 scripts/smoke.mjs 里的 TEST_BUILD 判断。')
   process.exit(1)
 }
 
