@@ -309,6 +309,28 @@ async function seedMaterials(): Promise<void> {
   writeFileSync(join(dir, 'week1.pptx'), pptx)
   writeFileSync(join(dir, '伪装.pdf'), '这不是一个 PDF，只是名字像。', 'utf-8')
 
+  /**
+   * 图片靶子。
+   *
+   * 真 PNG 用**项目自己的编码器**现造，而不是随手拼几个字节：
+   * 拼接出来的假 PNG 能过魔数闸，但 Chromium 解不开，
+   * 缩略图断言就会以一个「看起来像应用坏了」的方式失败。
+   * 这里要验的是「真图能显示」，靶子本身就必须是真图。
+   */
+  const size = 48
+  const rgba = Buffer.alloc(size * size * 4)
+  for (let i = 0; i < size * size; i += 1) {
+    rgba[i * 4] = (i * 7) % 256
+    rgba[i * 4 + 1] = 90
+    rgba[i * 4 + 2] = 200
+    rgba[i * 4 + 3] = 255
+  }
+  writeFileSync(join(dir, '板书.png'), encodePng(rgba, size, size))
+  // 伪装成 PNG 的文本：图片分支同样要过魔数闸，不能因为「是图片」就放水
+  writeFileSync(join(dir, '伪装.png'), '这不是一张 PNG，只是名字像。', 'utf-8')
+  // SVG 是**有意**排除的格式（文本无可靠魔数、且能内嵌脚本），这里固定住这个决定
+  writeFileSync(join(dir, '图标.svg'), '<svg xmlns="http://www.w3.org/2000/svg"></svg>', 'utf-8')
+
   // 收件箱的靶子：模拟「浏览器扩展改存进来的下载」
   const inbox = ensureDir(
     join(app.getPath('downloads'), 'StudyBoard收件箱')
@@ -318,10 +340,20 @@ async function seedMaterials(): Promise<void> {
 
 /**
  * 界面上要用的源文件路径。seed 写到固定目录，探针从这里拿。
+ *
+ * **顺序不能动**：探针按下标取用（`paths[0..2]` 是老的三个文档靶子）。
+ * 新加的图片靶子一律往后面追加。
  */
 function materialSourcePaths(): string[] {
   const dir = join(tempDir(context().settings.get().portableMode), 'material-src')
-  return [join(dir, '第3章极限.pdf'), join(dir, 'week1.pptx'), join(dir, '伪装.pdf')]
+  return [
+    join(dir, '第3章极限.pdf'),
+    join(dir, 'week1.pptx'),
+    join(dir, '伪装.pdf'),
+    join(dir, '板书.png'),
+    join(dir, '伪装.png'),
+    join(dir, '图标.svg')
+  ]
 }
 
 /**
@@ -355,12 +387,40 @@ function verifyMaterialsOnDisk(): boolean {
     return false
   }
 
+  /**
+   * 图片资料也要**真落到磁盘上**，而且要是真 PNG。
+   *
+   * 光看界面看不出来：索引里登记了、但文件没复制进来的话，
+   * 列表行照常渲染，只有缩略图会 404——而缩略图那块地方空着
+   * 很容易被当成「图片本来就这样」。
+   */
+  const pngName = files.find((name) => name.toLowerCase().endsWith('.png'))
+  if (!pngName) {
+    console.error('[smoke] 图片资料没落到磁盘上：', files.join(' / ') || '（空）')
+    return false
+  }
+  try {
+    const head = readFileSync(join(dir, pngName)).subarray(0, 8)
+    const PNG_MAGIC = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])
+    if (!head.equals(PNG_MAGIC)) {
+      console.error('[smoke] 落盘的图片不是合法 PNG')
+      return false
+    }
+  } catch (error) {
+    console.error('[smoke] 读不了落盘的图片：', error)
+    return false
+  }
+
   try {
     const raw = JSON.parse(readFileSync(join(dir, '.materials.json'), 'utf-8')) as {
       items?: { fileName?: string }[]
     }
     const names = (raw.items ?? []).map((item) => item.fileName ?? '')
-    if (!names.includes(mustHave) || !names.includes('高等数学 A_教学大纲.pdf')) {
+    if (
+      !names.includes(mustHave) ||
+      !names.includes('高等数学 A_教学大纲.pdf') ||
+      !names.includes(pngName)
+    ) {
       console.error('[smoke] 索引与磁盘对不上：', JSON.stringify(names))
       return false
     }
@@ -414,6 +474,9 @@ function seedPortal(): void {
 const EXPORT_MARKER = '导出标记 MK-7f3a'
 const EXPORT_NOTE_TITLE = '导出自检'
 
+/** 导出自检笔记里引用的那张图。放在 attachments/ 下，正文用相对路径引用 */
+const EXPORT_IMAGE_FILE = 'export-probe.png'
+
 /**
  * 导出测试数据。
  *
@@ -424,6 +487,25 @@ const EXPORT_NOTE_TITLE = '导出自检'
  */
 function seedExport(): void {
   const { notes } = context()
+
+  /**
+   * 正文里要引用的那张图，得**真的写到 attachments/ 下**。
+   *
+   * 用项目自己的编码器造一张真 PNG：导出内联的判据是「HTML 里出现了
+   * data:image/png;base64,...」，随便拼几个字节过不了 nativeImage 那一关，
+   * 结果会是「图片没内联」——看起来像导出坏了，其实是靶子不是图。
+   */
+  const attachments = ensureDir(join(notes.dir, 'attachments'))
+  const size = 32
+  const rgba = Buffer.alloc(size * size * 4)
+  for (let i = 0; i < size * size; i += 1) {
+    rgba[i * 4] = 210
+    rgba[i * 4 + 1] = (i * 5) % 256
+    rgba[i * 4 + 2] = 80
+    rgba[i * 4 + 3] = 255
+  }
+  writeFileSync(join(attachments, EXPORT_IMAGE_FILE), encodePng(rgba, size, size))
+
   notes.create(
     EXPORT_NOTE_TITLE,
     [
@@ -432,6 +514,13 @@ function seedExport(): void {
       `正文段落，带 **加粗**、*斜体* 和 \`行内代码\`，还有 ${EXPORT_MARKER}。`,
       '',
       '## 二级标题',
+      '',
+      // 图片：导出 HTML / PDF 时必须内联成 data:，否则产物离开笔记库就全是破图
+      `![板书照片](attachments/${EXPORT_IMAGE_FILE})`,
+      '',
+      // 越界路径：**不能**被内联。它指向笔记库外面，
+      // 真读进来就等于「用一条 Markdown 把任意文件塞进导出产物」
+      '![越界](../../../Windows/win.ini)',
       '',
       '- 列表项一',
       '- 列表项二',
@@ -717,6 +806,105 @@ const NOTES_PROBE = `(async () => {
   const backHead = backText.slice(0, 160)
   const afterHrHead = textAfterHr.slice(0, 160)
 
+  /* ---------------------------------------------------------- 分组（树） */
+  /**
+   * 这一段放在最后，因为它会**切换路由**（切走再回来逼列表重取）。
+   * 插在中间会把前面那些依赖「编辑器当前状态」的断言全部打乱。
+   */
+  const out = {}
+  const notesApi = window.studyBoard.notes
+
+  const g1 = await notesApi.createGroup({ name: '高等数学' })
+  const root = g1.ok ? g1.data.find((g) => g.name === '高等数学') : null
+  out.groupCreateOk = Boolean(root)
+  if (!root) return JSON.stringify({ ...out, error: '建组失败' })
+
+  const g2 = await notesApi.createGroup({ name: '第一章', parentId: root.id })
+  const child = g2.ok ? g2.data.find((g) => g.name === '第一章') : null
+  out.subGroupOk = Boolean(child && child.parentId === root.id)
+  if (!child) return JSON.stringify({ ...out, error: '建子分组失败' })
+
+  // 防环：把父组挪进它自己的子组里，必须被拒。
+  // 放过去的话，从根往下遍历时就再也走不到这一段，整棵子树会从侧栏消失
+  const cycle = await notesApi.moveGroup({ id: root.id, parentId: child.id })
+  out.cycleRejected = cycle.ok === false
+
+  // 深度上限：第 4 层建得出来，第 5 层必须被拒
+  const g3 = await notesApi.createGroup({ name: '第一节', parentId: child.id })
+  const grand = g3.ok ? g3.data.find((g) => g.name === '第一节') : null
+  const g4 = grand
+    ? await notesApi.createGroup({ name: '知识点', parentId: grand.id })
+    : { ok: false }
+  out.depth4Ok = g4.ok === true
+  const great = g4.ok ? g4.data.find((g) => g.name === '知识点') : null
+  const g5 = great
+    ? await notesApi.createGroup({ name: '再深一层', parentId: great.id })
+    : { ok: false }
+  out.depthLimitRejected = g5.ok === false
+
+  // 空名必须被拒：一个没有名字的分组，用户没法在界面上指着它说话
+  const emptyName = await notesApi.createGroup({ name: '   ' })
+  out.emptyNameRejected = emptyName.ok === false
+
+  // 把一篇笔记放进子分组
+  const beforeMove = await notesApi.list()
+  const someNote = beforeMove.ok ? beforeMove.data[0] : null
+  const moved = someNote
+    ? await notesApi.setGroup({ id: someNote.id, groupId: child.id })
+    : { ok: false }
+  out.setGroupOk =
+    moved.ok === true &&
+    Array.isArray(moved.data) &&
+    moved.data.some((n) => n.id === someNote.id && n.groupId === child.id)
+
+  // 界面要真把树画出来。切走再回来逼它重新取数据
+  document.querySelector('[data-route="home"]').click()
+  await wait(250)
+  document.querySelector('[data-route="notes"]').click()
+  const treeShown = await waitFor('.sb-notes__group[data-group]')
+  out.treeRendered = Boolean(treeShown)
+  out.treeGroupCount = document.querySelectorAll('.sb-notes__group[data-group]').length
+
+  // 折叠：点根节点的箭头，子树应当收起来（组数从 4 掉到 1）
+  const rootRow = document.querySelector('.sb-notes__group[data-group]')
+  const twisty = rootRow ? rootRow.querySelector('[data-group-act="toggle"]') : null
+  const beforeCollapse = document.querySelectorAll('.sb-notes__group[data-group]').length
+  if (twisty) twisty.click()
+  await wait(200)
+  const afterCollapse = document.querySelectorAll('.sb-notes__group[data-group]').length
+  out.collapseOk = afterCollapse < beforeCollapse
+  // 再展开，顺便验一下来回都能用
+  const twistyAgain = document.querySelector('.sb-notes__group[data-group] [data-group-act="toggle"]')
+  if (twistyAgain) twistyAgain.click()
+  await wait(200)
+  out.expandOk =
+    document.querySelectorAll('.sb-notes__group[data-group]').length === beforeCollapse
+
+  /* -------------------------------------------------- 删分组不删笔记 */
+  /**
+   * 这是整块里最要紧的一条：删掉一个分组，**里面的笔记必须还在**。
+   * 用户说「删掉这个分组」的意思是「这个筐我不要了」，
+   * 不是「把筐里的东西一起扔了」。真删掉笔记是不可逆的。
+   */
+  const removed = await notesApi.removeGroup(child.id)
+  out.removeGroupOk = removed.ok === true
+  const afterRemove = await notesApi.list()
+  const survivor = afterRemove.ok ? afterRemove.data.find((n) => n.id === someNote.id) : null
+  out.noteSurvived = Boolean(survivor)
+  // 并且要**升到被删分组的父级**，而不是变成未分组——
+  // 前者保留了「它属于高等数学」这个信息，后者等于把归属抹掉了
+  out.noteReparented = Boolean(survivor && survivor.groupId === root.id)
+
+  // 被删分组的**子分组**要升一级，同样不能被删掉。
+  // 注意找的是「第一节」而不是「第一章」——「第一章」正是被删掉的那个，
+  // 它必须消失；留下来的应该是它的孩子，且挂在祖父下面
+  const afterGroups = await notesApi.groups()
+  const promoted = afterGroups.ok ? afterGroups.data.find((g) => g.name === '第一节') : null
+  out.childPromoted = Boolean(promoted && promoted.parentId === root.id)
+  out.removedGone = afterGroups.ok
+    ? !afterGroups.data.some((g) => g.name === '第一章')
+    : false
+
   return JSON.stringify({
     initialOk, hrOk, h1Kept, appended, underlineDisabled, convertOk,
     afterHrHead, backHead,
@@ -726,7 +914,13 @@ const NOTES_PROBE = `(async () => {
     toolbarOk: underlineDisabled && underlineEnabled,
     convertCheck: convertOk,
     tableOk: Boolean(tableMade) && savedAfterTable,
-    roundTrip: backToCm && roundTripOk
+    roundTrip: backToCm && roundTripOk,
+    ...out,
+    groupsOk: out.groupCreateOk && out.subGroupOk && out.cycleRejected && out.depth4Ok &&
+      out.depthLimitRejected && out.emptyNameRejected && out.setGroupOk &&
+      out.treeRendered && out.collapseOk && out.expandOk &&
+      out.removeGroupOk && out.noteSurvived && out.noteReparented &&
+      out.childPromoted && out.removedGone
   })
 })()`
 
@@ -1435,7 +1629,9 @@ export function runSmokeTestIfRequested(win: BrowserWindow): void {
                         parsed['toolbarOk'] &&
                         parsed['convertCheck'] &&
                         parsed['tableOk'] &&
-                        parsed['roundTrip']
+                        parsed['roundTrip'] &&
+                        // 分组：建树、防环、深度上限、删组不删笔记
+                        parsed['groupsOk']
                     )
                   : scenario === 'cards'
                   ? Boolean(
@@ -2044,6 +2240,28 @@ function verifyExportOutputs(raw: unknown): boolean {
       ) {
         console.error('[smoke] html 产物内容不对')
         ok = false
+      } else {
+        /**
+         * 图片必须是**内联**的 data: URI。
+         *
+         * 只检查「有 <img>」是不够的：正文里写的是相对路径
+         * （为了 Obsidian 里也能用），照搬进导出产物的话，
+         * 那份 HTML 一旦被拷到别处就全是破图——而 `<img>` 标签照样在。
+         * 唯一可靠的判据是 src 变成了 data:。
+         *
+         * 同时数一下**内联了几张**：正好 1 张。第二张引用的是
+         * `../../../Windows/win.ini`，它指向笔记库外面，**绝不能**被内联——
+         * 内联成功就意味着「一条 Markdown 能读出任意文件」。
+         */
+        const inlined = (text.match(/src="data:image\/png;base64,/g) ?? []).length
+        if (inlined !== 1) {
+          console.error(`[smoke] html 里的图片内联数量不对：${inlined}（期望正好 1）`)
+          ok = false
+        }
+        if (text.includes('win.ini') && text.includes('data:application')) {
+          console.error('[smoke] html 把越界路径也内联进来了')
+          ok = false
+        }
       }
     } else if (format === 'docx') {
       const xml = readZipEntry(buffer, 'word/document.xml') ?? ''
@@ -2056,12 +2274,21 @@ function verifyExportOutputs(raw: unknown): boolean {
       } else if (!xml.includes('w:tbl')) {
         console.error('[smoke] docx 里没有表格')
         ok = false
+      } else if (!xml.includes('drawing')) {
+        // 图片在 docx 里是一个 <w:drawing> 块。少了它说明图片整段被跳过了
+        console.error('[smoke] docx 里没有图片')
+        ok = false
       }
     } else {
       const head = buffer.subarray(0, 5).toString('latin1')
       const tail = buffer.subarray(Math.max(0, buffer.length - 64)).toString('latin1')
       if (head !== '%PDF-' || !tail.includes('%%EOF')) {
         console.error('[smoke] pdf 产物不是一份完整的 PDF')
+        ok = false
+      } else if (!buffer.includes('/Image')) {
+        // PDF 里的图片是一个 /Subtype /Image 的 XObject。
+        // 这一条同时说明「隐藏窗口真的把 data: 图片解出来并画进纸里了」
+        console.error('[smoke] pdf 里没有图片')
         ok = false
       }
     }
@@ -3254,10 +3481,71 @@ const MATERIALS_PROBE_SRC = (paths: string[]) => `(async () => {
       finalList.data.some((m) => m.fileName === '高等数学 A_教学大纲.pdf')
   }
 
+  /* ---- 7. 图片资料：真图能进、能出缩略图；伪装的与不支持的格式要被拒 */
+  /**
+   * 这一段刻意放在**最后**。
+   *
+   * 前面几步都在数数量（角标显示 2 份、删掉一份后剩 1 份、收件箱导入后 2 份），
+   * 中间插一个导入会把那些数字全打乱，改起来等于把老断言重写一遍——
+   * 而它们验的是别的东西，不该被这一轮牵连。
+   */
+  const pngImport = await window.studyBoard.materials.import({
+    paths: [${JSON.stringify(paths[3])}],
+    courseCardId: cardId,
+    title: '板书'
+  })
+  out.imageImported = pngImport.ok && pngImport.data.added === 1
+  const pngItem = pngImport.ok ? pngImport.data.materials.find((m) => m.ext === 'png') : null
+  out.imageItemOk = Boolean(pngItem && pngItem.fileName.endsWith('.png'))
+  // 入库文件名要带课程前缀，图片与文档同一套规矩
+  out.imagePrefixOk = Boolean(pngItem && pngItem.fileName.startsWith('高等数学 A_'))
+
+  // 界面只在它自己的操作之后才自动刷新，直接走 IPC 导入不会触发重画，
+  // 所以绕一圈首页再回来，逼它重新取一次数据
+  document.querySelector('[data-route="home"]').click()
+  await waitFor('[data-route="materials"]')
+  document.querySelector('[data-route="materials"]').click()
+  await waitFor('[data-role="materials"]')
+
+  /**
+   * 缩略图必须**真的解码出来**。
+   *
+   * 判据只能是 naturalWidth > 0：src 写对了但被 CSP 挡住、或者协议没注册、
+   * 或者路径拼错，元素都照样在 DOM 里，只是永远空白。
+   * 这条断言同时盖住了「索引 → sb-asset 协议 → CSP → img 解码」整条链路。
+   */
+  out.imageThumbOk = await new Promise((resolve) => {
+    const deadline = Date.now() + 6000
+    const tick = () => {
+      const img = document.querySelector('.sb-material__thumb img')
+      if (img && img.complete && img.naturalWidth > 0) return resolve(true)
+      if (Date.now() > deadline) return resolve(false)
+      setTimeout(tick, 60)
+    }
+    tick()
+  })
+
+  // 伪装成 PNG 的文本：魔数闸必须拦下，不能因为「是图片」就放水
+  const fakePng = await window.studyBoard.materials.import({
+    paths: [${JSON.stringify(paths[4])}],
+    courseCardId: cardId
+  })
+  out.fakeImageRejected = fakePng.ok && fakePng.data.added === 0 &&
+    fakePng.data.errors.length === 1 && fakePng.data.errors[0].indexOf('不符') >= 0
+
+  // SVG 是有意排除的格式，这里把这个决定固定住
+  const svgImport = await window.studyBoard.materials.import({
+    paths: [${JSON.stringify(paths[5])}],
+    courseCardId: cardId
+  })
+  out.svgRejected = svgImport.ok && svgImport.data.added === 0 && svgImport.data.errors.length === 1
+
   return JSON.stringify({
     ...out,
     ok: out.importOk && out.prefixOk && out.fakeRejected && out.renameOk &&
-      out.badgeOk && out.removeOk && out.inboxOk
+      out.badgeOk && out.removeOk && out.inboxOk &&
+      out.imageImported && out.imageItemOk && out.imagePrefixOk && out.imageThumbOk &&
+      out.fakeImageRejected && out.svgRejected
   })
 })()`
 
