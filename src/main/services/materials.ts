@@ -3,6 +3,7 @@ import { basename, extname, join } from 'node:path'
 import { shell } from 'electron'
 
 import {
+  CONVERT_ON_IMPORT,
   MATERIAL_HEAD_BYTES,
   MATERIAL_MAGIC,
   isMaterialExtension,
@@ -18,14 +19,18 @@ import {
 import type { MaterialImportInput, MaterialImportResult, MaterialItem } from '@shared/types'
 
 import { ensureDir, newId, safeJoin } from '../paths'
+import { normalizeImage } from './imageImport'
 import { safeNoteTitle } from './notes'
 
 /**
- * 课程资料存储：PDF / PPT / Word / Excel 的「附件库」。
+ * 课程资料存储：PDF / PPT / Word / Excel / 图片的「附件库」。
  *
  * 位置在**笔记库内**（attachments/），与课表图片、站点图标的「数据目录」不同——
- * 资料要跟笔记待在一起：Obsidian 原生能预览库里的 PDF，笔记里可以用
- * `![[文件名]]` 嵌入，备份/同步也只管一个文件夹。
+ * 资料要跟笔记待在一起：Obsidian 原生能预览库里的 PDF 和图片，笔记里可以用
+ * `![[文件名]]` 或 `![](attachments/文件名)` 嵌入，备份/同步也只管一个文件夹。
+ *
+ * 图片与文档走同一套闸口（数量 → 扩展名 → 大小 → 魔数），唯一的差别是
+ * HEIC/HEIF 会在导入时转成 JPEG（见 `CONVERT_ON_IMPORT`）。
  *
  * 与课表 / 门户同一套规矩：单个 JSON 索引、原子写入、坏了就备份重建。
  * **磁盘上的文件是本体**，索引只是簿记；对账只把「索引有、磁盘没了」标记成
@@ -61,11 +66,25 @@ function readHead(file: string, bytes: number): Buffer {
   }
 }
 
+/**
+ * 魔数校验。**外层取或，内层取且**（结构说明见 `MATERIAL_MAGIC` 的注释）。
+ *
+ * 每个条件都要单独判长度：文件比魔数短的时候，`subarray` 会安静地返回一段
+ * 更短的 buffer，`equals` 于是返回 false——结果对，但理由不对
+ * （「太短」和「不匹配」是两回事，而这里只关心结论，所以不额外区分）。
+ */
 function matchesMagic(head: Buffer, ext: MaterialExtension): boolean {
-  return MATERIAL_MAGIC[ext].some((magic) => {
-    const prefix = Buffer.from(magic, 'binary')
-    return head.length >= prefix.length && head.subarray(0, prefix.length).equals(prefix)
-  })
+  return MATERIAL_MAGIC[ext].some((signature) =>
+    signature.every((check) =>
+      check.oneOf.some((candidate) => {
+        const bytes = Buffer.from(candidate, 'binary')
+        return (
+          head.length >= check.offset + bytes.length &&
+          head.subarray(check.offset, check.offset + bytes.length).equals(bytes)
+        )
+      })
+    )
+  )
 }
 
 /**
@@ -235,7 +254,7 @@ export class MaterialsStore {
         const sourceName = basename(source)
         const extRaw = extname(sourceName).slice(1).toLowerCase()
         if (!isMaterialExtension(extRaw)) throw new Error(materialRejectReason(sourceName))
-        const ext = extRaw as MaterialExtension
+        let ext: MaterialExtension = extRaw
 
         const stat = statSync(source)
         if (!stat.isFile()) throw new Error('不是普通文件')
@@ -245,13 +264,34 @@ export class MaterialsStore {
         if (stat.size === 0) throw new Error('空文件')
 
         // 魔数校验：扩展名是「自称」，文件头才是「出身」
+        // 必须**在转码之前**做——转出来的是我们自己生成的字节，
+        // 拿它去验魔数等于自己给自己发合格证，一点意义都没有
         const head = readHead(source, MATERIAL_HEAD_BYTES)
-        if (!matchesMagic(head, ext)) {
+        if (!matchesMagic(head, extRaw)) {
           throw new Error('文件内容与扩展名不符（可能是伪装或损坏的文件）')
         }
 
         if (this.#content.items.length >= MAX_MATERIALS) {
           throw new Error(`资料最多 ${MAX_MATERIALS} 份`)
+        }
+
+        /**
+         * HEIC / HEIF 在这里转成 JPEG。
+         *
+         * 转码放在导入阶段而不是显示阶段，是因为「库里的文件」和「用户看到的缩略图」
+         * 应该是同一个东西：显示时转意味着每次渲染都要解一遍，而解码器有两兆。
+         * 一次转完，之后它就是一个普通的 JPEG 资料。
+         */
+        let converted: { data: Buffer; ext: string } | null = null
+        if (CONVERT_ON_IMPORT.has(extRaw)) {
+          try {
+            const normalized = await normalizeImage(readFileSync(source), sourceName)
+            converted = { data: normalized.data, ext: normalized.ext }
+            ext = normalized.ext as MaterialExtension
+          } catch (error) {
+            const reason = error instanceof Error ? error.message : String(error)
+            throw new Error(`图片转码失败：${reason}`)
+          }
         }
 
         const { base, title } = buildFileBase(
@@ -264,7 +304,8 @@ export class MaterialsStore {
         // 先写临时名再改名：半截复制的文件不会顶着正式名字留在库里
         const target = safeJoin(this.#dir, fileName)
         const tmp = `${target}.importing`
-        copyFileSync(source, tmp)
+        if (converted) writeFileSync(tmp, converted.data)
+        else copyFileSync(source, tmp)
         renameSync(tmp, target)
 
         const now = new Date().toISOString()

@@ -1521,6 +1521,38 @@ h4 {
   text-align: center;
 }
 
+/* 图片资料的缩略图。尺寸与 .sb-material__kind 保持一致（44px 高），
+   这样混排文档与图片时每一行的高度是一样的，列表不会一高一低 */
+.sb-material__thumb {
+  flex: 0 0 auto;
+  width: 44px;
+  height: 44px;
+  padding: 0;
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-sm);
+  background: var(--bg-subtle);
+  overflow: hidden;
+  cursor: zoom-in;
+}
+
+.sb-material__thumb:hover {
+  border-color: var(--border-strong);
+}
+
+/* 只给宽高约束，不写 object-fit 之外的裁剪逻辑：
+   object-fit: cover 让不同比例的图都填满格子而不变形 */
+.sb-material__thumb img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+/* 文件丢失时缩略图不渲染，占位格跟着收掉，别留一个空框 */
+.sb-material--lost .sb-material__thumb {
+  display: none;
+}
+
 .sb-material__main {
   flex: 1 1 auto;
   min-width: 0;
@@ -1752,6 +1784,102 @@ h4 {
   color: var(--text-tertiary);
 }
 
+/* 笔记行里的「移动到分组」也走同一套悬停显示规则 */
+.sb-notes__item:hover .sb-notes__row-actions,
+.sb-notes__item:focus-within .sb-notes__row-actions {
+  display: inline-flex;
+}
+
+/* 行是 <div role="button">，浏览器不会给默认焦点圈，得自己画一个 */
+.sb-notes__item:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: -2px;
+}
+
+/* ------------------------------------------------------------ 侧栏分组树 */
+
+.sb-notes__listbar {
+  display: flex;
+  gap: 6px;
+  padding-bottom: 7px;
+  margin-bottom: 5px;
+  border-bottom: 1px solid var(--border-default);
+}
+
+.sb-notes__tree {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.sb-notes__group-row {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  padding: 4px 5px;
+  border-radius: var(--radius-sm);
+}
+
+.sb-notes__group-row:hover {
+  background: var(--bg-hover);
+}
+
+.sb-notes__twisty {
+  flex: 0 0 auto;
+  width: 17px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--text-tertiary);
+  font-size: 11px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+/* 「未分组」那一行没有折叠能力，用一个静态符号占住同样的宽度，
+   否则它的名字会比别的分组往左多出一个箭头的距离，看着像另一个层级 */
+.sb-notes__twisty--static {
+  text-align: center;
+  cursor: default;
+}
+
+.sb-notes__group-name {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.sb-notes__group-count {
+  flex: 0 0 auto;
+  font-size: 11px;
+  color: var(--text-tertiary);
+}
+
+/* 行内动作平时藏起来，悬停或键盘聚焦到这一行时才出现。
+   常驻的话每行都是四五个图标，整棵树会吵得没法看 */
+.sb-notes__row-actions {
+  display: none;
+  gap: 1px;
+}
+
+.sb-notes__group-row:hover .sb-notes__row-actions,
+.sb-notes__group-row:focus-within .sb-notes__row-actions {
+  display: inline-flex;
+}
+
+/* 缩进只在这一层加：子分组和笔记共享同一套缩进量，
+   层级越深缩进越多，一眼能看出谁在谁里面 */
+.sb-notes__group-body {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  padding-left: 14px;
+}
+
 .sb-notes__editor {
   min-width: 0;
 }
@@ -1890,6 +2018,94 @@ h4 {
 
 /* ---------------------------------------------------- Markdown 编辑器 */
 
+/* 编辑区 + 大纲并排。stage 撑满剩余宽度，大纲固定宽度——
+   大纲是「导航」不是「内容」，不该跟着窗口变宽 */
+.sb-notes__main {
+  display: flex;
+  align-items: stretch;
+  gap: 10px;
+}
+
+.sb-notes__main > .sb-notes__stage {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.sb-notes__outline {
+  flex: 0 0 172px;
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-md);
+  background: var(--bg-surface);
+  overflow: hidden;
+}
+
+.sb-notes__outline-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  padding: 5px 6px 5px 10px;
+  border-bottom: 1px solid var(--border-default);
+  font-size: 12px;
+  color: var(--text-tertiary);
+}
+
+.sb-notes__outline-body {
+  flex: 1 1 auto;
+  overflow: auto;
+  padding: 5px;
+}
+
+.sb-notes__outline-item {
+  display: flex;
+  align-items: center;
+  gap: 1px;
+  border-radius: var(--radius-sm);
+}
+
+.sb-notes__outline-item:hover {
+  background: var(--bg-hover);
+}
+
+.sb-notes__outline-twisty {
+  flex: 0 0 auto;
+  width: 14px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--text-tertiary);
+  font-size: 10px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+/* 叶子节点也占一个箭头的位置，标题文字才会对齐成一条竖线 */
+.sb-notes__outline-twisty--leaf {
+  cursor: default;
+}
+
+.sb-notes__outline-label {
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: 4px 2px;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font-size: 12.5px;
+  text-align: left;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.sb-notes__outline-label:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: -2px;
+}
+
 .sb-md {
   height: 100%;
 }
@@ -1960,6 +2176,29 @@ h4 {
 
 .sb-rt__body > * + * {
   margin-top: 0.7em;
+}
+
+/* 两个编辑器里的插图共用同一套尺寸约束。
+   max-width: 100% 是必须的：课表照片动辄两三千像素宽，
+   不约束就会把编辑区撑出横向滚动条。height: auto 与 width 配对，
+   否则 HTML 的 height 属性会当成长度提示生效、把图拉变形。 */
+.sb-md__image,
+.sb-rt__body img {
+  display: inline-block;
+  max-width: 100%;
+  vertical-align: middle;
+}
+
+.sb-md__image img,
+.sb-rt__body img {
+  max-width: 100%;
+  height: auto;
+  border-radius: var(--radius-sm);
+}
+
+/* 单独成段的图片给一点上下留白，免得贴着上一行文字 */
+.sb-rt__body p > img:only-child {
+  margin: 0.35em 0;
 }
 
 .sb-rt__body h1,
@@ -2153,6 +2392,11 @@ h4 {
 /* 表单型模态框比确认框宽一点，放得下网址输入框 */
 .sb-modal__card--form {
   width: 440px;
+}
+
+/* 单行输入（分组名、链接地址）：比表单框窄，因为它只有一个字段 */
+.sb-modal__card--prompt {
+  width: 380px;
 }
 
 /* ---------------------------------------------------------------- 冲突问询 */

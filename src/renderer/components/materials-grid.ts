@@ -1,7 +1,9 @@
-import { MATERIAL_KIND_LABEL } from '@shared/materials'
+import { MATERIAL_KIND_LABEL, isImageExtension } from '@shared/materials'
 import type { MaterialItem } from '@shared/types'
 
+import { materialAssetUrl } from '../lib/asset'
 import { escapeHtml } from '../lib/html'
+import { openLightbox } from '../lib/overlay'
 
 /**
  * 课程资料网格：按课程分组展示，新的导入排前面。
@@ -35,12 +37,36 @@ function formatBytes(bytes: number): string {
 
 const UNKNOWN_COURSE = '未归类'
 
+/**
+ * 左侧那格：图片给缩略图，其它给扩展名徽标。
+ *
+ * 缩略图走的是 `sb-asset:` 协议（`notes` 桶 + `attachments/` 前缀），
+ * 和课表照片是同一条链路。`loading="lazy"` 不是可选项——
+ * 一屏几十份资料，全部立刻解码会把首帧拖住。
+ *
+ * 文件丢失（missing）时**不**给缩略图：那个地址必然 404，
+ * 浏览器只会在控制台刷一片红，而用户看到的是一片破图，
+ * 反倒不如直接显示扩展名徽标 + 那行「文件丢失」的文字。
+ */
+function thumbHtml(item: MaterialItem): string {
+  const ext = item.ext.toUpperCase()
+  if (!isImageExtension(item.ext) || item.missing) {
+    return `<span class="sb-material__kind" title="${escapeHtml(MATERIAL_KIND_LABEL[item.ext])}">${escapeHtml(ext)}</span>`
+  }
+  return `
+    <button class="sb-material__thumb" type="button" data-act="preview"
+            title="点开看大图" aria-label="预览 ${escapeHtml(item.title)}">
+      <img src="${escapeHtml(materialAssetUrl(item.fileName))}" alt="" loading="lazy" decoding="async" />
+    </button>
+  `
+}
+
 function rowHtml(item: MaterialItem): string {
   const lost = item.missing
   const kind = MATERIAL_KIND_LABEL[item.ext]
   return `
     <div class="sb-material${lost ? ' sb-material--lost' : ''}" data-id="${escapeHtml(item.id)}">
-      <span class="sb-material__kind" title="${escapeHtml(kind)}">${escapeHtml(item.ext.toUpperCase())}</span>
+      ${thumbHtml(item)}
       <span class="sb-material__main">
         <span class="sb-material__title" title="${escapeHtml(item.title)}">${escapeHtml(item.title)}</span>
         <span class="sb-material__meta">
@@ -68,7 +94,7 @@ export function createMaterialsGrid(options: MaterialGridOptions): MaterialGridH
 
   const empty = document.createElement('p')
   empty.className = 'sb-empty'
-  empty.textContent = '还没有课程资料。把下载好的 PDF / PPT 直接拖进窗口，或点「导入资料」。'
+  empty.textContent = '还没有课程资料。把下载好的 PDF / PPT / 图片直接拖进窗口，或点「导入资料」。'
   empty.hidden = true
   element.appendChild(empty)
 
@@ -128,6 +154,28 @@ export function createMaterialsGrid(options: MaterialGridOptions): MaterialGridH
     else if (act === 'rename') options.onRename?.(item)
     else if (act === 'remove') options.onRemove?.(item)
     else if (act === 'setcard') options.onSetCard?.(item)
+    else if (act === 'preview') {
+      // 只把**同一门课**的图片串成一组：左右翻的时候跨课程跳来跳去很奇怪，
+      // 用户心里的「下一张」是「这门课的下一个课件」，不是「资料库里的下一张」
+      const course = options.courseNameOf(item.courseCardId) || UNKNOWN_COURSE
+      const siblings = items.filter(
+        (entry) =>
+          !entry.missing &&
+          isImageExtension(entry.ext) &&
+          (options.courseNameOf(entry.courseCardId) || UNKNOWN_COURSE) === course
+      )
+      const start = Math.max(
+        0,
+        siblings.findIndex((entry) => entry.id === item.id)
+      )
+      openLightbox(
+        siblings.map((entry) => ({
+          src: materialAssetUrl(entry.fileName),
+          caption: entry.title
+        })),
+        start
+      )
+    }
   }
 
   body.addEventListener('click', onClick)

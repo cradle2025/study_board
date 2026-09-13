@@ -22,7 +22,7 @@ export function createMaterialsView(ctx: ViewContext): ViewInstance {
     <div class="sb-view__head">
       <div>
         <h1 class="sb-view__title">课程资料</h1>
-        <p class="sb-view__desc">课件、大纲、实验指导都收在这里，按课程分组。把文件拖进窗口就能导入。</p>
+        <p class="sb-view__desc">课件、大纲、实验指导、拍的板书照片都收在这里，按课程分组。把文件拖进窗口就能导入。</p>
       </div>
       <div class="sb-toolbar">
         <button class="sb-btn" type="button" data-action="scan">扫描未登记</button>
@@ -38,7 +38,7 @@ export function createMaterialsView(ctx: ViewContext): ViewInstance {
       <div data-role="materials"></div>
       <button class="sb-filternote" type="button" data-role="filter-note" hidden></button>
       <p class="sb-hint">
-        资料存在笔记库的 attachments/ 目录里，Obsidian 能直接预览其中的 PDF；
+        资料存在笔记库的 attachments/ 目录里，Obsidian 能直接预览其中的 PDF 和图片；
         删除只是移入系统回收站。显示「文件丢失」的条目多半是被挪走了，找回来后这里会自动恢复。
       </p>
     </section>

@@ -1,4 +1,4 @@
-import { MATERIAL_KIND_LABEL, isMaterialExtension } from '@shared/materials'
+import { MATERIAL_KIND_LABEL, isImageExtension, isMaterialExtension } from '@shared/materials'
 import type { MaterialInboxCandidate, MaterialItem } from '@shared/types'
 
 import { escapeHtml } from '../lib/html'
@@ -214,13 +214,24 @@ export function openMaterialCourseDialog(
 /** 资料选择对话框（笔记里插引用用）。取消返回 null */
 export function openMaterialPickDialog(
   items: readonly MaterialItem[],
-  preselectCardId: string
+  preselectCardId: string,
+  options: { imagesOnly?: boolean } = {}
 ): Promise<MaterialItem | null> {
   return new Promise((resolve) => {
+    // 只挑图片时先把非图片滤掉。留在列表里再灰掉会更「完整」，
+    // 但用户的意图已经很明确了（点的是「插入图片」），
+    // 让他从一堆 PDF 里往下翻找那两张图是纯粹的浪费
+    const pool = options.imagesOnly
+      ? items.filter((item) => isImageExtension(item.ext))
+      : items
     const modal = openModalCard({ className: 'sb-modal__card--form' })
     modal.card.innerHTML = `
-      <div class="sb-modal__title">插入资料引用</div>
-      <p class="sb-hint">引用以 Obsidian 语法插入，Obsidian 里能直接预览 PDF。</p>
+      <div class="sb-modal__title">${options.imagesOnly ? '插入图片' : '插入资料引用'}</div>
+      <p class="sb-hint">${
+        options.imagesOnly
+          ? '图片以 Markdown 语法插入，在编辑器和导出的文档里都会直接显示。'
+          : '引用以 Obsidian 语法插入，Obsidian 里能直接预览 PDF 和图片。'
+      }</p>
       <div class="sb-field">
         <label for="material-pick">选择资料</label>
         <select class="sb-select" id="material-pick" data-field="pick"></select>
@@ -232,8 +243,8 @@ export function openMaterialPickDialog(
     `
     const pick = modal.card.querySelector<HTMLSelectElement>('[data-field="pick"]')
     if (pick) {
-      const preferred = items.filter((item) => item.courseCardId === preselectCardId)
-      const rest = items.filter((item) => item.courseCardId !== preselectCardId && !item.missing)
+      const preferred = pool.filter((item) => item.courseCardId === preselectCardId)
+      const rest = pool.filter((item) => item.courseCardId !== preselectCardId && !item.missing)
       const option = (item: MaterialItem): string =>
         `<option value="${escapeHtml(item.id)}">${escapeHtml(item.fileName)}</option>`
       pick.innerHTML = [
@@ -260,7 +271,7 @@ export function openMaterialPickDialog(
     }
 
     bindDialog(modal, () => {
-      const chosen = items.find((item) => item.id === pick?.value)
+      const chosen = pool.find((item) => item.id === pick?.value)
       done(chosen ?? null)
     })
   })
