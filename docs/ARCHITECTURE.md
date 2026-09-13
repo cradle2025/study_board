@@ -25,7 +25,9 @@
 | Tauri v2 | ❌ 放弃 | 体积优势明显，但依赖系统 WebView —— Windows 用 WebView2、macOS 用 WKWebView，而 WebView 会随系统更新变化。这正好撞在第 1、3 条约束上 |
 | 本地 HTTP 服务 + 浏览器 | ❌ 放弃 | 依赖用户浏览器（差异最大），需要开本地端口（与「不暴露端口」的诉求相冲），还可能被防火墙弹窗拦截 |
 
-**代价**：安装包 80–150 MB，以及 macOS 未签名时的 Gatekeeper 提示。
+**代价**：安装包约 100 MB，以及 macOS 未签名时的 Gatekeeper 提示。
+（Electron 自带的 Chromium 占绝大部分；已通过只带中英四个语言包省掉 46 MB，
+见 [PERFORMANCE.md 第五节第 9 条](./PERFORMANCE.md)。）
 
 **跨平台构建的边界**：一个代码库能同时支持两套系统，但**构建**必须在各自系统上进行。仓库里用 GitHub Actions 解决：推 tag 后 Windows runner 出 `.exe`，macOS runner 出 `.dmg`。
 
