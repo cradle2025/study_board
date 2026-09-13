@@ -1,5 +1,5 @@
 import { CHANNELS } from '@shared/channels'
-import type { LibraryChangedEvent, NoteDoc, NoteMeta, NoteWriteInput } from '@shared/types'
+import type { LibraryChangedEvent, NoteDoc, NoteGroup, NoteMeta, NoteWriteInput } from '@shared/types'
 
 import { context } from '../context'
 import { NotesSync, type NotesSyncEvent } from '../services/notesSync'
@@ -21,7 +21,14 @@ export function registerNotesHandlers(): void {
 
   handle<unknown, NoteDoc>(CHANNELS.NOTES_READ, (id) => context().notes.read(id))
 
-  handle<unknown, NoteDoc>(CHANNELS.NOTES_CREATE, (title) => context().notes.create(String(title ?? '')))
+  handle<unknown, NoteDoc>(CHANNELS.NOTES_CREATE, (raw) => {
+    // 兼容两种调用：老的样子只给标题，新的可以带一个「建到哪个分组里」
+    if (raw && typeof raw === 'object') {
+      const input = raw as { title?: unknown; groupId?: unknown }
+      return context().notes.create(String(input.title ?? ''), '', String(input.groupId ?? ''))
+    }
+    return context().notes.create(String(raw ?? ''))
+  })
 
   handle<unknown, NoteDoc>(CHANNELS.NOTES_WRITE, (raw) => {
     if (!raw || typeof raw !== 'object') throw new Error('参数不合法')
@@ -43,6 +50,48 @@ export function registerNotesHandlers(): void {
     if (unlinked > 0) console.info(`[notes] ${unlinked} 张卡片已解除与已删笔记的关联`)
     ctx.notes.remove(noteId)
     return null
+  })
+
+  /* -------------------------------------------------------------- 分组 */
+
+  handle<unknown, NoteGroup[]>(CHANNELS.NOTES_GROUPS, () => context().notes.listGroups())
+
+  handle<unknown, NoteGroup[]>(CHANNELS.NOTES_GROUP_CREATE, (raw) => {
+    if (!raw || typeof raw !== 'object') throw new Error('参数不合法')
+    const input = raw as { name?: unknown; parentId?: unknown }
+    return context().notes.createGroup(String(input.name ?? ''), String(input.parentId ?? ''))
+  })
+
+  handle<unknown, NoteGroup[]>(CHANNELS.NOTES_GROUP_RENAME, (raw) => {
+    if (!raw || typeof raw !== 'object') throw new Error('参数不合法')
+    const input = raw as { id?: unknown; name?: unknown }
+    return context().notes.renameGroup(input.id, String(input.name ?? ''))
+  })
+
+  handle<unknown, NoteGroup[]>(CHANNELS.NOTES_GROUP_MOVE, (raw) => {
+    if (!raw || typeof raw !== 'object') throw new Error('参数不合法')
+    const input = raw as { id?: unknown; parentId?: unknown }
+    return context().notes.moveGroup(input.id, input.parentId)
+  })
+
+  /**
+   * 删分组要广播，理由和删笔记一样：**界面别处的缓存要跟着失效**。
+   * 组里的笔记并没有被删，只是归属变了，所以广播的是「库变了」而不是「笔记没了」。
+   */
+  handle<unknown, NoteGroup[]>(CHANNELS.NOTES_GROUP_REMOVE, (id) => {
+    const result = context().notes.removeGroup(id)
+    broadcast(CHANNELS.EVENT_LIBRARY_CHANGED, {
+      kind: 'changed',
+      fileName: '',
+      id: ''
+    })
+    return result.groups
+  })
+
+  handle<unknown, NoteMeta[]>(CHANNELS.NOTES_SET_GROUP, (raw) => {
+    if (!raw || typeof raw !== 'object') throw new Error('参数不合法')
+    const input = raw as { id?: unknown; groupId?: unknown }
+    return context().notes.setNoteGroup(input.id, input.groupId)
   })
 }
 

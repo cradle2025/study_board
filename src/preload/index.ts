@@ -19,6 +19,7 @@ import type {
   MaterialInboxCandidate,
   MaterialItem,
   NoteDoc,
+  NoteGroup,
   NoteMeta,
   NoteWriteInput,
   NotionPullResult,
@@ -145,11 +146,23 @@ const api = {
     list: () => invoke<NoteMeta[]>(CHANNELS.NOTES_LIST),
     read: (id: string) => invoke<NoteDoc>(CHANNELS.NOTES_READ, id),
     write: (input: NoteWriteInput) => invoke<NoteDoc>(CHANNELS.NOTES_WRITE, input),
-    create: (title: string) => invoke<NoteDoc>(CHANNELS.NOTES_CREATE, title),
+    create: (title: string | { title: string; groupId?: string }) =>
+      invoke<NoteDoc>(CHANNELS.NOTES_CREATE, title),
     remove: (id: string) => invoke<null>(CHANNELS.NOTES_DELETE, id),
     rename: (payload: { id: string; title: string }) =>
       invoke<NoteDoc>(CHANNELS.NOTES_RENAME, payload),
-    backup: (id: string) => invoke<string>(CHANNELS.NOTES_BACKUP, id)
+    backup: (id: string) => invoke<string>(CHANNELS.NOTES_BACKUP, id),
+
+    groups: () => invoke<NoteGroup[]>(CHANNELS.NOTES_GROUPS),
+    createGroup: (payload: { name: string; parentId?: string }) =>
+      invoke<NoteGroup[]>(CHANNELS.NOTES_GROUP_CREATE, payload),
+    renameGroup: (payload: { id: string; name: string }) =>
+      invoke<NoteGroup[]>(CHANNELS.NOTES_GROUP_RENAME, payload),
+    removeGroup: (id: string) => invoke<NoteGroup[]>(CHANNELS.NOTES_GROUP_REMOVE, id),
+    moveGroup: (payload: { id: string; parentId: string }) =>
+      invoke<NoteGroup[]>(CHANNELS.NOTES_GROUP_MOVE, payload),
+    setGroup: (payload: { id: string; groupId: string }) =>
+      invoke<NoteMeta[]>(CHANNELS.NOTES_SET_GROUP, payload)
   },
 
   exporter: {

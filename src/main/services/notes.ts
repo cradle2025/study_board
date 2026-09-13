@@ -14,8 +14,16 @@ import {
 } from 'node:fs'
 import { basename, extname, join, parse as parsePath } from 'node:path'
 
-import { MAX_NOTE_BYTES, MAX_NOTE_FILE_BYTES, MAX_NOTE_TITLE, NOTE_HEAD_BYTES } from '@shared/limits'
-import type { NoteDoc, NoteEditorMode, NoteMeta, NoteWriteInput } from '@shared/types'
+import {
+  MAX_GROUP_DEPTH,
+  MAX_GROUP_NAME,
+  MAX_NOTE_BYTES,
+  MAX_NOTE_FILE_BYTES,
+  MAX_NOTE_GROUPS,
+  MAX_NOTE_TITLE,
+  NOTE_HEAD_BYTES
+} from '@shared/limits'
+import type { NoteDoc, NoteEditorMode, NoteGroup, NoteMeta, NoteWriteInput } from '@shared/types'
 
 import { ensureDir, newId, safeJoin } from '../paths'
 import { parseFrontmatter, scalar, stringifyFrontmatter, type Frontmatter } from './frontmatter'
@@ -88,6 +96,22 @@ const RESERVED_NAMES = new Set([
 interface IndexContent {
   version: number
   notes: Record<string, NoteMeta>
+  /**
+   * 分组树。**平铺存放**，父子关系靠 `parentId` 表达。
+   *
+   * 不用嵌套结构存，是因为增删改的代价差太多：嵌套存法下
+   * 「把一个分组挪到另一处」要先把整棵子树摘下来再插进去，
+   * 而平铺存法只是改一个 `parentId`，不可能写出「子树丢了一半」这种 bug。
+   * 树在渲染时才拼——反正那本来就要递归一次。
+   */
+  groups: NoteGroup[]
+}
+
+/** 分组名清洗：去空白、限长。空名不允许（用户没法指着它说话） */
+function safeGroupName(raw: unknown): string {
+  const name = scalar(raw).replace(/\s+/g, ' ').trim()
+  if (name.length > MAX_GROUP_NAME) return name.slice(0, MAX_GROUP_NAME).trim()
+  return name
 }
 
 /** 把标题洗成可以当文件名用的字符串 */
@@ -164,7 +188,7 @@ export class NotesStore {
   }
 
   #loadIndex(): IndexContent {
-    if (!existsSync(this.#indexFile)) return { version: INDEX_VERSION, notes: {} }
+    if (!existsSync(this.#indexFile)) return { version: INDEX_VERSION, notes: {}, groups: [] }
     try {
       const parsed = JSON.parse(readFileSync(this.#indexFile, 'utf-8')) as Partial<IndexContent>
       const notes: Record<string, NoteMeta> = {}
@@ -179,20 +203,71 @@ export class NotesStore {
             fileName,
             mode: modeOf(meta.mode),
             createdAt: String(meta.createdAt ?? '') || new Date().toISOString(),
-            updatedAt: String(meta.updatedAt ?? '') || new Date().toISOString()
+            updatedAt: String(meta.updatedAt ?? '') || new Date().toISOString(),
+            groupId: String(meta.groupId ?? '').slice(0, 64)
           }
         }
       }
-      return { version: INDEX_VERSION, notes }
+
+      /**
+       * 分组要**逐条验**，不能照单全收。
+       *
+       * 索引是用户可以手改的（它就是个 JSON），也可能被半个版本的旧程序写过。
+       * 一条 `parentId` 指向不存在的分组、或者自己指向自己的记录，
+       * 会让下面拼树的递归直接转不出来——那是启动即挂，比丢几个分组严重得多。
+       * 所以这里把不合法的关系一律**降级成顶层**，而不是拒绝整个索引：
+       * 用户的笔记还在，分组顶多乱一点，还能自己拖回去。
+       */
+      const groups: NoteGroup[] = []
+      const seenIds = new Set<string>()
+      if (Array.isArray(parsed.groups)) {
+        for (const raw of parsed.groups) {
+          if (groups.length >= MAX_NOTE_GROUPS) break
+          const entry = (raw ?? {}) as Partial<NoteGroup>
+          const id = String(entry.id ?? '').trim()
+          const name = safeGroupName(entry.name)
+          if (!id || !name || seenIds.has(id)) continue
+          seenIds.add(id)
+          groups.push({ id: id.slice(0, 64), name, parentId: String(entry.parentId ?? '').slice(0, 64) })
+        }
+      }
+      // 第二遍：父节点不存在、或自引用的，拉平到顶层
+      for (const group of groups) {
+        if (group.parentId && (group.parentId === group.id || !seenIds.has(group.parentId))) {
+          group.parentId = ''
+        }
+      }
+      // 第三遍：断链（A→B→C 里 B 被删掉的情况）也拉平。
+      // 走一遍「沿 parentId 往上数」来判断，顺手把过深的层级也削平
+      for (const group of groups) {
+        let cursor = group.parentId
+        let depth = 0
+        while (cursor && depth <= MAX_NOTE_GROUPS) {
+          const parent: NoteGroup | undefined = groups.find((item) => item.id === cursor)
+          if (!parent) {
+            group.parentId = ''
+            break
+          }
+          depth += 1
+          if (depth >= MAX_GROUP_DEPTH) {
+            group.parentId = ''
+            break
+          }
+          cursor = parent.parentId
+        }
+      }
+
+      return { version: INDEX_VERSION, notes, groups }
     } catch (error) {
-      // 索引坏了不是灾难：文件名就是标题，id 还能从 frontmatter 里捡回来
+      // 索引坏了不是灾难：文件名就是标题，id 还能从 frontmatter 里捡回来。
+      // 分组会一起丢——它是纯结构信息，没有第二处可以还原。
       console.error('[notes] 索引文件解析失败，将从目录重建：', error)
       try {
         renameSync(this.#indexFile, `${this.#indexFile}.broken`)
       } catch {
         /* 备份失败就算了，不能让笔记库用不了 */
       }
-      return { version: INDEX_VERSION, notes: {} }
+      return { version: INDEX_VERSION, notes: {}, groups: [] }
     }
   }
 
@@ -301,7 +376,10 @@ export class NotesStore {
         fileName,
         mode: modeOf(data['mode']),
         createdAt: String(data['createdAt'] ?? '') || createdAt,
-        updatedAt: createdAt
+        updatedAt: createdAt,
+        // 外部新建的笔记默认未分组。分组是应用内的结构，
+        // 别人在 Obsidian 里新建的文件不可能知道自己该进哪一组
+        groupId: ''
       }
       this.#index.notes[id] = meta
       seen.add(id)
@@ -331,6 +409,186 @@ export class NotesStore {
     const target = String(id ?? '')
     this.reconcile()
     return this.#index.notes[target] ?? null
+  }
+
+  /* -------------------------------------------------------------- 分组 */
+
+  /**
+   * 全部分组，按「树里的顺序」返回：父在前、子紧随其后。
+   *
+   * 为什么在这里就排好，而不是让渲染层自己拼树：**排序规则只该有一份**。
+   * 侧栏要按这个顺序画，将来若要导出目录结构、或做「上一个/下一个分组」
+   * 这类导航，都得用同一个顺序，各排一次必然出现「侧栏的顺序和导出对不上」。
+   */
+  listGroups(): NoteGroup[] {
+    const out: NoteGroup[] = []
+    const children = new Map<string, NoteGroup[]>()
+    for (const group of this.#index.groups) {
+      const bucket = children.get(group.parentId)
+      if (bucket) bucket.push(group)
+      else children.set(group.parentId, [group])
+    }
+    for (const bucket of children.values()) {
+      bucket.sort((a, b) => a.name.localeCompare(b.name, 'zh-Hans-CN'))
+    }
+
+    const walk = (parentId: string, depth: number): void => {
+      if (depth > MAX_GROUP_DEPTH) return
+      for (const group of children.get(parentId) ?? []) {
+        out.push({ ...group })
+        walk(group.id, depth + 1)
+      }
+    }
+    walk('', 1)
+    return out
+  }
+
+  /** 某个分组在树里的深度（顶层 = 1）。不存在返回 0 */
+  #depthOf(id: string): number {
+    let cursor = this.#index.groups.find((group) => group.id === id)?.parentId ?? ''
+    let depth = 1
+    // 上限就是分组总数：真出现环也会停下来，不会把主进程转死
+    for (let guard = 0; cursor && guard <= this.#index.groups.length; guard += 1) {
+      const parent = this.#index.groups.find((group) => group.id === cursor)
+      if (!parent) break
+      depth += 1
+      cursor = parent.parentId
+    }
+    return depth
+  }
+
+  #groupExists(id: unknown): boolean {
+    const target = String(id ?? '')
+    return target.length > 0 && this.#index.groups.some((group) => group.id === target)
+  }
+
+  /** 某个分组的整棵子树（含自己）的 id 集合。移动时用来防环 */
+  #subtreeIds(id: string): Set<string> {
+    const found = new Set<string>([id])
+    let grew = true
+    while (grew) {
+      grew = false
+      for (const group of this.#index.groups) {
+        if (!found.has(group.id) && found.has(group.parentId)) {
+          found.add(group.id)
+          grew = true
+        }
+      }
+    }
+    return found
+  }
+
+  createGroup(rawName: string, rawParentId = ''): NoteGroup[] {
+    const name = safeGroupName(rawName)
+    if (name.length === 0) throw new Error('分组名不能为空')
+    if (this.#index.groups.length >= MAX_NOTE_GROUPS) {
+      throw new Error(`分组最多 ${MAX_NOTE_GROUPS} 个`)
+    }
+    const parentId = this.#groupExists(rawParentId) ? String(rawParentId) : ''
+    // 新分组挂在父节点下面，所以它的深度是父深度 + 1
+    const depth = parentId ? this.#depthOf(parentId) + 1 : 1
+    if (depth > MAX_GROUP_DEPTH) {
+      throw new Error(`分组最多嵌套 ${MAX_GROUP_DEPTH} 层`)
+    }
+
+    this.#index.groups.push({ id: newId(), name, parentId })
+    this.#persistIndex()
+    return this.listGroups()
+  }
+
+  renameGroup(id: unknown, rawName: string): NoteGroup[] {
+    const group = this.#index.groups.find((item) => item.id === String(id ?? ''))
+    if (!group) throw new Error('分组不存在')
+    const name = safeGroupName(rawName)
+    if (name.length === 0) throw new Error('分组名不能为空')
+    group.name = name
+    this.#persistIndex()
+    return this.listGroups()
+  }
+
+  /**
+   * 把一个分组挪到另一个分组下面（`parentId` 传空串 = 挪到顶层）。
+   *
+   * 这里必须防环：把 A 挪进 A 的子孙里，树就断了——
+   * `listGroups` 从根往下走，那一段会整片消失（笔记还在，但从侧栏里找不到了）。
+   * 用户完全看不出发生了什么，只会觉得「我的笔记没了」。
+   */
+  moveGroup(id: unknown, rawParentId: unknown): NoteGroup[] {
+    const target = String(id ?? '')
+    const group = this.#index.groups.find((item) => item.id === target)
+    if (!group) throw new Error('分组不存在')
+    const parentId = this.#groupExists(rawParentId) ? String(rawParentId) : ''
+
+    if (parentId) {
+      if (parentId === target) throw new Error('不能把分组挪到自己里面')
+      if (this.#subtreeIds(target).has(parentId)) {
+        throw new Error('不能把分组挪进它自己的子分组里')
+      }
+    }
+
+    // 挪完之后的深度 = 新父的深度 + 子树高度。只算「自己这一层」是不够的：
+    // 把一个两层的小树挂到第 3 层，实际会到第 5 层，超限的是最深的那个孙子
+    const height = this.#subtreeHeight(target)
+    const base = parentId ? this.#depthOf(parentId) : 0
+    if (base + height > MAX_GROUP_DEPTH) {
+      throw new Error(`分组最多嵌套 ${MAX_GROUP_DEPTH} 层`)
+    }
+
+    group.parentId = parentId
+    this.#persistIndex()
+    return this.listGroups()
+  }
+
+  /** 以某个分组为根的子树高度（自己算 1 层） */
+  #subtreeHeight(id: string): number {
+    const childrenOf = (parentId: string): NoteGroup[] =>
+      this.#index.groups.filter((group) => group.parentId === parentId)
+    const walk = (parentId: string, depth: number): number => {
+      const kids = childrenOf(parentId)
+      if (kids.length === 0) return depth
+      return Math.max(...kids.map((kid) => walk(kid.id, depth + 1)))
+    }
+    return walk(id, 1)
+  }
+
+  /**
+   * 删除分组。
+   *
+   * **不删笔记**，也不删子分组——它们统统上移到被删分组的父级。
+   * 「删掉一个分组」在用户心里的意思是「这个筐我不要了」，
+   * 而不是「把筐里的东西一起扔了」。真要删笔记，那是笔记自己的删除按钮的事。
+   *
+   * 返回受影响的两份数据，调用方（IPC 层）拿去广播。
+   */
+  removeGroup(id: unknown): { groups: NoteGroup[]; notes: NoteMeta[] } {
+    const target = String(id ?? '')
+    const group = this.#index.groups.find((item) => item.id === target)
+    if (!group) throw new Error('分组不存在')
+
+    const parentId = group.parentId
+    // 直接子分组升一级
+    for (const child of this.#index.groups) {
+      if (child.parentId === target) child.parentId = parentId
+    }
+    // 组里的笔记也升一级
+    for (const meta of Object.values(this.#index.notes)) {
+      if (meta.groupId === target) meta.groupId = parentId
+    }
+    this.#index.groups = this.#index.groups.filter((item) => item.id !== target)
+    this.#persistIndex()
+
+    return { groups: this.listGroups(), notes: this.list() }
+  }
+
+  /** 把一篇笔记放进某个分组（空串 = 移出分组） */
+  setNoteGroup(id: unknown, rawGroupId: unknown): NoteMeta[] {
+    const meta = this.#index.notes[String(id ?? '')]
+    if (!meta) throw new Error('笔记不存在')
+    const groupId = this.#groupExists(rawGroupId) ? String(rawGroupId) : ''
+    if (meta.groupId === groupId) return this.list()
+    meta.groupId = groupId
+    this.#persistIndex()
+    return this.list()
   }
 
   /** 按文件名找笔记。文件监听给的是路径，不是 id */
@@ -456,15 +714,25 @@ export class NotesStore {
     this.#remember(fileName)
   }
 
-  create(rawTitle: string, content = ''): NoteDoc {
+  create(rawTitle: string, content = '', rawGroupId = ''): NoteDoc {
     const title = safeNoteTitle(rawTitle)
     const fileName = this.#uniqueFileName(title)
     const now = new Date().toISOString()
     const id = newId()
+    // 分组必须真实存在，否则当作未分组——不然会写进一个永远显示不出来的归属
+    const groupId = this.#groupExists(rawGroupId) ? String(rawGroupId) : ''
 
     this.#writeFile(fileName, { id, mode: 'markdown', createdAt: now }, content)
 
-    const meta: NoteMeta = { id, title: parsePath(fileName).name, fileName, mode: 'markdown', createdAt: now, updatedAt: now }
+    const meta: NoteMeta = {
+      id,
+      title: parsePath(fileName).name,
+      fileName,
+      mode: 'markdown',
+      createdAt: now,
+      updatedAt: now,
+      groupId
+    }
     this.#index.notes[id] = meta
     this.#persistIndex()
 

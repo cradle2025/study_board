@@ -73,6 +73,13 @@ export const CHANNELS = {
   /* 切到富文本模式前留一份原文件：md 表达不了的东西互转时会退化 */
   NOTES_BACKUP: 'notes:backup',
 
+  NOTES_GROUPS: 'notes:groups',
+  NOTES_GROUP_CREATE: 'notes:group-create',
+  NOTES_GROUP_RENAME: 'notes:group-rename',
+  NOTES_GROUP_REMOVE: 'notes:group-remove',
+  NOTES_GROUP_MOVE: 'notes:group-move',
+  NOTES_SET_GROUP: 'notes:set-group',
+
   /* 导出 */
   EXPORT_NOTE: 'export:note',
 

@@ -302,6 +302,28 @@ export interface NoteMeta {
   mode: NoteEditorMode
   createdAt: string
   updatedAt: string
+  /**
+   * 所属分组 id。空串表示**未分组**（顶层直接可见）。
+   *
+   * 分组只存在索引里，**不写进 frontmatter、也不在磁盘上建目录**。
+   * 理由是笔记库要能直接当 Obsidian 库用、要能进 git：
+   * 一旦按分组建目录，用户在 Obsidian 里挪一个文件就会让分组错位，
+   * 而「外部改动导致结构变化」这件事根本没法跟用户解释清楚。
+   */
+  groupId: string
+}
+
+/**
+ * 笔记分组。可以嵌套（`parentId` 指向另一个分组），构成树。
+ *
+ * 名字是**唯一会被用户改的东西**，id 一旦分配就不再变——
+ * 笔记靠 id 记住自己属于哪一组，改名不会让归属断掉。
+ */
+export interface NoteGroup {
+  id: string
+  name: string
+  /** 父分组 id。空串表示顶层分组 */
+  parentId: string
 }
 
 export interface NoteDoc extends NoteMeta {

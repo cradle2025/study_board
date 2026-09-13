@@ -15,6 +15,7 @@ import type {
   MaterialInboxCandidate,
   MaterialItem,
   NoteDoc,
+  NoteGroup,
   NoteMeta,
   NoteWriteInput,
   NotionPullResult,
@@ -128,11 +129,22 @@ export interface StudyBoardApi {
     list(): Promise<IpcResult<NoteMeta[]>>
     read(id: string): Promise<IpcResult<NoteDoc>>
     write(input: NoteWriteInput): Promise<IpcResult<NoteDoc>>
-    create(title: string): Promise<IpcResult<NoteDoc>>
+    /** 只给标题时建在顶层；给 groupId 时直接建在那个分组里 */
+    create(title: string | { title: string; groupId?: string }): Promise<IpcResult<NoteDoc>>
     remove(id: string): Promise<IpcResult<null>>
     rename(payload: { id: string; title: string }): Promise<IpcResult<NoteDoc>>
     /** 备份一篇笔记，返回备份文件的相对路径 */
     backup(id: string): Promise<IpcResult<string>>
+
+    /** 全部分组，已按树序（父在前、子紧随）排好 */
+    groups(): Promise<IpcResult<NoteGroup[]>>
+    createGroup(payload: { name: string; parentId?: string }): Promise<IpcResult<NoteGroup[]>>
+    renameGroup(payload: { id: string; name: string }): Promise<IpcResult<NoteGroup[]>>
+    /** 删分组不删笔记：组里的笔记与子分组上移到父级 */
+    removeGroup(id: string): Promise<IpcResult<NoteGroup[]>>
+    moveGroup(payload: { id: string; parentId: string }): Promise<IpcResult<NoteGroup[]>>
+    /** 把笔记放进分组（groupId 传空串 = 移出分组） */
+    setGroup(payload: { id: string; groupId: string }): Promise<IpcResult<NoteMeta[]>>
   }
 
   exporter: {
