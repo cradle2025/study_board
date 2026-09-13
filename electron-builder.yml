@@ -22,6 +22,26 @@ asarUnpack:
 extraMetadata:
   main: out/main/index.js
 
+# 只带用得上的语言包。
+#
+# Electron 默认把 Chromium 的 55 个语言包全带上，解包后 49 MB —— 是安装包
+# 里仅次于 Electron 自身二进制的大头。本项目是中英双语应用，其余 51 个
+# 语言永远用不到。
+#
+# 留四个是有意的：
+#   zh-CN / zh-TW  简体、繁体
+#   en-US / en-GB  英式、美式（en-US 还是 Chromium 的内置兜底，
+#                  删掉它会让所有非匹配语言的系统退化成硬编码字符串）
+#
+# 系统语言不在列表里时会自动回退到 en-US，不会崩，只是界面文案变英文。
+# 注意：这影响的是 Chromium 自己的 UI 文案（右键菜单、拼写检查等），
+# 应用自身的中文界面是渲染层自己画的，跟这些 .pak 无关。
+electronLanguages:
+  - zh-CN
+  - zh-TW
+  - en-US
+  - en-GB
+
 win:
   target:
     - target: nsis
