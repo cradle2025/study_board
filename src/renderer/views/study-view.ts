@@ -66,7 +66,7 @@ export function createStudyView(ctx: ViewContext): ViewInstance {
           (item) => `
             <button class="sb-switch__item" type="button" role="tab" data-tab="${item}"
                     aria-selected="${item === 'learning' ? 'true' : 'false'}">
-              <span>${TAB_LABEL[item]}</span>
+              <span>${escapeHtml(t(TAB_LABEL[item]))}</span>
               <span class="sb-switch__count" data-count="${item}">0</span>
             </button>
           `
@@ -187,7 +187,7 @@ export function createStudyView(ctx: ViewContext): ViewInstance {
 
   function setTab(next: StudyTab): void {
     tab = next
-    controller.grid.setEmptyText(TAB_EMPTY[next])
+    controller.grid.setEmptyText(t(TAB_EMPTY[next]))
     tabsEl?.querySelectorAll<HTMLButtonElement>('[data-tab]').forEach((btn) => {
       btn.setAttribute('aria-selected', btn.dataset['tab'] === next ? 'true' : 'false')
     })
@@ -226,7 +226,7 @@ export function createStudyView(ctx: ViewContext): ViewInstance {
   return {
     element,
     async onEnter() {
-      controller.grid.setEmptyText(TAB_EMPTY[tab])
+      controller.grid.setEmptyText(t(TAB_EMPTY[tab]))
       await controller.load()
       await loadMaterialCounts()
       await portal.load()

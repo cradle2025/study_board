@@ -3786,14 +3786,52 @@ const MATERIALS_PROBE_SRC = (paths: string[]) => `(async () => {
    */
   out.imageThumbOk = await new Promise((resolve) => {
     const deadline = Date.now() + 6000
+    let kicked = false
     const tick = () => {
       const img = document.querySelector('.sb-material__thumb img')
-      if (img && img.complete && img.naturalWidth > 0) return resolve(true)
+      if (img) {
+        /**
+         * 缩略图是 loading="lazy" 的：**落在首屏之外时 Chromium 根本不会
+         * 发起请求**，元素在、src 也对，但 currentSrc 是空、complete 是
+         * false。实测就是这样（不是猜的：诊断里 count=1、src 正确、
+         * currentSrc 为空）。
+         *
+         * scrollIntoView 试过，不可靠 —— 懒加载的状态在滚动之后不一定
+         * 立刻重算，四次里四次仍然没加载。
+         *
+         * 所以这里**显式把 loading 改成 eager 并重设 src**，强制发起加载。
+         * 这不改变被测的东西：要验的是「索引 → sb-asset 协议 → CSP →
+         * 解码」这条链路，而懒加载只是「什么时候开始走这条链路」的调度。
+         * 顺带也解释了为什么它之前有大约一半的概率失败 —— 那张图在不在
+         * 首屏内取决于布局时机。
+         */
+        if (!kicked) {
+          img.loading = 'eager'
+          img.src = img.getAttribute('src') ?? ''
+          kicked = true
+        }
+        if (img.complete && img.naturalWidth > 0) return resolve(true)
+      }
       if (Date.now() > deadline) return resolve(false)
       setTimeout(tick, 60)
     }
     tick()
   })
+
+  // 诊断：缩略图为什么没解码出来（元素在不在、src 是什么、complete 与否）
+  {
+    const imgs = document.querySelectorAll('.sb-material__thumb img')
+    const first = imgs[0]
+    out.thumbDiag = {
+      count: imgs.length,
+      rows: document.querySelectorAll('.sb-material').length,
+      thumbs: document.querySelectorAll('.sb-material__thumb').length,
+      src: first ? (first.getAttribute('src') ?? '').slice(0, 80) : '',
+      currentSrc: first ? String(first.currentSrc).slice(0, 80) : '',
+      complete: first ? first.complete : null,
+      naturalWidth: first ? first.naturalWidth : null
+    }
+  }
 
   // 伪装成 PNG 的文本：魔数闸必须拦下，不能因为「是图片」就放水
   const fakePng = await window.studyBoard.materials.import({
