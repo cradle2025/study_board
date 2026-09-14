@@ -1,6 +1,6 @@
 {
   "name": "study-board",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "学习看板 —— 离线的课程表 + 课程笔记看板，数据全部保存在本地，不联网也能用",
   "keywords": [
     "electron",
@@ -33,6 +33,8 @@
     "smoke:notion": "node scripts/smoke.mjs notion",
     "smoke:security": "node scripts/smoke.mjs security",
     "smoke:materials": "node scripts/smoke.mjs materials",
+    "smoke:update": "node scripts/smoke.mjs update",
+    "smoke:migrate": "node scripts/smoke.mjs migrate",
     "bench": "node scripts/smoke.mjs bench",
     "bench:compare": "node scripts/compare-bench.mjs",
     "hang": "node scripts/hang-test.mjs",

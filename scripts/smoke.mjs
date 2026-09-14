@@ -16,6 +16,8 @@
  *   npm run smoke:ai         AI 助手与密钥：没配密钥时拦在出网之前 + 密钥密文落盘
  *   npm run smoke:notion     Notion 同步：id 解析、未配置时拦在出网之前、冲突不自动覆盖
  *   npm run smoke:security   渗透测试：逃逸 / XSS / 协议穿越 / IPC 模糊 / 导航劫持 / 端口
+ *   npm run smoke:update     数据版本闸口：降级保护 + 迁移前备份 + 印记不被改写
+ *   npm run smoke:migrate    数据版本闸口：老数据（有内容、无印记）升级时先备份再迁移
  *   npm run bench            性能与内存基准，报告打到 stdout 并写入 .preview/
  *
  * 它们都跑在系统临时目录里，不会碰你真实的学习数据。
@@ -34,7 +36,7 @@ const electronPath = require('electron')
 
 const requested = process.argv[2] ?? ''
 const bench = requested === 'bench'
-const scenario = ['timetable', 'portal', 'cards', 'notes', 'sync', 'export', 'ai', 'notion', 'security', 'materials'].includes(requested)
+const scenario = ['timetable', 'portal', 'cards', 'notes', 'sync', 'export', 'ai', 'notion', 'security', 'materials', 'update', 'migrate'].includes(requested)
   ? requested
   : 'basic'
 const label = bench ? 'bench' : scenario

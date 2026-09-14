@@ -22,12 +22,14 @@ import type { ExportFormat } from '@shared/types'
 import { context } from './context'
 import {
   cardsFile,
+  dataRoot,
   ensureDir,
   materialsDir,
   secretsFile,
   setUserDataOverride,
   tempDir
 } from './paths'
+import { DATA_SCHEMA, readStamp } from './services/dataVersion'
 import { resolveNotesDir } from './services/settings'
 import { encodePng } from './services/png'
 import { logLine, mainLogPath } from './resilience'
@@ -84,6 +86,8 @@ export type SmokeScenario =
   | 'notion'
   | 'security'
   | 'materials'
+  | 'update'
+  | 'migrate'
 
 export function smokeEnabled(): boolean {
   return process.env['STUDY_BOARD_SMOKE'] === '1'
@@ -101,6 +105,8 @@ export function smokeScenario(): SmokeScenario {
   if (value === 'notion') return 'notion'
   if (value === 'security') return 'security'
   if (value === 'materials') return 'materials'
+  if (value === 'update') return 'update'
+  if (value === 'migrate') return 'migrate'
   return 'basic'
 }
 
@@ -125,6 +131,62 @@ export function prepareIsolatedDataDir(): void {
     /* 同上，忽略 */
   }
   console.info(`[自动化] 使用临时数据目录：${dir}`)
+}
+
+/**
+ * 更新场景里那个「未来版本」的版本号。
+ *
+ * 用一个一眼假的号：真出现 9.9.9 的印记，只可能来自这个测试。
+ */
+const UPDATE_FAKE_VERSION = '9.9.9'
+
+/** 备份里必须能找到的笔记文件名。用来验「备份真的带走了内容」 */
+const UPDATE_MARKER_NOTE = '升级前就有的笔记.md'
+
+/**
+ * 数据场景的数据准备。两个场景，分别对应闸口的两条分支：
+ *
+ *  - `update`：数据目录里躺着一份**更新的**版本写的印记 → 走降级保护；
+ *  - `migrate`：数据目录里有用户数据、但**没有印记**（老版本留下的）→ 走升级。
+ *
+ * 必须在 `initContext()` 之前跑完 —— 数据闸口就在那里面执行，
+ * 而闸口的判据正是这些文件。晚一步，闸口看到的就还是空目录。
+ */
+export function prepareUpdateScenarioIfRequested(): void {
+  if (!smokeEnabled()) return
+  const scenario = smokeScenario()
+  if (scenario !== 'update' && scenario !== 'migrate') return
+
+  const root = dataRoot(false)
+  ensureDir(root)
+
+  if (scenario === 'update') {
+    // 「未来版本」留下的印记：schema 比当前程序高一档
+    writeFileSync(
+      join(root, 'data-version.json'),
+      JSON.stringify(
+        {
+          schema: DATA_SCHEMA + 1,
+          app: UPDATE_FAKE_VERSION,
+          writtenAt: new Date().toISOString()
+        },
+        null,
+        2
+      ),
+      'utf-8'
+    )
+  }
+
+  // 一份用户数据。只验「备份目录存在」挡不住「备份是空的」这种失败，
+  // 所以必须放一个**内容可辨认**的文件进去，事后在备份里找它。
+  // `migrate` 场景靠它来验「有数据但没有印记」这条分支——
+  // 如果 hasUserData() 判错了，老用户就会在**没有备份**的情况下被迁移
+  const library = ensureDir(join(root, 'notes_library'))
+  writeFileSync(
+    join(library, UPDATE_MARKER_NOTE),
+    '# 升级前就有的笔记\n\n这段话必须原样出现在备份里。\n',
+    'utf-8'
+  )
 }
 
 /* ------------------------------------------------------------------ 造测试数据 */
@@ -1666,7 +1728,9 @@ export function runSmokeTestIfRequested(win: BrowserWindow): void {
                 ? SECURITY_PROBE
                 : scenario === 'materials'
                   ? materialsProbe()
-                  : BASIC_PROBE
+                  : scenario === 'update' || scenario === 'migrate'
+                    ? updateProbe()
+                    : BASIC_PROBE
   // sync 要在主进程与渲染层之间来回走好几趟；export 要跑一次 Packer
   // 再起一个隐藏窗口打印 PDF，都比纯界面自检慢得多
   const timeoutMs =
@@ -1680,7 +1744,9 @@ export function runSmokeTestIfRequested(win: BrowserWindow): void {
             ? 60_000
             : scenario === 'materials'
               ? 45_000
-              : 35_000
+              : scenario === 'update' || scenario === 'migrate'
+                ? 30_000
+                : 35_000
 
   const timer = setTimeout(() => {
     console.error(`[smoke] 超时：渲染层 ${timeoutMs / 1000} 秒内未完成自检`)
@@ -1869,6 +1935,32 @@ export function runSmokeTestIfRequested(win: BrowserWindow): void {
                       parsed['ok'] === true &&
                         // 界面说自己存了不算数，磁盘上真有一份对得上的文件才算
                         verifyMaterialsOnDisk()
+                    )
+                  : scenario === 'update'
+                  ? Boolean(
+                      parsed['infoOk'] &&
+                        parsed['hasWarning'] &&
+                        parsed['warningMentionsBackup'] &&
+                        parsed['stillUsable'] &&
+                        parsed['markerNoteVisible'] &&
+                        parsed['bannerVisible'] &&
+                        // 备份内容与印记保留都要在磁盘上核一遍：
+                        // 渲染层只能看到「警告文案」，看不到备份到底有没有东西
+                        verifyUpdateBackup() &&
+                        verifyStampPreserved() &&
+                        verifyStampPreserved()
+                    )
+                  : scenario === 'migrate'
+                  ? Boolean(
+                      parsed['infoOk'] &&
+                        parsed['stillUsable'] &&
+                        parsed['markerNoteVisible'] &&
+                        // 升级不该弹警告
+                        !parsed['hasWarning'] &&
+                        // 关键：**老数据也必须先备份**。闸口把「有数据但没印记」
+                        // 误判成「全新安装」的话，用户就会在没有备份的情况下被迁移
+                        verifyUpdateBackup() &&
+                        verifyStampIsCurrent()
                     )
                   : Boolean(
                       parsed['customElement'] &&
@@ -3732,6 +3824,130 @@ const MATERIALS_PROBE_SRC = (paths: string[]) => `(async () => {
 
 function materialsProbe(): string {
   return MATERIALS_PROBE_SRC(materialSourcePaths())
+}
+
+/* ------------------------------------------------- 数据版本 / 更新安全 */
+
+/**
+ * 降级保护的探针。
+ *
+ * 场景：数据目录里躺着一份**更新的**版本写的印记（`prepareUpdateScenarioIfRequested`
+ * 预先放好的），然后启动当前这个「旧」程序。
+ *
+ * 要验的是三件事同时成立：
+ *  1. 警告真的出现了，而且**说得清备份在哪** —— 只说「版本不匹配」
+ *     等于让用户自己去猜该怎么办，而这时候他唯一需要知道的是
+ *     「我的数据还在不在」；
+ *  2. 程序**照常可用** —— 直接拒绝启动是另一种失败，用户手里
+ *     明明有数据却打不开；
+ *  3. 警告在界面上**看得见** —— 只写进日志等于没有，打包后的应用没有控制台。
+ */
+function updateProbe(): string {
+  return `(async () => {
+  ${PROBE_HELPERS}
+  const out = {}
+
+  const info = await window.studyBoard.app.info()
+  out.infoOk = info.ok === true
+  const data = info.ok ? info.data : null
+  out.supported = data ? data.dataSchema : -1
+  out.writtenBy = data ? data.dataWrittenBy : null
+  out.hasWarning = Boolean(data && data.dataWarning)
+  out.warningMentionsBackup = Boolean(
+    data && data.dataWarning && data.dataWarning.indexOf('backups') >= 0
+  )
+
+  const notes = await window.studyBoard.notes.list()
+  out.stillUsable = notes.ok === true
+  out.markerNoteVisible =
+    notes.ok === true && notes.data.some((n) => n.title.indexOf('升级前就有的笔记') >= 0)
+
+  document.querySelector('[data-route="settings"]').click()
+  const banner = await waitFor('[data-role="data-warning"]:not([hidden])', 10000)
+  out.bannerVisible = Boolean(banner)
+  out.bannerText = banner ? banner.textContent.slice(0, 40) : ''
+
+  return JSON.stringify(out)
+})()`
+}
+
+/**
+ * 备份是不是真的把用户数据带走了。
+ *
+ * 只验「`.backups` 下有个目录」挡不住「备份是空的」—— 而一个空备份
+ * 等于没有备份，恰恰是这件事里最要紧的部分。
+ */
+function verifyUpdateBackup(): boolean {
+  const backups = join(dataRoot(false), '.backups')
+  if (!existsSync(backups)) {
+    console.error('[smoke] 降级保护没有留下备份目录')
+    return false
+  }
+
+  const names = readdirSync(backups, { withFileTypes: true })
+    .filter((entry) => entry.isDirectory())
+    .map((entry) => entry.name)
+    .sort()
+  const latest = names[names.length - 1]
+  if (!latest) {
+    console.error('[smoke] .backups 里一份备份都没有')
+    return false
+  }
+
+  const marker = join(backups, latest, 'notes_library', UPDATE_MARKER_NOTE)
+  if (!existsSync(marker)) {
+    console.error(`[smoke] 备份里找不到用户数据：${marker}`)
+    return false
+  }
+  if (!readFileSync(marker, 'utf-8').includes('这段话必须原样出现在备份里')) {
+    console.error('[smoke] 备份里的内容不对')
+    return false
+  }
+
+  return true
+}
+
+/**
+ * 降级时印记必须**原样保留**。
+ *
+ * 被当前这个旧程序改写成自己的版本号，就等于把「这份数据来自更新的
+ * 版本」这个事实抹掉了 —— 用户下次装回新版时，闸口会以为一切正常，
+ * 而中间那些自动保存早就把新字段写没了。
+ *
+ * 单独一条而不是并进 `verifyUpdateBackup`：升级场景里印记**就是该被改写**的，
+ * 两个场景对印记的期望正好相反。之前把这条混在里面，
+ * 结果是升级场景被一条「降级才成立」的断言判成失败。
+ */
+function verifyStampPreserved(): boolean {
+  const stamp = readStamp(false)
+  if (!stamp || stamp.schema !== DATA_SCHEMA + 1 || stamp.app !== UPDATE_FAKE_VERSION) {
+    console.error('[smoke] 降级之后印记被改写了：', JSON.stringify(stamp))
+    return false
+  }
+  return true
+}
+
+/**
+ * 升级之后印记必须被改写成「当前程序认识的那一版」。
+ *
+ * 不写的话，下次启动会把同一批数据再迁一遍、再备份一遍 ——
+ * 备份目录会一次比一次多，而用户什么都没做。
+ */
+function verifyStampIsCurrent(): boolean {
+  const stamp = readStamp(false)
+  if (!stamp) {
+    console.error('[smoke] 升级之后没有写数据版本印记')
+    return false
+  }
+  if (stamp.schema !== DATA_SCHEMA) {
+    console.error(`[smoke] 印记版本不对：期望 ${DATA_SCHEMA}，实际 ${stamp.schema}`)
+    return false
+  }
+  if (stamp.app !== app.getVersion()) {
+    console.error(`[smoke] 印记里的程序版本不对：期望 ${app.getVersion()}，实际 ${stamp.app}`)
+    return false
+  }
+  return true
 }
 
 /* --------------------------------------------------- 文件监听（双向同步） */

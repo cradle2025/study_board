@@ -38,3 +38,8 @@ export function runSmokeTestIfRequested(_win: BrowserWindow): void {
 export async function prepareSmokeDataIfRequested(): Promise<void> {
   /* no-op */
 }
+
+/** 空实现：生产包里不会伪造「未来版本」的数据印记 */
+export function prepareUpdateScenarioIfRequested(): void {
+  /* no-op */
+}
