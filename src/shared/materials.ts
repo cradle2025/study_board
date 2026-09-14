@@ -105,7 +105,55 @@ export const MATERIAL_KIND_LABEL: Record<MaterialExtension, string> = {
 export interface MagicSignature {
   offset: number
   oneOf: readonly string[]
+  /**
+   * 在 `[offset, offset + scanWindow)` 里按 **4 字节对齐**逐个位置试，而不是只看 `offset`。
+   *
+   * 只有 ISO-BMFF 家族（HEIF / AVIF）用得上，原因是它们的品牌名不止出现在一处：
+   *  - 偏移 8 是 `major_brand`；
+   *  - 偏移 16 起是 `compatible_brands` 列表，每个品牌 4 字节。
+   *
+   * 而**规范并不要求 major_brand 就是那个格式名**。AVIF 规范只说
+   * 「avif / avis 必须出现在 FileTypeBox 里」——出现在 compatible_brands
+   * 里也算数，`major_brand` 为 `mif1`（MIAF 通用品牌）是合法且常见的写法
+   * （ffmpeg 的 AVIF 封装就这样）。只看偏移 8 会把这类合法文件判成
+   * 「文件内容与扩展名不符」，而那是一条会劝用户去检查自己文件的错误信息。
+   */
+  scanWindow?: number
 }
+
+/**
+ * ISO-BMFF 品牌扫描窗口：从偏移 8 起按 4 字节对齐扫 40 字节。
+ *
+ * 覆盖 `major_brand`（8）加上 8 个 `compatible_brands`（16 起，每个 4 字节），
+ * 比任何编码器实际写出的品牌列表都宽。改这个值要同步改 `MATERIAL_HEAD_BYTES`，
+ * 否则读进来的头部不够长，扫描会静默地只扫到一半。
+ */
+const HEIF_BRAND_SCAN = 40
+
+/**
+ * HEVC 编码的 ISO-BMFF 品牌（也就是 `.heic` / `.heif` 该有的那些）。
+ *
+ * 只列**编码器品牌**，刻意不含 `mif1` / `msf1`：那两个是 MIAF 的通用品牌，
+ * AVIF 和 HEIC 都会带上（AVIF 序列规范里就有 `msf1`），拿它们当判据等于没判。
+ *
+ * 必须覆盖到 `heim` / `heis` / `hevm` / `hevs` 这几个少见变体——它们是
+ * HEVC 的多图 / 序列写法。少列一个，那个变体的用户就会收到「文件内容与
+ * 扩展名不符」，一条会引导他去怀疑自己文件的错误信息。
+ *
+ * 这个集合必须是 `services/heif.ts` 里 `HEIF_BRANDS` 的**子集**：
+ * 闸口放行的品牌，解码那一侧必须也认，否则文件会绕过 libheif 直接进
+ * Chromium 的解码器，报出一个与真实原因无关的错。
+ */
+const HEVC_BRANDS = [
+  'heic',
+  'heix',
+  'heim',
+  'heis',
+  'hevc',
+  'hevx',
+  'hevm',
+  'hevs'
+] as const
 
 /**
  * 每种扩展名允许的文件头（魔数）。
@@ -139,25 +187,35 @@ export const MATERIAL_MAGIC: Record<MaterialExtension, readonly (readonly MagicS
   gif: [[{ offset: 0, oneOf: ['GIF87a', 'GIF89a'] }]],
   bmp: [[{ offset: 0, oneOf: ['BM'] }]],
   webp: [[{ offset: 0, oneOf: ['RIFF'] }, { offset: 8, oneOf: ['WEBP'] }]],
-  avif: [[{ offset: 4, oneOf: ['ftyp'] }, { offset: 8, oneOf: ['avif', 'avis'] }]],
-  // HEIF 的品牌有好几个：手机直出多半是 heic，连续拍摄/多图是 msf1，
-  // mif1 是「符合 HEIF 规范但不指明具体编码」的通用品牌。都放行。
+  avif: [
+    [
+      { offset: 4, oneOf: ['ftyp'] },
+      { offset: 8, oneOf: ['avif', 'avis'], scanWindow: HEIF_BRAND_SCAN }
+    ]
+  ],
+  // HEIF / HEIC 与 AVIF 是同一个容器家族（ISO-BMFF），靠**编码品牌**区分。
+  // 编码器品牌和容器品牌是两回事，这里必须分开：
+  //  - avif / avis 只出现在 AV1 编码的文件里；
+  //  - HEVC_BRANDS 只出现在 HEVC 编码的文件里。
+  // 于是「这文件到底是 AVIF 还是 HEIC」是可判的——而这不只是命名问题：
+  // heic 走导入转码（libheif 解），avif 原样复制交给 Chromium 解。
+  // 认错了，要么白转一次，要么落一个永远显示不出来的文件。
   heic: [
     [
       { offset: 4, oneOf: ['ftyp'] },
-      { offset: 8, oneOf: ['heic', 'heix', 'hevc', 'hevx', 'mif1', 'msf1'] }
+      { offset: 8, oneOf: HEVC_BRANDS, scanWindow: HEIF_BRAND_SCAN }
     ]
   ],
   heif: [
     [
       { offset: 4, oneOf: ['ftyp'] },
-      { offset: 8, oneOf: ['heic', 'heix', 'hevc', 'hevx', 'mif1', 'msf1'] }
+      { offset: 8, oneOf: HEVC_BRANDS, scanWindow: HEIF_BRAND_SCAN }
     ]
   ]
 }
 
-/** 魔数校验需要读的头部字节数。最长的是 HEIF：偏移 8 + 品牌名 4 字节 = 12 */
-export const MATERIAL_HEAD_BYTES = 16
+/** 魔数校验需要读的头部字节数。最长的是 HEIF / AVIF：偏移 8 + 扫描窗口 40 = 48 */
+export const MATERIAL_HEAD_BYTES = 64
 
 /**
  * 扩展名不在白名单时的拒收原因（渲染层与主进程各显示一次，措辞必须一致）。

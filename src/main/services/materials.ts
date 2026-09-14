@@ -72,18 +72,27 @@ function readHead(file: string, bytes: number): Buffer {
  * 每个条件都要单独判长度：文件比魔数短的时候，`subarray` 会安静地返回一段
  * 更短的 buffer，`equals` 于是返回 false——结果对，但理由不对
  * （「太短」和「不匹配」是两回事，而这里只关心结论，所以不额外区分）。
+ *
+ * `scanWindow` 那条分支专给 ISO-BMFF 用：品牌名可能在 `major_brand`，
+ * 也可能在 `compatible_brands` 列表里（见 `MagicSignature.scanWindow`），
+ * 所以按 4 字节对齐逐个位置试，而不是只看一处。
  */
 function matchesMagic(head: Buffer, ext: MaterialExtension): boolean {
   return MATERIAL_MAGIC[ext].some((signature) =>
-    signature.every((check) =>
-      check.oneOf.some((candidate) => {
-        const bytes = Buffer.from(candidate, 'binary')
-        return (
-          head.length >= check.offset + bytes.length &&
-          head.subarray(check.offset, check.offset + bytes.length).equals(bytes)
-        )
-      })
-    )
+    signature.every((check) => {
+      // 没有 scanWindow 就是「只看 offset 这一处」——绝大多数格式都走这条，
+      // 步长取 1 表示循环只跑一轮（offset < offset + 1）
+      const step = check.scanWindow === undefined ? 1 : 4
+      const end = check.offset + (check.scanWindow ?? 1)
+      for (let at = check.offset; at < end; at += step) {
+        const hit = check.oneOf.some((candidate) => {
+          const bytes = Buffer.from(candidate, 'binary')
+          return head.length >= at + bytes.length && head.subarray(at, at + bytes.length).equals(bytes)
+        })
+        if (hit) return true
+      }
+      return false
+    })
   )
 }
 
