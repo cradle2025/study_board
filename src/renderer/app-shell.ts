@@ -1,6 +1,7 @@
 import type { AppInfo, AppSettings } from '@shared/types'
 
 import { bridge, formatError, toast, unwrap } from './lib/ipc'
+import { setLang, t, tm } from './lib/i18n'
 import { escapeHtml } from './lib/html'
 import { mark } from './lib/perf'
 import { describeArch, describeOs } from './lib/platform'
@@ -53,8 +54,9 @@ export type ViewFactory = (ctx: ViewContext) => ViewInstance
 
 interface RouteDef {
   id: RouteId
-  label: string
-  group: string
+  /** 文案 key，不是文案本身 —— 导航要能跟着语言切换重建 */
+  labelKey: string
+  groupKey: string
   icon: string
   factory: ViewFactory
 }
@@ -62,57 +64,57 @@ interface RouteDef {
 const ROUTES: readonly RouteDef[] = [
   {
     id: 'home',
-    label: '概览',
-    group: '看板',
+    labelKey: 'nav.home',
+    groupKey: 'nav.group.board',
     icon: '◧',
     factory: createHomeView
   },
   {
     id: 'timetable',
-    label: '课程表',
-    group: '模块一',
+    labelKey: 'nav.timetable',
+    groupKey: 'nav.group.module1',
     icon: '▦',
     factory: createTimetableEditorView
   },
   {
     id: 'portal',
-    label: '网站门户',
-    group: '模块二',
+    labelKey: 'nav.portal',
+    groupKey: 'nav.group.module2',
     icon: '◎',
     factory: createPortalView
   },
   {
     id: 'study',
-    label: '课程与学习',
-    group: '模块二',
+    labelKey: 'nav.study',
+    groupKey: 'nav.group.module2',
     icon: '◈',
     factory: createStudyView
   },
   {
     id: 'archived',
-    label: '已学库',
-    group: '模块二',
+    labelKey: 'nav.archived',
+    groupKey: 'nav.group.module2',
     icon: '▤',
     factory: createArchivedView
   },
   {
     id: 'materials',
-    label: '课程资料',
-    group: '模块二',
+    labelKey: 'nav.materials',
+    groupKey: 'nav.group.module2',
     icon: '▣',
     factory: createMaterialsView
   },
   {
     id: 'notes',
-    label: '笔记',
-    group: '模块二',
+    labelKey: 'nav.notes',
+    groupKey: 'nav.group.module2',
     icon: '✎',
     factory: createNotesView
   },
   {
     id: 'settings',
-    label: '设置',
-    group: '系统',
+    labelKey: 'nav.settings',
+    groupKey: 'nav.group.system',
     icon: '⚙',
     factory: createSettingsView
   }
@@ -222,8 +224,8 @@ export class AppShell extends HTMLElement {
     const mask = document.createElement('div')
     mask.className = 'sb-dropmask'
     mask.innerHTML =
-      '<div class="sb-dropmask__card"><div class="sb-dropmask__title">松手导入</div>' +
-      '<div class="sb-dropmask__hint">支持 PDF / PPT / Word / Excel，可多选</div></div>'
+      '<div class="sb-dropmask__card"><div class="sb-dropmask__title">' + escapeHtml(t('shell.dropTitle')) + '</div>' +
+      '<div class="sb-dropmask__hint">' + escapeHtml(t('shell.dropHint')) + '</div></div>'
     document.body.appendChild(mask)
     this.#dropMask = mask
   }
@@ -237,7 +239,7 @@ export class AppShell extends HTMLElement {
     // 沙箱渲染层拿不到真实路径，让 preload 用 webUtils 换算
     const paths = bridge().pathsFromDrop(files)
     if (paths.length === 0) {
-      toast('这些文件拿不到本地路径（可能来自网页），请用文件选择导入', 'info')
+      toast(t('shell.dropNoPath'), 'info')
       return
     }
     const { openMaterialImportDialog } = await import('./components/material-form')
@@ -259,12 +261,12 @@ export class AppShell extends HTMLElement {
         })
       )
       const failed = result.errors.length
-      if (result.added > 0 && failed === 0) toast(`已导入 ${result.added} 份资料`, 'success')
-      else if (result.added > 0) toast(`导入 ${result.added} 份，${failed} 份失败`, 'info')
-      else toast(`导入失败：${result.errors[0]}`, 'error')
+      if (result.added > 0 && failed === 0) toast(t('shell.importedCount', { count: result.added }), 'success')
+      else if (result.added > 0) toast(t('shell.importedPartial', { added: result.added, failed }), 'info')
+      else toast(t('shell.importFailed', { reason: tm(result.errors[0] ?? '') }), 'error')
       window.dispatchEvent(new CustomEvent('sb:materials-changed'))
     } catch (error) {
-      toast(`导入失败：${formatError(error)}`, 'error')
+      toast(t('shell.importFailed', { reason: formatError(error) }), 'error')
     }
   }
 
@@ -284,12 +286,12 @@ export class AppShell extends HTMLElement {
           <div class="sb-brand">
             <div class="sb-brand__mark">学</div>
             <div>
-              <div class="sb-brand__text">学习看板</div>
-              <div class="sb-brand__sub" data-role="version">加载中…</div>
+              <div class="sb-brand__text">${escapeHtml(t('shell.brand'))}</div>
+              <div class="sb-brand__sub" data-role="version">${escapeHtml(t('common.loading'))}</div>
             </div>
           </div>
-          <nav class="sb-nav" data-role="nav" aria-label="主导航"></nav>
-          <div class="sb-sidebar__footer" data-role="footer">本地数据 · 不联外网</div>
+          <nav class="sb-nav" data-role="nav" aria-label="${escapeHtml(t('shell.navLabel'))}"></nav>
+          <div class="sb-sidebar__footer" data-role="footer">${escapeHtml(t('shell.footer'))}</div>
         </aside>
         <main class="sb-main" data-role="stage"></main>
       </div>
@@ -303,26 +305,22 @@ export class AppShell extends HTMLElement {
       const info = await unwrap(bridge().app.info())
       this.#info = info
       this.#settings = await unwrap(bridge().settings.get())
+      // 语言必须在第一次渲染视图之前设好：视图在构造时就把文案写进
+      // DOM 了，晚一步就会先闪一下中文
+      setLang(this.#settings.language)
       applyTheme(this.#settings.theme)
 
-      const versionEl = this.querySelector<HTMLElement>('[data-role="version"]')
-      if (versionEl) {
-        // 别把 process.platform 直接摆出来：win32 在 64 位 Windows 上也是 win32，
-        // 侧栏那点宽度又放不下完整说明，所以这里只写「系统 + 位数」
-        versionEl.textContent = `v${info.version} · ${describeOs(info.platform)} ${describeArch(info.arch)}`
-      }
-
-      const footerEl = this.querySelector<HTMLElement>('[data-role="footer"]')
-      if (footerEl) footerEl.textContent = `数据目录：${info.paths.userData}`
-
+      this.#applyChrome()
       this.renderNav()
       await this.go('home')
       mark('sb:shell-ready')
 
       // 订阅要留着句柄，元素被卸载时才能退订
       this.#unwatchSettings = bridge().events.onSettingsChanged((next) => {
+        const languageChanged = next.language !== this.#settings?.language
         this.#settings = next
         applyTheme(next.theme)
+        if (languageChanged) void this.#relocalize()
       })
       this.#unwatchInbox = bridge().events.onMaterialsInbox((payload) => {
         void this.#handleInbox(payload.files ?? [])
@@ -353,12 +351,12 @@ export class AppShell extends HTMLElement {
         })
       )
       const failed = result.errors.length
-      if (result.added > 0 && failed === 0) toast(`已导入 ${result.added} 份资料`, 'success')
-      else if (result.added > 0) toast(`导入 ${result.added} 份，${failed} 份失败`, 'info')
-      else toast(`导入失败：${result.errors[0]}`, 'error')
+      if (result.added > 0 && failed === 0) toast(t('shell.importedCount', { count: result.added }), 'success')
+      else if (result.added > 0) toast(t('shell.importedPartial', { added: result.added, failed }), 'info')
+      else toast(t('shell.importFailed', { reason: tm(result.errors[0] ?? '') }), 'error')
       window.dispatchEvent(new CustomEvent('sb:materials-changed'))
     } catch (error) {
-      toast(`导入失败：${formatError(error)}`, 'error')
+      toast(t('shell.importFailed', { reason: formatError(error) }), 'error')
     }
   }
 
@@ -366,7 +364,9 @@ export class AppShell extends HTMLElement {
     if (!this.#stage) return
     this.#stage.innerHTML = `
       <div class="sb-view">
-        <div class="sb-notice">应用初始化失败：${escapeHtml(message)}</div>
+        <h2 class="sb-view__title">${escapeHtml(t('shell.fatalTitle'))}</h2>
+        <div class="sb-notice">${escapeHtml(message)}</div>
+        <p class="sb-hint">${escapeHtml(t('shell.fatalHint'))}</p>
       </div>
     `
   }
@@ -376,14 +376,14 @@ export class AppShell extends HTMLElement {
     let lastGroup = ''
     const parts: string[] = []
     for (const route of ROUTES) {
-      if (route.group !== lastGroup) {
-        lastGroup = route.group
-        parts.push(`<div class="sb-nav__group">${escapeHtml(route.group)}</div>`)
+      if (route.groupKey !== lastGroup) {
+        lastGroup = route.groupKey
+        parts.push(`<div class="sb-nav__group">${escapeHtml(t(route.groupKey))}</div>`)
       }
       parts.push(
         `<button class="sb-nav__item" type="button" data-route="${route.id}">
            <span aria-hidden="true">${route.icon}</span>
-           <span>${escapeHtml(route.label)}</span>
+           <span>${escapeHtml(t(route.labelKey))}</span>
          </button>`
       )
     }
@@ -403,8 +403,51 @@ export class AppShell extends HTMLElement {
     })
   }
 
-  private async go(route: RouteId): Promise<void> {
-    if (route === this.#currentRoute) return
+  /**
+   * 语言变了，把界面重建一遍。
+   *
+   * 为什么是「重建」而不是「逐个更新文案」：文案散布在几十个视图和
+   * 组件的构造函数里，还有一部分是**拼在 HTML 字符串里**的（`innerHTML`）。
+   * 逐处更新等于给每个视图再写一遍渲染逻辑，漏一处就是一处永远不变的中文。
+   * 重建只有一处代价 —— 当前视图的临时状态（比如笔记页正在编辑的那篇）
+   * 会丢 —— 而语言切换本来就是低频动作，重挂载回到同一个路由是可以接受的。
+   *
+   * 必须先把 `#currentRoute` 清掉：`go()` 有一句「路由没变就直接返回」，
+   * 不清的话重挂载会静默什么都不做，表现是「切了语言但界面纹丝不动」。
+   */
+  async #relocalize(): Promise<void> {
+    const route = this.#currentRoute ?? 'home'
+    setLang(this.#settings?.language)
+
+    this.#current?.dispose?.()
+    this.#current = null
+    this.#currentRoute = null
+
+    // render() 会把 innerHTML 整个换掉，侧栏与舞台都重建，所以顺序不能反：
+    // 先 dispose 掉旧视图，再重建骨架
+    this.render()
+    this.#applyChrome()
+    this.renderNav()
+    await this.go(route)
+  }
+
+  /** 侧栏上那几处跟着数据走的文案。`render()` 之后单独调，便于重建时复用 */
+  #applyChrome(): void {
+    const info = this.#info
+    if (!info) return
+
+    const versionEl = this.querySelector<HTMLElement>('[data-role="version"]')
+    if (versionEl) {
+      // 别把 process.platform 直接摆出来：win32 在 64 位 Windows 上也是 win32，
+      // 侧栏那点宽度又放不下完整说明，所以这里只写「系统 + 位数」
+      versionEl.textContent = `v${info.version} · ${describeOs(info.platform)} ${describeArch(info.arch)}`
+    }
+
+    const footerEl = this.querySelector<HTMLElement>('[data-role="footer"]')
+    if (footerEl) footerEl.textContent = t('shell.dataDir', { path: info.paths.userData })
+  }
+
+  private async go(route: RouteId): Promise<void> {    if (route === this.#currentRoute) return
     if (!this.#stage || !this.#settings) return
 
     const def = ROUTES.find((r) => r.id === route)
@@ -452,7 +495,7 @@ export class AppShell extends HTMLElement {
     try {
       await view.onEnter?.()
     } catch (error) {
-      toast(`页面加载失败：${formatError(error)}`, 'error')
+      toast(t('shell.pageLoadFailed', { reason: formatError(error) }), 'error')
     }
     mark(`sb:view:${route}:ready`)
   }
