@@ -16,6 +16,7 @@ import { inflateRawSync } from 'node:zlib'
 
 import { NOTION_HASH_KEY, NOTION_ID_KEY, parseNotionId, pushFingerprint } from '@shared/notion'
 import { EXPORT_EXTENSIONS } from '@shared/limits'
+import { MATERIALS_DIRNAME } from '@shared/materials'
 import type { ExportFormat } from '@shared/types'
 
 import { context } from './context'
@@ -437,14 +438,31 @@ function verifyMaterialsOnDisk(): boolean {
  * 内容是刻意挑的：标题、加粗、行内代码、列表各来一个——
  * 这些正好是「Markdown 转 HTML 再转回 Markdown」这一圈里最容易走样的几种。
  */
+/**
+ * 笔记里那张自检图在库内的相对路径。
+ *
+ * 探针要断言「磁盘上写的是相对路径、显示时才换成 sb-asset://」，
+ * 所以这个串在两处出现：正文里、以及断言里。
+ */
+const NOTES_IMAGE_REL = `${MATERIALS_DIRNAME}/roundtrip.png`
+
 function seedNotes(): void {
   const { notes } = context()
+
+  // 往 attachments/ 放一张**真图**。不放的话 img 元素照样在 DOM 里
+  // （地址是对的），只是永远加载不出来——断言就分不清
+  // 「地址没换对」和「文件根本不存在」这两种完全不同的故障。
+  const attachments = ensureDir(join(notes.dir, MATERIALS_DIRNAME))
+  writeFileSync(join(attachments, 'roundtrip.png'), makeTestPng(48, 32))
+
   notes.create(
     '编辑器自检',
     [
       '# 一级标题',
       '',
       '正文段落，带 **加粗** 和 `行内代码`。',
+      '',
+      `![自检图](${NOTES_IMAGE_REL})`,
       '',
       '- 列表项一',
       '- 列表项二',
@@ -569,6 +587,22 @@ const PROBE_HELPERS = `
     for (;;) {
       if (document.querySelectorAll(selector).length === count) return true
       if (Date.now() > deadline) return false
+      await wait(100)
+    }
+  }
+  /**
+   * 等一张图**真的解码出来**（naturalWidth > 0）。
+   *
+   * 元素出现 ≠ 图能显示：地址写对了但被 CSP 挡住、或文件根本不存在时，
+   * img 元素照样在 DOM 里，只是永远空白。用 waitFor 抓元素再立刻读
+   * naturalWidth 会有一个竞态——解码还没完成时读到的就是 0。
+   */
+  const waitForDecodedImage = async (selector, timeout = 15000) => {
+    const deadline = Date.now() + timeout
+    for (;;) {
+      const el = document.querySelector(selector)
+      if (el && el.naturalWidth > 0) return el
+      if (Date.now() > deadline) return el
       await wait(100)
     }
   }
@@ -737,6 +771,22 @@ const NOTES_PROBE = `(async () => {
   const initialText = document.querySelector('.cm-content').textContent
   const initialOk = initialText.includes('一级标题') && initialText.includes('列表项一')
 
+  /**
+   * Markdown 模式的实时预览。
+   *
+   * 断言必须看 \`naturalWidth > 0\` 而不是「img 元素在不在」：
+   * 地址写对了但被 CSP 挡住、或文件根本不存在时，元素照样在 DOM 里，
+   * 只是永远空白。那两种情况与「预览没生效」是完全不同的故障。
+   *
+   * 光标此时还在文档开头（还没移到末尾），而图片在第 5 行——
+   * 不在光标所在行，所以该以预览形态出现。
+   */
+  const previewImg = await waitForDecodedImage('.cm-content .sb-md__image img', 8000)
+  const previewSrc = previewImg?.getAttribute('src') ?? ''
+  const markdownImageOk = Boolean(
+    previewImg && previewImg.naturalWidth > 0 && previewSrc.startsWith('sb-asset://notes/')
+  )
+
   // —— 把光标移到文档末尾，再用工具栏插一条分隔线。
   // 从外面模拟键盘输入到 contenteditable 里太脆弱，走工具栏命令既可靠，
   // 又顺带把「点了按钮到底生不生效」测了；插在末尾则不会破坏原有结构
@@ -791,6 +841,22 @@ const NOTES_PROBE = `(async () => {
     '.sb-editorbar [data-command="underline"]'
   ).disabled
 
+  /**
+   * 图片在富文本里也要显示成图。
+   *
+   * 这条同时验了 TipTap 的 Image 节点真的注册进去了：
+   * 没注册的话 ProseMirror 解析 HTML 时会**静默丢弃** img 节点，
+   * 表现是「切到富文本图片全没了，也不报错」。
+   */
+  const rtImg = await waitForDecodedImage('.sb-rt__body img', 8000)
+  // 期望的显示地址。注意 ${NOTES_IMAGE_REL} 是**构建期插值**——
+  // 探针代码跑在渲染进程里，拿不到主进程的常量，只能这样带进去。
+  // 同时要求 naturalWidth > 0：只有图真的解码出来，才说明 sb-asset
+  // 这条链路（协议 → CSP → 磁盘文件）整条是通的，而不只是「元素在」
+  const richImageOk =
+    rtImg?.getAttribute('src') === 'sb-asset://notes/${NOTES_IMAGE_REL}' &&
+    rtImg.naturalWidth > 0
+
   // —— 在富文本里插一张表格，再切回 Markdown 看它有没有变成 GFM 表格语法
   document.querySelector('.sb-editorbar [data-command="table"]').click()
   const tableMade = await waitFor('.sb-rt__body table')
@@ -806,13 +872,34 @@ const NOTES_PROBE = `(async () => {
   const backHead = backText.slice(0, 160)
   const afterHrHead = textAfterHr.slice(0, 160)
 
+  /**
+   * 图片地址的**逆运算**：磁盘上必须还是相对路径。
+   *
+   * 这是整个图片功能里最危险的一条。富文本模式打开笔记时地址被换成了
+   * \`sb-asset://notes/...\`（为了能显示），存盘时 turndown 若原样写回，
+   * 磁盘上的 .md 里就躺着一个自定义协议地址——笔记库拿到 Obsidian 里
+   * 打开全是破图，换个数据目录也会失效。而且这个损坏是**静默**的：
+   * 应用里看着一切正常，只有把文件拷出去才会发现。
+   *
+   * 必须读**磁盘**而不是 DOM：Markdown 模式下图片那行被预览组件替换了，
+   * \`textContent\` 里根本没有地址，断言会以一个「永远为真」的方式通过。
+   */
+  const notesApi = window.studyBoard.notes
+  const noteList = await notesApi.list()
+  const selfCheckId = noteList.ok
+    ? noteList.data.find((n) => n.title === '编辑器自检')?.id
+    : undefined
+  const savedDoc = selfCheckId ? await notesApi.read(selfCheckId) : null
+  const savedMd = savedDoc?.ok ? savedDoc.data.content : ''
+  const imageRoundTripOk =
+    savedMd.includes('${NOTES_IMAGE_REL}') && !savedMd.includes('sb-asset://')
+
   /* ---------------------------------------------------------- 分组（树） */
   /**
    * 这一段放在最后，因为它会**切换路由**（切走再回来逼列表重取）。
    * 插在中间会把前面那些依赖「编辑器当前状态」的断言全部打乱。
    */
   const out = {}
-  const notesApi = window.studyBoard.notes
 
   const g1 = await notesApi.createGroup({ name: '高等数学' })
   const root = g1.ok ? g1.data.find((g) => g.name === '高等数学') : null
@@ -910,11 +997,13 @@ const NOTES_PROBE = `(async () => {
     afterHrHead, backHead,
     underlineEnabled, tableMade: Boolean(tableMade), savedAfterTable, roundTripOk,
     richTags: ['h1', 'strong', 'code', 'ul'].filter((t) => richHtml.includes('<' + t)),
+    markdownImageOk, richImageOk, imageRoundTripOk,
     editorOk: initialOk && hrOk && h1Kept && appended,
     toolbarOk: underlineDisabled && underlineEnabled,
     convertCheck: convertOk,
     tableOk: Boolean(tableMade) && savedAfterTable,
     roundTrip: backToCm && roundTripOk,
+    imageOk: markdownImageOk && richImageOk && imageRoundTripOk,
     ...out,
     groupsOk: out.groupCreateOk && out.subGroupOk && out.cycleRejected && out.depth4Ok &&
       out.depthLimitRejected && out.emptyNameRejected && out.setGroupOk &&
@@ -1630,6 +1719,8 @@ export function runSmokeTestIfRequested(win: BrowserWindow): void {
                         parsed['convertCheck'] &&
                         parsed['tableOk'] &&
                         parsed['roundTrip'] &&
+                        // 图片：Markdown 预览、富文本显示、地址逆运算
+                        parsed['imageOk'] &&
                         // 分组：建树、防环、深度上限、删组不删笔记
                         parsed['groupsOk']
                     )
