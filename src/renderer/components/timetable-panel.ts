@@ -1,6 +1,7 @@
 import { MAX_TIMETABLE_IMAGES } from '@shared/limits'
 import type { CourseImage, TimetableCell, TimetableData } from '@shared/types'
 
+import { t } from '../lib/i18n'
 import { assetUrl } from '../lib/asset'
 import { escapeHtml } from '../lib/html'
 import { openLightbox, showFloating } from '../lib/overlay'
@@ -89,13 +90,13 @@ function describeKey(key: string, weekdays: readonly string[]): string {
   const [periodRaw, columnRaw] = key.split(':')
   const period = Number(periodRaw)
   const column = Number(columnRaw)
-  const weekday = weekdays[column + 1] ?? `第 ${column + 1} 列`
-  return `第 ${period} 节 · ${weekday}`
+  const weekday = weekdays[column + 1] ?? t('timetable.columnN', { n: column + 1 })
+  return t('timetable.cellLabel', { period, weekday })
 }
 
 function cellLabel(key: string, content: TimetableCell | undefined, weekdays: readonly string[]): string {
   const summary = cellSummary(content)
-  const what = isBlank(content) ? '空，双击添加课程' : summary.name || '未命名课程'
+  const what = isBlank(content) ? t('timetable.cellEmpty') : summary.name || t('timetable.unnamedCourse')
   return `${describeKey(key, weekdays)}：${what}`
 }
 
@@ -111,7 +112,7 @@ function cellInnerHtml(content: TimetableCell | undefined): string {
   }
   const summary = cellSummary(content)
   const meta = summary.meta ? `<span class="sb-ttcell__meta">${escapeHtml(summary.meta)}</span>` : ''
-  return `<span class="sb-ttcell__name">${escapeHtml(summary.name || '未命名课程')}</span>${meta}`
+  return `<span class="sb-ttcell__name">${escapeHtml(summary.name || t('timetable.unnamedCourse'))}</span>${meta}`
 }
 
 export function createTimetablePanel(options: TimetablePanelOptions): TimetablePanelHandle {
@@ -172,17 +173,17 @@ export function createTimetablePanel(options: TimetablePanelOptions): TimetableP
         `<div class="sb-tt-preview__row"><span class="sb-tt-preview__label">${escapeHtml(label)}</span><span class="sb-tt-preview__value">${escapeHtml(value)}</span></div>`
       )
     }
-    push('授课老师', cell.teacher)
-    push('授课位置', cell.location)
-    push('持续时间', cell.duration)
-    push('备注', cell.remark)
+    push(t('timetable.field.teacher'), cell.teacher)
+    push(t('timetable.field.location'), cell.location)
+    push(t('timetable.field.duration'), cell.duration)
+    push(t('timetable.field.remark'), cell.remark)
 
     return `
       <div class="sb-tt-preview__head">
         <span class="sb-tt-preview__where">${escapeHtml(where)}</span>
-        <span class="sb-tt-preview__hint">双击编辑</span>
+        <span class="sb-tt-preview__hint">${escapeHtml(t('timetable.dblclickEdit'))}</span>
       </div>
-      <div class="sb-tt-preview__title">${escapeHtml(cell.courseName || '未命名课程')}</div>
+      <div class="sb-tt-preview__title">${escapeHtml(cell.courseName || t('timetable.unnamedCourse'))}</div>
       ${rows.length > 0 ? `<div class="sb-tt-preview__rows">${rows.join('')}</div>` : ''}
     `
   }
@@ -212,40 +213,40 @@ export function createTimetablePanel(options: TimetablePanelOptions): TimetableP
     handle.element.innerHTML = `
       <div class="sb-tt-editor__head">
         <span>${escapeHtml(describeKey(key, data.weekdays))}</span>
-        <button class="sb-tt-editor__close" type="button" aria-label="关闭">✕</button>
+        <button class="sb-tt-editor__close" type="button" aria-label="${escapeHtml(t('common.close'))}">✕</button>
       </div>
       <div class="sb-tt-editor__body">
         <label class="sb-field">
-          <span>课程名称</span>
+          <span>${escapeHtml(t('timetable.field.courseName'))}</span>
           <input class="sb-input" data-field="courseName" maxlength="60" autocomplete="off" />
         </label>
         <div class="sb-tt-editor__pair">
           <label class="sb-field">
-            <span>授课老师</span>
+            <span>${escapeHtml(t('timetable.field.teacher'))}</span>
             <input class="sb-input" data-field="teacher" maxlength="40" autocomplete="off" />
           </label>
           <label class="sb-field">
-            <span>授课位置</span>
+            <span>${escapeHtml(t('timetable.field.location'))}</span>
             <input class="sb-input" data-field="location" maxlength="60" autocomplete="off" />
           </label>
         </div>
         <label class="sb-field">
-          <span>持续时间</span>
+          <span>${escapeHtml(t('timetable.field.duration'))}</span>
           <input class="sb-input" data-field="duration" maxlength="40" autocomplete="off"
-                 placeholder="如 45 分钟 / 1-2 节连上" />
+                 placeholder="${escapeHtml(t('timetable.durationPlaceholder'))}" />
         </label>
         <label class="sb-field">
-          <span>备注</span>
+          <span>${escapeHtml(t('timetable.field.remark'))}</span>
           <textarea class="sb-textarea" data-field="remark" rows="2" maxlength="300"></textarea>
         </label>
       </div>
       <div class="sb-tt-editor__actions">
-        <button class="sb-btn sb-btn--ghost" type="button" data-role="clear">清空</button>
+        <button class="sb-btn sb-btn--ghost" type="button" data-role="clear">${escapeHtml(t('common.clear'))}</button>
         <span class="sb-tt-editor__spacer"></span>
-        <button class="sb-btn" type="button" data-role="cancel">取消</button>
-        <button class="sb-btn sb-btn--primary" type="button" data-role="save">保存</button>
+        <button class="sb-btn" type="button" data-role="cancel">${escapeHtml(t('common.cancel'))}</button>
+        <button class="sb-btn sb-btn--primary" type="button" data-role="save">${escapeHtml(t('common.save'))}</button>
       </div>
-      <div class="sb-tt-editor__note">Ctrl / ⌘ + Enter 保存 · Esc 取消</div>
+      <div class="sb-tt-editor__note">${escapeHtml(t('timetable.editorNote'))}</div>
     `
 
     const inputs = new Map<string, HTMLInputElement | HTMLTextAreaElement>()
@@ -391,14 +392,14 @@ export function createTimetablePanel(options: TimetablePanelOptions): TimetableP
     const addButton = canAdd
       ? `<button class="sb-ttshot sb-ttshot--add" type="button" data-role="add">
            <span class="sb-ttshot__plus" aria-hidden="true">＋</span>
-           <span>添加课表照片</span>
-           <span class="sb-hint">支持 JPEG / PNG / HEIF，最多 ${MAX_TIMETABLE_IMAGES} 张</span>
+           <span>${escapeHtml(t('timetable.addPhoto'))}</span>
+           <span class="sb-hint">${escapeHtml(t('timetable.photoHint', { max: MAX_TIMETABLE_IMAGES }))}</span>
          </button>`
       : ''
 
     const empty =
       current.images.length === 0
-        ? `<p class="sb-hint sb-ttpanel__hint">还没有导入课表照片。图片模式适合直接用教务系统截图或拍纸质课表。</p>`
+        ? `<p class="sb-hint sb-ttpanel__hint">${escapeHtml(t('timetable.photoEmpty'))}</p>`
         : ''
 
     body.innerHTML = `<div class="sb-ttshots">${slots}${addButton}</div>${empty}`
@@ -417,7 +418,7 @@ export function createTimetablePanel(options: TimetablePanelOptions): TimetableP
 
     return `
       <figure class="sb-ttshot" data-id="${escapeHtml(image.id)}">
-        <button class="sb-ttshot__view" type="button" data-role="view" aria-label="查看第 ${index + 1} 张课表照片">
+        <button class="sb-ttshot__view" type="button" data-role="view" aria-label="${escapeHtml(t('timetable.viewPhoto', { n: index + 1 }))}">
           <img src="${escapeHtml(assetUrl('timetable', image.fileName))}" alt="${escapeHtml(image.sourceName)}"${intrinsic} loading="lazy" decoding="async" />
         </button>
         <figcaption class="sb-ttshot__caption">
@@ -427,8 +428,8 @@ export function createTimetablePanel(options: TimetablePanelOptions): TimetableP
         ${
           options.editable
             ? `<div class="sb-ttshot__actions">
-                 <button class="sb-btn sb-btn--ghost" type="button" data-role="replace">替换</button>
-                 <button class="sb-btn sb-btn--ghost" type="button" data-role="remove">删除</button>
+                 <button class="sb-btn sb-btn--ghost" type="button" data-role="replace">${escapeHtml(t('timetable.replace'))}</button>
+                 <button class="sb-btn sb-btn--ghost" type="button" data-role="remove">${escapeHtml(t('common.delete'))}</button>
                </div>`
             : ''
         }

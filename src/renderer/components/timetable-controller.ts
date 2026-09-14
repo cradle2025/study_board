@@ -1,5 +1,6 @@
 import type { TimetableCell, TimetableData } from '@shared/types'
 
+import { t, tm } from '../lib/i18n'
 import { bridge, formatError, toast, unwrap } from '../lib/ipc'
 import { confirmAction } from '../lib/overlay'
 import { markLimited } from '../lib/perf'
@@ -31,7 +32,7 @@ export interface TimetableController {
 }
 
 export function createTimetableController(options: TimetableControllerOptions): TimetableController {
-  const prefix = options.errorPrefix ?? '课表'
+  const prefix = options.errorPrefix ?? t('nav.timetable')
 
   let data: TimetableData | null = null
   // 面板在下面才创建，但 apply 会被面板自己的回调用到，所以先声明后赋值
@@ -53,7 +54,7 @@ export function createTimetableController(options: TimetableControllerOptions): 
       markLimited('sb:tt:load:rendered')
       return applied
     } catch (error) {
-      toast(`${prefix}加载失败：${formatError(error)}`, 'error')
+      toast(t('timetable.loadFailed', { what: prefix, reason: tm(formatError(error)) }), 'error')
       return null
     }
   }
@@ -65,9 +66,9 @@ export function createTimetableController(options: TimetableControllerOptions): 
       try {
         // 一次只动一个格子，告诉面板走单格重绘而不是整表重建
         apply(await unwrap(bridge().timetable.setCell({ key, cell })), { kind: 'cell', key })
-        toast(cell ? '已保存' : '已清空', 'success')
+        toast(t(cell ? 'timetable.saved' : 'timetable.cleared'), 'success')
       } catch (error) {
-        toast(`保存失败：${formatError(error)}`, 'error')
+        toast(t('timetable.saveFailed', { reason: tm(formatError(error)) }), 'error')
         // 保存失败时回滚界面，避免显示的内容和磁盘不一致
         if (data) panel.render(data)
       }
@@ -81,31 +82,31 @@ export function createTimetableController(options: TimetableControllerOptions): 
         const result = await unwrap(bridge().timetable.addImages(picked.paths))
         apply(result.timetable)
 
-        if (result.added > 0) toast(`已导入 ${result.added} 张课表照片`, 'success')
+        if (result.added > 0) toast(t('timetable.imported', { count: result.added }), 'success')
         for (const message of result.errors.slice(0, 4)) toast(message, 'error')
         if (result.errors.length > 4) {
-          toast(`另有 ${result.errors.length - 4} 张未能导入`, 'error')
+          toast(t('timetable.importPartial', { count: result.errors.length - 4 }), 'error')
         }
       } catch (error) {
-        toast(`导入失败：${formatError(error)}`, 'error')
+        toast(t('timetable.importFailed', { reason: tm(formatError(error)) }), 'error')
       }
     },
 
     async onRemoveImage(id: string): Promise<void> {
       const target = data?.images.find((image) => image.id === id)
       const confirmed = await confirmAction({
-        title: '删除这张课表照片？',
-        message: target ? `「${target.sourceName}」将从本地移除，此操作不可撤销。` : undefined,
-        confirmText: '删除',
+        title: t('timetable.removePhotoTitle'),
+        message: target ? t('timetable.removePhotoBody', { name: target.sourceName }) : undefined,
+        confirmText: t('common.delete'),
         danger: true
       })
       if (!confirmed) return
 
       try {
         apply(await unwrap(bridge().timetable.removeImage(id)))
-        toast('已删除', 'success')
+        toast(t('common.deleted'), 'success')
       } catch (error) {
-        toast(`删除失败：${formatError(error)}`, 'error')
+        toast(t('timetable.removeFailed', { reason: tm(formatError(error)) }), 'error')
       }
     },
 
@@ -119,10 +120,10 @@ export function createTimetableController(options: TimetableControllerOptions): 
         const result = await unwrap(bridge().timetable.addImages(picked.paths))
         apply(result.timetable)
 
-        if (result.added > 0) toast(`已替换为 ${result.added} 张照片`, 'success')
+        if (result.added > 0) toast(t('timetable.replaced', { count: result.added }), 'success')
         for (const message of result.errors.slice(0, 4)) toast(message, 'error')
       } catch (error) {
-        toast(`替换失败：${formatError(error)}`, 'error')
+        toast(t('timetable.replaceFailed', { reason: tm(formatError(error)) }), 'error')
       }
     }
   })

@@ -2,6 +2,7 @@ import { MAX_PERIODS, MIN_PERIODS, MAX_TIMETABLE_IMAGES, TIMETABLE_COLUMNS } fro
 import type { PeriodRow, TimetableData } from '@shared/types'
 
 import { createTimetableController, type TimetableController } from '../components/timetable-controller'
+import { t, tm } from '../lib/i18n'
 import { escapeHtml } from '../lib/html'
 import { bridge, formatError, toast, unwrap } from '../lib/ipc'
 import type { ViewContext, ViewInstance } from '../app-shell'
@@ -34,87 +35,87 @@ export function createTimetableEditorView(ctx: ViewContext): ViewInstance {
   element.innerHTML = `
     <div class="sb-view__head">
       <div>
-        <h1 class="sb-view__title">课程表</h1>
-        <p class="sb-view__desc">表格模式与图片模式互为补充，随时可切换，两种内容都会保留。</p>
+        <h1 class="sb-view__title">${escapeHtml(t('nav.timetable'))}</h1>
+        <p class="sb-view__desc">${escapeHtml(t('timetable.desc'))}</p>
       </div>
       <div class="sb-toolbar">
-        <button class="sb-btn" type="button" data-action="back-home">回到概览</button>
+        <button class="sb-btn" type="button" data-action="back-home">${escapeHtml(t('timetable.backHome'))}</button>
       </div>
     </div>
 
     <div class="sb-notice">
-      切换模式只影响展示方式，不会删除另一种模式已经录入的内容。
+      ${escapeHtml(t('timetable.modeNote'))}
     </div>
 
     <section class="sb-section">
       <div class="sb-section__head">
-        <h2 class="sb-section__title">录入方式</h2>
+        <h2 class="sb-section__title">${escapeHtml(t('timetable.entryMode'))}</h2>
       </div>
       <div class="sb-card sb-card--pad">
         <div class="sb-radio-row">
           <label class="sb-radio">
             <input type="radio" name="tt-mode" value="table" />
-            <span>表格模式</span>
+            <span>${escapeHtml(t('timetable.mode.table'))}</span>
           </label>
           <label class="sb-radio">
             <input type="radio" name="tt-mode" value="image" />
-            <span>图片模式</span>
+            <span>${escapeHtml(t('timetable.mode.image'))}</span>
           </label>
         </div>
 
         <div class="sb-field sb-tt-inline-field" data-role="period-field">
-          <label for="period-count">每天节数（${MIN_PERIODS}–${MAX_PERIODS}）</label>
+          <label for="period-count">${escapeHtml(t('timetable.periodCount', { min: MIN_PERIODS, max: MAX_PERIODS }))}</label>
           <input id="period-count" class="sb-input" type="number"
                  min="${MIN_PERIODS}" max="${MAX_PERIODS}" step="1" inputmode="numeric" />
-          <p class="sb-hint">调整节数不会删除已填写的课程；把节数调回来就能看到。</p>
+          <p class="sb-hint">${escapeHtml(t('timetable.periodHint'))}</p>
         </div>
       </div>
     </section>
 
     <section class="sb-section" data-role="table-extras">
       <div class="sb-section__head">
-        <h2 class="sb-section__title">表格细节</h2>
+        <h2 class="sb-section__title">${escapeHtml(t('timetable.details'))}</h2>
       </div>
 
       <details class="sb-card sb-details">
-        <summary>表头名称（${TIMETABLE_COLUMNS} 列）</summary>
+        <summary>${escapeHtml(t('timetable.weekdayTitle', { count: TIMETABLE_COLUMNS }))}</summary>
         <div class="sb-details__body">
-          <p class="sb-hint">第一列固定用于显示节数，可改的是一周七天。</p>
+          <p class="sb-hint">${escapeHtml(t('timetable.weekdayHint'))}</p>
           <div class="sb-weekday-grid" data-role="weekday-inputs"></div>
           <div class="sb-toolbar">
-            <button class="sb-btn sb-btn--primary" type="button" data-action="save-weekdays">保存表头</button>
-            <button class="sb-btn" type="button" data-action="reset-weekdays">恢复默认</button>
+            <button class="sb-btn sb-btn--primary" type="button" data-action="save-weekdays">${escapeHtml(t('timetable.saveWeekdays'))}</button>
+            <button class="sb-btn" type="button" data-action="reset-weekdays">${escapeHtml(t('common.restoreDefault'))}</button>
           </div>
         </div>
       </details>
 
       <details class="sb-card sb-details">
-        <summary>每节课的时间</summary>
+        <summary>${escapeHtml(t('timetable.times'))}</summary>
         <div class="sb-details__body">
-          <p class="sb-hint">填好之后左侧会在节数下面显示时间，悬停预览与导出的表格都会带上。</p>
+          <p class="sb-hint">${escapeHtml(t('timetable.timesHint'))}</p>
 
           <div class="sb-period-grid" data-role="period-inputs"></div>
 
           <div class="sb-quickfill">
-            <span class="sb-quickfill__title">按规律生成</span>
+            <span class="sb-quickfill__title">${escapeHtml(t('timetable.quickfill'))}</span>
             <label class="sb-quickfill__field">
-              <span>第一节开始</span>
+              <span>${escapeHtml(t('timetable.quickfillStart'))}</span>
               <input class="sb-input" type="time" value="08:00" data-role="qf-start" />
             </label>
             <label class="sb-quickfill__field">
-              <span>单节时长（分）</span>
+              <span>${escapeHtml(t('timetable.quickfillDuration'))}</span>
               <input class="sb-input" type="number" min="10" max="300" step="5" value="45" data-role="qf-length" />
             </label>
             <label class="sb-quickfill__field">
-              <span>课间休息（分）</span>
+              <span>${escapeHtml(t('timetable.quickfillBreak'))}</span>
               <input class="sb-input" type="number" min="0" max="120" step="5" value="10" data-role="qf-break" />
             </label>
-            <button class="sb-btn" type="button" data-action="quickfill">生成到上面</button>
+            <button class="sb-btn" type="button" data-action="quickfill">${escapeHtml(t('timetable.quickfillApply'))}</button>
           </div>
 
           <div class="sb-toolbar">
-            <button class="sb-btn sb-btn--primary" type="button" data-action="save-times">保存时间</button>
-            <button class="sb-btn" type="button" data-action="clear-times">清空时间</button>
+            <button class="sb-btn sb-btn--primary" type="button" data-action="save-times">${escapeHtml(t('timetable.saveTimes'))}</button>
+            <button class="sb-btn" type="button" data-action="clear-times">${escapeHtml(t('timetable.clearTimes'))}</button>
           </div>
         </div>
       </details>
@@ -122,7 +123,7 @@ export function createTimetableEditorView(ctx: ViewContext): ViewInstance {
 
     <section class="sb-section">
       <div class="sb-section__head">
-        <h2 class="sb-section__title" data-role="preview-title">课表</h2>
+        <h2 class="sb-section__title" data-role="preview-title">${escapeHtml(t('timetable.preview'))}</h2>
         <span class="sb-badge" data-role="grid-meta"></span>
       </div>
       <div data-role="timetable-slot"></div>
@@ -144,7 +145,7 @@ export function createTimetableEditorView(ctx: ViewContext): ViewInstance {
 
   const controller: TimetableController = createTimetableController({
     editable: true,
-    errorPrefix: '课表',
+    errorPrefix: t('nav.timetable'),
     onData(next) {
       data = next
       paint()
@@ -166,13 +167,13 @@ export function createTimetableEditorView(ctx: ViewContext): ViewInstance {
 
     if (periodField) periodField.hidden = mode === 'image'
     if (tableExtras) tableExtras.hidden = mode === 'image'
-    if (previewTitle) previewTitle.textContent = mode === 'image' ? '课表照片' : '课表预览'
+    if (previewTitle) previewTitle.textContent = t(mode === 'image' ? 'timetable.photo' : 'timetable.previewTable')
 
     if (gridMeta) {
       gridMeta.textContent =
         mode === 'image'
-          ? `${data.images.length} / ${MAX_TIMETABLE_IMAGES} 张`
-          : `${weekdays.length} 列 × ${periodCount} 行`
+          ? t('timetable.imageCount', { count: data.images.length, max: MAX_TIMETABLE_IMAGES })
+          : t('timetable.gridSize', { cols: weekdays.length, rows: periodCount })
     }
 
     if (weekdayHost) {
@@ -181,7 +182,7 @@ export function createTimetableEditorView(ctx: ViewContext): ViewInstance {
         .map(
           (day, index) =>
             `<label class="sb-weekday">
-               <span>第 ${index + 2} 列</span>
+               <span>${escapeHtml(t('timetable.columnN', { n: index + 2 }))}</span>
                <input class="sb-input" data-weekday="${index + 1}" maxlength="12" value="${escapeHtml(day)}" />
              </label>`
         )
@@ -195,7 +196,7 @@ export function createTimetableEditorView(ctx: ViewContext): ViewInstance {
         const row = rowByIndex.get(index)
         parts.push(`
           <div class="sb-period">
-            <span class="sb-period__label">第 ${index} 节</span>
+            <span class="sb-period__label">${escapeHtml(t('timetable.periodN', { n: index }))}</span>
             <input class="sb-input" type="time" data-period="${index}" data-bound="start" value="${escapeHtml(row?.start ?? '')}" />
             <span class="sb-period__sep">–</span>
             <input class="sb-input" type="time" data-period="${index}" data-bound="end" value="${escapeHtml(row?.end ?? '')}" />
@@ -220,7 +221,7 @@ export function createTimetableEditorView(ctx: ViewContext): ViewInstance {
       paint()
       await ctx.reloadSettings()
     } catch (error) {
-      toast(`保存失败：${formatError(error)}`, 'error')
+      toast(t('timetable.saveFailed', { reason: tm(formatError(error)) }), 'error')
       paint()
     }
   }
@@ -231,9 +232,9 @@ export function createTimetableEditorView(ctx: ViewContext): ViewInstance {
       data = next
       controller.panel.render(next)
       paint()
-      toast('时间已保存', 'success')
+      toast(t('timetable.timesSaved'), 'success')
     } catch (error) {
-      toast(`保存失败：${formatError(error)}`, 'error')
+      toast(t('timetable.saveFailed', { reason: tm(formatError(error)) }), 'error')
     }
   }
 
@@ -287,13 +288,13 @@ export function createTimetableEditorView(ctx: ViewContext): ViewInstance {
       const index = Number.parseInt(input.dataset['weekday'] ?? '', 10)
       if (!Number.isFinite(index)) continue
       const value = input.value.trim().slice(0, 12)
-      weekdays[index] = value || `第${index}列`
+      weekdays[index] = value || t('timetable.columnN', { n: index })
     }
     void saveShape({ weekdays })
   })
 
   element.querySelector('[data-action="reset-weekdays"]')?.addEventListener('click', () => {
-    void saveShape({ weekdays: ['节数', '周一', '周二', '周三', '周四', '周五', '周六', '周日'] })
+    void saveShape({ weekdays: t('timetable.defaultWeekdays').split(',') })
   })
 
   element.querySelector('[data-action="save-times"]')?.addEventListener('click', () => {
@@ -314,15 +315,15 @@ export function createTimetableEditorView(ctx: ViewContext): ViewInstance {
     const gap = Math.trunc(Number(breakInput?.value))
 
     if (start === null) {
-      toast('请先在「第一节开始」里填一个有效时间', 'error')
+      toast(t('timetable.needStartTime'), 'error')
       return
     }
     if (!Number.isFinite(length) || length < 10 || length > 300) {
-      toast('单节时长请填 10–300 分钟', 'error')
+      toast(t('timetable.needDuration'), 'error')
       return
     }
     if (!Number.isFinite(gap) || gap < 0 || gap > 120) {
-      toast('课间休息请填 0–120 分钟', 'error')
+      toast(t('timetable.needBreak'), 'error')
       return
     }
 
@@ -345,7 +346,7 @@ export function createTimetableEditorView(ctx: ViewContext): ViewInstance {
       if (startEl) startEl.value = row.start
       if (endEl) endEl.value = row.end
     }
-    toast('已生成，确认无误后点「保存时间」', 'info')
+    toast(t('timetable.quickfilled'), 'info')
   })
 
   return {
