@@ -62,6 +62,9 @@ nsis:
   shortcutName: StudyBoard
   deleteAppDataOnUninstall: false
   runAfterFinish: true
+  # 更新 / 卸载时保住便携模式的数据目录。默认行为会把整个 $INSTDIR
+  # 递归删掉，而 study-board-data 就在里面 —— 见该文件的注释
+  include: build/installer.nsh
 
 mac:
   target:
