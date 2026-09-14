@@ -146,6 +146,29 @@ function makeTestPng(width: number, height: number): Buffer {
   return encodePng(rgba, width, height)
 }
 
+/**
+ * 拼一个最小的 ISO-BMFF 文件头（`ftyp` box）。
+ *
+ * HEIF / AVIF 同属这个容器家族，靠**编码品牌**区分；而品牌名可能出现在
+ * `major_brand`（偏移 8），也可能在 `compatible_brands` 列表里（偏移 16 起）。
+ * 真实编码器两种摆法都会写，所以靶子必须能覆盖这两种——
+ * 只测「品牌在偏移 8」会把扫描逻辑漏掉。
+ *
+ * 布局：`[长度4][ftyp][主品牌4][次版本4][兼容品牌4×n]`
+ */
+function makeFtyp(majorBrand: string, compatibleBrands: readonly string[]): Buffer {
+  const size = 8 + 4 + 4 + compatibleBrands.length * 4
+  const buf = Buffer.alloc(size)
+  buf.writeUInt32BE(size, 0)
+  buf.write('ftyp', 4, 'binary')
+  buf.write(majorBrand, 8, 'binary')
+  buf.writeUInt32BE(0, 12)
+  compatibleBrands.forEach((brand, index) => {
+    buf.write(brand, 16 + index * 4, 'binary')
+  })
+  return buf
+}
+
 async function seedTimetable(): Promise<void> {
   const { timetable, settings } = context()
 
@@ -332,6 +355,25 @@ async function seedMaterials(): Promise<void> {
   // SVG 是**有意**排除的格式（文本无可靠魔数、且能内嵌脚本），这里固定住这个决定
   writeFileSync(join(dir, '图标.svg'), '<svg xmlns="http://www.w3.org/2000/svg"></svg>', 'utf-8')
 
+  /**
+   * ISO-BMFF 的品牌判据。这两个靶子合起来固定住一条容易写错的规则：
+   * **格式靠编码品牌区分，不靠 major_brand**。
+   *
+   * AVIF 规范并不要求 major_brand 是 `avif`——只要求 `avif` 出现在
+   * FileTypeBox 里（compatible_brands 也算），`major_brand` 为 `mif1`
+   * 是合法且常见的写法。只看偏移 8 会把这类合法文件判成「文件内容与
+   * 扩展名不符」，而那条错误信息会引导用户去怀疑自己的文件。
+   */
+  // 主品牌是 mif1、avif 在兼容品牌里 —— 合法 AVIF，必须收
+  writeFileSync(join(dir, '主品牌mif1.avif'), makeFtyp('mif1', ['mif1', 'avif']))
+  // 内容其实是 HEIC，只是名字改成了 .avif —— 必须拒
+  // （认成 AVIF 会原样复制，而 Chromium 解不了 HEIC，结果是一张永远
+  //   显示不出来的缩略图；认成 HEIC 反而能靠 libheif 正常转码）
+  writeFileSync(join(dir, '实为HEIC.avif'), makeFtyp('heic', ['mif1', 'heic']))
+  // 真正的 HEIC 头：魔数闸必须放行（拒了就等于「所有 HEIC 都导不进来」）。
+  // 它后面接的是垃圾数据，转码一定会失败——那正好证明闸口放它过去了
+  writeFileSync(join(dir, '真HEIC头.heic'), Buffer.concat([makeFtyp('heic', ['mif1', 'heic']), Buffer.alloc(64)]))
+
   // 收件箱的靶子：模拟「浏览器扩展改存进来的下载」
   const inbox = ensureDir(
     join(app.getPath('downloads'), 'StudyBoard收件箱')
@@ -353,7 +395,10 @@ function materialSourcePaths(): string[] {
     join(dir, '伪装.pdf'),
     join(dir, '板书.png'),
     join(dir, '伪装.png'),
-    join(dir, '图标.svg')
+    join(dir, '图标.svg'),
+    join(dir, '主品牌mif1.avif'),
+    join(dir, '实为HEIC.avif'),
+    join(dir, '真HEIC头.heic')
   ]
 }
 
@@ -3631,12 +3676,57 @@ const MATERIALS_PROBE_SRC = (paths: string[]) => `(async () => {
   })
   out.svgRejected = svgImport.ok && svgImport.data.added === 0 && svgImport.data.errors.length === 1
 
+  /**
+   * ISO-BMFF 的品牌判据：格式靠**编码品牌**区分，不靠 major_brand。
+   *
+   * 这三条合起来固定住一条容易写错的规则。AVIF 规范并不要求 major_brand
+   * 是 \`avif\`——只要求 \`avif\` 出现在 FileTypeBox 里（compatible_brands 也算），
+   * 主品牌为 \`mif1\` 是合法且常见的写法。只看偏移 8 会把这类合法文件判成
+   * 「文件内容与扩展名不符」，而那条信息会引导用户去怀疑自己的文件。
+   */
+  // 主品牌 mif1、avif 在兼容品牌列表里 —— 合法 AVIF，必须收
+  const avifImport = await window.studyBoard.materials.import({
+    paths: [${JSON.stringify(paths[6])}],
+    courseCardId: cardId
+  })
+  out.mif1AvifAccepted =
+    avifImport.ok &&
+    avifImport.data.added === 1 &&
+    avifImport.data.materials.some((m) => m.fileName.endsWith('.avif'))
+
+  // 内容其实是 HEIC，只是名字改成了 .avif —— 必须拒。
+  // 放行的后果不是「多个文件」而是「一张永远显示不出来的缩略图」：
+  // avif 原样复制交给 Chromium 解，而 Chromium 解不了 HEIC
+  const mislabeled = await window.studyBoard.materials.import({
+    paths: [${JSON.stringify(paths[7])}],
+    courseCardId: cardId
+  })
+  out.heicAsAvifRejected =
+    mislabeled.ok &&
+    mislabeled.data.added === 0 &&
+    mislabeled.data.errors.length === 1 &&
+    mislabeled.data.errors[0].indexOf('不符') >= 0
+
+  // 真 HEIC 头必须过魔数闸——拒了就等于「所有 HEIC 都导不进来」。
+  // 这个靶子后面接的是垃圾数据，转码一定失败；失败原因里写的是「转码」
+  // 而不是「不符」，正好证明它**过了闸**、走到了解码那一步
+  const heicImport = await window.studyBoard.materials.import({
+    paths: [${JSON.stringify(paths[8])}],
+    courseCardId: cardId
+  })
+  out.heicGatePassed =
+    heicImport.ok &&
+    heicImport.data.added === 0 &&
+    heicImport.data.errors.length === 1 &&
+    heicImport.data.errors[0].indexOf('转码') >= 0
+
   return JSON.stringify({
     ...out,
     ok: out.importOk && out.prefixOk && out.fakeRejected && out.renameOk &&
       out.badgeOk && out.removeOk && out.inboxOk &&
       out.imageImported && out.imageItemOk && out.imagePrefixOk && out.imageThumbOk &&
-      out.fakeImageRejected && out.svgRejected
+      out.fakeImageRejected && out.svgRejected &&
+      out.mif1AvifAccepted && out.heicAsAvifRejected && out.heicGatePassed
   })
 })()`
 
