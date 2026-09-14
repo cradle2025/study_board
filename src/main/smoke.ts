@@ -90,6 +90,7 @@ export type SmokeScenario =
   | 'materials'
   | 'update'
   | 'migrate'
+  | 'i18n'
 
 export function smokeEnabled(): boolean {
   return process.env['STUDY_BOARD_SMOKE'] === '1'
@@ -109,6 +110,7 @@ export function smokeScenario(): SmokeScenario {
   if (value === 'materials') return 'materials'
   if (value === 'update') return 'update'
   if (value === 'migrate') return 'migrate'
+  if (value === 'i18n') return 'i18n'
   return 'basic'
 }
 
@@ -157,6 +159,24 @@ const UPDATE_MARKER_NOTE = '升级前就有的笔记.md'
 export function prepareUpdateScenarioIfRequested(): void {
   if (!smokeEnabled()) return
   const scenario = smokeScenario()
+
+  /**
+   * i18n 场景：**先把语言设成英文再启动**。
+   *
+   * 不能等应用起来之后再切 —— 默认值（比如课表表头）是在首次生成配置时
+   * 按当时的语言写进去的，起来之后再切已经晚了。要验「全新安装 + 英文」
+   * 这个组合，就得让配置从第一刻起就是英文。
+   */
+  if (scenario === 'i18n') {
+    const root = ensureDir(dataRoot(false))
+    writeFileSync(
+      join(root, 'config.json'),
+      JSON.stringify({ language: 'en-US' }, null, 2),
+      'utf-8'
+    )
+    return
+  }
+
   if (scenario !== 'update' && scenario !== 'migrate') return
 
   const root = dataRoot(false)
@@ -1726,6 +1746,37 @@ const PORTAL_PROBE = `(async () => {
   })
 })()`
 
+/**
+ * i18n 场景的探针：只确认「应用是**以英文启动**的」。
+ *
+ * 刻意不复用 BASIC_PROBE：那一条验的是「切语言会让界面文字变」，
+ * 判据是「文字和初始值不一样」。而本场景启动时就已经是英文，
+ * 初始值本身就是英文，那条判据永远不成立 —— 会把一个正确的
+ * 界面判成失败（第一次跑就是这么超时的）。
+ *
+ * 这里改成正着验：**导航分组标题应当是英文**。
+ */
+function i18nProbe(): string {
+  return `(async () => {
+  ${PROBE_HELPERS}
+  const shell = await waitFor('study-board-app .sb-shell', 20000)
+  const nav = await waitFor('[data-route="home"]', 20000)
+  await wait(1200)
+  const navGroup = document.querySelector('.sb-nav__group')?.textContent ?? ''
+  const navLabel = document.querySelector('[data-route="settings"] span:last-child')?.textContent ?? ''
+  return JSON.stringify({
+    shellReady: Boolean(shell),
+    navReady: Boolean(nav),
+    navGroup,
+    navLabel,
+    // 判据：这一组文字里**不含中日韩统一表意文字**。
+    // 用正则而不是比对具体词，是为了以后改文案不会把断言弄失效
+    groupIsEnglish: /^[^\u4e00-\u9fff]*$/.test(navGroup),
+    labelIsEnglish: /^[^\u4e00-\u9fff]*$/.test(navLabel)
+  })
+})()`
+}
+
 /* ------------------------------------------------------------------ 主流程 */
 
 export function runSmokeTestIfRequested(win: BrowserWindow): void {
@@ -1767,6 +1818,8 @@ export function runSmokeTestIfRequested(win: BrowserWindow): void {
                   ? materialsProbe()
                   : scenario === 'update' || scenario === 'migrate'
                     ? updateProbe()
+                    : scenario === 'i18n'
+                      ? i18nProbe()
                     : BASIC_PROBE
   // sync 要在主进程与渲染层之间来回走好几趟；export 要跑一次 Packer
   // 再起一个隐藏窗口打印 PDF，都比纯界面自检慢得多
@@ -1783,6 +1836,8 @@ export function runSmokeTestIfRequested(win: BrowserWindow): void {
               ? 45_000
               : scenario === 'update' || scenario === 'migrate'
                 ? 30_000
+                : scenario === 'i18n'
+                  ? 60_000
                 : 35_000
 
   const timer = setTimeout(() => {
@@ -1999,6 +2054,15 @@ export function runSmokeTestIfRequested(win: BrowserWindow): void {
                         verifyUpdateBackup() &&
                         verifyStampIsCurrent()
                     )
+                  : scenario === 'i18n'
+                  ? Boolean(
+                      parsed['shellReady'] &&
+                        parsed['navReady'] &&
+                        // 应用是**以英文启动**的，界面文字不含中文
+                        parsed['groupIsEnglish'] &&
+                        parsed['labelIsEnglish'] &&
+                        dictionaryOk()
+                    )
                   : Boolean(
                       parsed['customElement'] &&
                         parsed['mounted'] &&
@@ -2032,7 +2096,9 @@ export function runSmokeTestIfRequested(win: BrowserWindow): void {
           finalPassed = passed && !hijack.hijacked && noListeners && resilience.ok
         }
 
-        if (scenario === 'timetable') {
+        if (scenario === 'i18n') {
+          await captureLocalizedScreens(win)
+        } else if (scenario === 'timetable') {
           // 自检结束时停在图片模式，先留一张图；再切回表格模式，留第二张
           await captureIfRequested(win, 'timetable-image.png')
           await win.webContents
@@ -4187,6 +4253,49 @@ async function runSyncScenario(win: BrowserWindow): Promise<boolean> {
       renamed['renameOk'] &&
       renameCardOk
   )
+}
+
+/**
+ * 逐页截英文界面的图。
+ *
+ * 为什么需要它：grep 只能证明「源码里没有中文字面量」，证明不了
+ * 「界面上没有中文」—— 文案可能藏在模板字符串、拼在 HTML 里、
+ * 或者来自主进程。唯一的办法是**把英文界面一页页截出来看**。
+ *
+ * 顺序是先切到英文再逐页走，每页等一会儿（重绘是异步的）。
+ */
+async function captureLocalizedScreens(win: BrowserWindow): Promise<void> {
+  const routes = [
+    'home',
+    'timetable',
+    'portal',
+    'study',
+    'archived',
+    'materials',
+    'notes',
+    'settings'
+  ]
+  const run = async (script: string): Promise<void> => {
+    await win.webContents.executeJavaScript(script, true).catch(() => undefined)
+  }
+
+  await run(`(async () => {
+    const wait = (ms) => new Promise((r) => setTimeout(r, ms))
+    await window.studyBoard.settings.patch({ language: 'en-US' })
+    await wait(1500)
+    return 'ok'
+  })()`)
+
+  for (const route of routes) {
+    await run(`(async () => {
+      const wait = (ms) => new Promise((r) => setTimeout(r, ms))
+      const btn = document.querySelector('[data-route="${route}"]')
+      if (btn) btn.click()
+      await wait(1400)
+      return 'ok'
+    })()`)
+    await captureIfRequested(win, `i18n-${route}.png`)
+  }
 }
 
 /** 截图落到 STUDY_BOARD_SMOKE_SHOT 所在目录下 */

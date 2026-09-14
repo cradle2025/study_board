@@ -8,17 +8,31 @@
  * 位数在 `process.arch` 里（`x64` / `arm64` / `ia32`），两件事必须一起说才不歧义。
  */
 
+import { t } from './i18n'
+
 const OS_LABEL: Record<string, string> = {
   win32: 'Windows',
   darwin: 'macOS',
   linux: 'Linux'
 }
 
+/**
+ * 位数标签。**必须是 key 而不是文案** —— 它渲染在侧栏的版本号里，
+ * 也就是每一页都能看到的那一行。
+ *
+ * ARM64 / ARM32 两种写法两种语言下都一样，所以不走词典，
+ * 但为了「表里只有一处真相」还是留在同一张表里。
+ */
 const ARCH_LABEL: Record<string, string> = {
-  x64: '64 位',
-  ia32: '32 位',
+  x64: 'platform.arch.x64',
+  ia32: 'platform.arch.ia32',
   arm64: 'ARM64',
   arm: 'ARM32'
+}
+
+/** 表里是 key，取值要过 t()；ARM64 / ARM32 过一遍也无害（词典里查不到就原样返回） */
+function archText(arch: string): string {
+  return t(ARCH_LABEL[arch] ?? arch)
 }
 
 /** 短标签：侧栏那种一行放不下几个字的地方用，如「Windows 64 位」 */
@@ -27,7 +41,7 @@ export function describeOs(platform: string): string {
 }
 
 export function describeArch(arch: string): string {
-  return ARCH_LABEL[arch] ?? arch
+  return archText(arch)
 }
 
 /**
@@ -39,8 +53,8 @@ export function describeArch(arch: string): string {
 export function describePlatform(platform: string, arch: string): string {
   // macOS 说「Apple 芯片 / Intel」比说「ARM64 / 64 位」更贴近用户自己的认知
   if (platform === 'darwin') {
-    if (arch === 'arm64') return 'macOS · Apple 芯片（arm64）'
-    if (arch === 'x64') return 'macOS · Intel（x64）'
+    if (arch === 'arm64') return t('platform.macArm', { arch })
+    if (arch === 'x64') return t('platform.macIntel', { arch })
   }
-  return `${describeOs(platform)} · ${describeArch(arch)}（${arch}）`
+  return t('platform.full', { os: describeOs(platform), bits: archText(arch), arch })
 }

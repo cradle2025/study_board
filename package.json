@@ -35,6 +35,7 @@
     "smoke:materials": "node scripts/smoke.mjs materials",
     "smoke:update": "node scripts/smoke.mjs update",
     "smoke:migrate": "node scripts/smoke.mjs migrate",
+    "smoke:i18n": "node scripts/smoke.mjs i18n",
     "bench": "node scripts/smoke.mjs bench",
     "bench:compare": "node scripts/compare-bench.mjs",
     "hang": "node scripts/hang-test.mjs",

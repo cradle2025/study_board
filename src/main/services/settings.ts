@@ -1,7 +1,8 @@
 import { existsSync, readFileSync, renameSync, unlinkSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 
-import { DEFAULT_PERIODS, DEFAULT_WEEKDAYS, MAX_PERIODS, MIN_PERIODS } from '@shared/limits'
+import { isLang, translate, type Lang } from '@shared/i18n'
+import { DEFAULT_PERIODS, DEFAULT_WEEKDAYS, MAX_PERIODS, MIN_PERIODS, TIMETABLE_COLUMNS } from '@shared/limits'
 import { DEFAULT_AI_PROVIDER } from '@shared/aiProviders'
 import type { AppSettings, SettingsPatch } from '@shared/types'
 
@@ -9,7 +10,24 @@ import { configFile, dataRoot, defaultNotesLibraryDir, ensureDir } from '../path
 
 export { DEFAULT_PERIODS, DEFAULT_WEEKDAYS, MAX_PERIODS, MIN_PERIODS }
 
-function buildDefaults(portable: boolean): AppSettings {
+/**
+ * 默认表头按语言取。
+ *
+ * 表头是**存进配置的用户数据**（用户能改），所以只在**首次生成默认值**时
+ * 跟着语言走一次。已经存过的不动 —— 用户改成「Mon / 周一 / 星期一」是他的
+ * 自由，切语言不该把他改过的东西改回去。
+ *
+ * 不这么做的话，全新安装 + 英文界面会显示中文表头：界面上其余部分都是
+ * 英文，就那一排是中文，看着像漏翻了。
+ */
+function defaultWeekdays(lang: Lang): string[] {
+  const text = translate(lang, 'timetable.defaultWeekdays')
+  const parts = text.split(',').map((part) => part.trim())
+  // 词典坏了也别给出一个长度不对的表头 —— 宁可退回常量
+  return parts.length === TIMETABLE_COLUMNS ? parts : [...DEFAULT_WEEKDAYS]
+}
+
+function buildDefaults(portable: boolean, lang: Lang): AppSettings {
   return {
     theme: 'system',
     language: 'zh-CN',
@@ -20,7 +38,7 @@ function buildDefaults(portable: boolean): AppSettings {
     timetable: {
       mode: 'table',
       periodCount: DEFAULT_PERIODS,
-      weekdays: [...DEFAULT_WEEKDAYS]
+      weekdays: defaultWeekdays(lang)
     },
     ai: {
       provider: DEFAULT_AI_PROVIDER.id,
@@ -56,7 +74,10 @@ export class SettingsStore {
   constructor(portable: boolean) {
     ensureDir(dataRoot(portable))
     this.#file = configFile(portable)
-    this.#cache = { ...buildDefaults(portable), ...this.#readRaw() }
+    const raw = this.#readRaw()
+    // 默认值要跟着语言走，而语言本身来自配置 —— 所以先读一次原始配置
+    const lang: Lang = isLang(raw.language) ? raw.language : 'zh-CN'
+    this.#cache = { ...buildDefaults(portable, lang), ...raw }
     /**
      * `portableMode` 是**探测结果的镜像**，不是独立输入。
      *
@@ -70,7 +91,7 @@ export class SettingsStore {
      */
     this.#cache.portableMode = portable
     this.#cache.timetable = {
-      ...buildDefaults(portable).timetable,
+      ...buildDefaults(portable, this.#cache.language).timetable,
       ...this.#cache.timetable,
       periodCount: clampPeriods(this.#cache.timetable?.periodCount, DEFAULT_PERIODS)
     }
@@ -116,10 +137,12 @@ export class SettingsStore {
 
   /** 重新读取磁盘上的配置（用于便携模式切换后） */
   reload(portable: boolean): AppSettings {
-    this.#cache = { ...buildDefaults(portable), ...this.#readRaw() }
+    const raw = this.#readRaw()
+    const lang: Lang = isLang(raw.language) ? raw.language : 'zh-CN'
+    this.#cache = { ...buildDefaults(portable, lang), ...raw }
     this.#cache.portableMode = portable
     this.#cache.timetable = {
-      ...buildDefaults(portable).timetable,
+      ...buildDefaults(portable, this.#cache.language).timetable,
       ...this.#cache.timetable,
       periodCount: clampPeriods(this.#cache.timetable?.periodCount, DEFAULT_PERIODS)
     }
@@ -177,7 +200,7 @@ export class SettingsStore {
   /** 数据目录变化时，把默认位置的配置整体搬到新目录 */
   migrateTo(portable: boolean): AppSettings {
     const previous = this.#cache
-    const defaults = buildDefaults(portable)
+    const defaults = buildDefaults(portable, this.#cache.language)
     const nextFile = configFile(portable)
     const next: AppSettings = {
       ...defaults,
