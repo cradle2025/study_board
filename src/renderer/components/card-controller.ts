@@ -1,6 +1,7 @@
 import type { CourseStatus } from '@shared/course'
 import type { CourseCard, CourseCardInput, TimetableData } from '@shared/types'
 
+import { t, tm } from '../lib/i18n'
 import { distinctCourses, type CourseRef } from '../lib/courses'
 import { bridge, formatError, toast, unwrap } from '../lib/ipc'
 import { confirmAction } from '../lib/overlay'
@@ -49,9 +50,9 @@ export interface CardController {
 
 /** 状态变了之后给用户一句人话，而不是「操作成功」 */
 const STATUS_TOAST: Record<CourseStatus, string> = {
-  learned: '已归档，可在「已学库」里找到',
-  wish: '已挪到愿望单',
-  learning: '已挪回在学'
+  learned: 'card.moved.learned',
+  wish: 'card.moved.wish',
+  learning: 'card.moved.learning'
 }
 
 export function createCardController(options: CardControllerOptions): CardController {
@@ -92,19 +93,19 @@ export function createCardController(options: CardControllerOptions): CardContro
 
     async onRemove(card) {
       const confirmed = await confirmAction({
-        title: `删除「${card.courseName}」这张卡片？`,
+        title: t('card.removeConfirmTitle', { name: card.courseName }),
         // 明确说清「笔记不会被删」——不然用户会以为自己的笔记也没了
-        message: '只删卡片，对应的笔记文件会保留在笔记库里，不会一起删掉。',
-        confirmText: '删除卡片',
+        message: t('card.removeConfirmBody'),
+        confirmText: t('card.removeConfirm'),
         danger: true
       })
       if (!confirmed) return
 
       try {
         apply(await unwrap(bridge().cards.remove(card.id)))
-        toast('已删除卡片', 'success')
+        toast(t('card.removed'), 'success')
       } catch (error) {
-        toast(`删除失败：${formatError(error)}`, 'error')
+        toast(t('card.removeFailed', { reason: tm(formatError(error)) }), 'error')
       }
     }
   })
@@ -121,9 +122,9 @@ export function createCardController(options: CardControllerOptions): CardContro
   async function setStatus(card: CourseCard, status: CourseStatus): Promise<void> {
     try {
       apply(await unwrap(bridge().cards.setStatus({ id: card.id, status })))
-      toast(STATUS_TOAST[status], 'success')
+      toast(t(STATUS_TOAST[status]), 'success')
     } catch (error) {
-      toast(`改动失败：${formatError(error)}`, 'error')
+      toast(t('card.changeFailed', { reason: tm(formatError(error)) }), 'error')
     }
   }
 
@@ -142,7 +143,7 @@ export function createCardController(options: CardControllerOptions): CardContro
       try {
         apply(await unwrap(bridge().cards.list()))
       } catch (error) {
-        toast(`卡片加载失败：${formatError(error)}`, 'error')
+        toast(t('card.loadFailed', { reason: tm(formatError(error)) }), 'error')
       }
       await loadTimetable()
       return cards
@@ -151,7 +152,7 @@ export function createCardController(options: CardControllerOptions): CardContro
     async upsert(input) {
       try {
         apply(await unwrap(bridge().cards.upsert(input)))
-        toast(input.id ? '已保存' : `已创建「${input.courseName}」并建好笔记`, 'success')
+        toast(input.id ? t('card.saved') : t('card.created', { name: input.courseName }), 'success')
       } catch (error) {
         // 抛回去让表单继续开着：输入有误时不该让用户白填一遍
         throw new Error(formatError(error))

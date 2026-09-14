@@ -2,6 +2,7 @@ import type { CourseStatus } from '@shared/course'
 import { MAX_CARD_LEVEL } from '@shared/limits'
 import type { CourseCard } from '@shared/types'
 
+import { t } from '../lib/i18n'
 import { escapeHtml } from '../lib/html'
 
 /**
@@ -66,13 +67,16 @@ export interface CardGridHandle {
  * 「这学期不修了、下学期再说」是常事），其余改动走双击表单里的状态下拉——
  * 一个脚部塞四五个按钮，卡片会变成一排工具条。
  */
-const STATUS_ACTIONS: Record<CourseStatus, readonly { to: CourseStatus; label: string; title: string }[]> = {
+const STATUS_ACTIONS: Record<
+  CourseStatus,
+  readonly { to: CourseStatus; labelKey: string; titleKey: string }[]
+> = {
   learning: [
-    { to: 'learned', label: '归档', title: '这门课修完了，收进已学库' },
-    { to: 'wish', label: '想学', title: '这学期先不修，挪到愿望单' }
+    { to: 'learned', labelKey: 'card.act.archive', titleKey: 'card.act.archiveTitle' },
+    { to: 'wish', labelKey: 'card.act.wish', titleKey: 'card.act.wishTitle' }
   ],
-  wish: [{ to: 'learning', label: '开始学', title: '这学期就修，挪到在学' }],
-  learned: [{ to: 'learning', label: '移回在学', title: '还没修完，挪回在学' }]
+  wish: [{ to: 'learning', labelKey: 'card.act.start', titleKey: 'card.act.startTitle' }],
+  learned: [{ to: 'learning', labelKey: 'card.act.moveBack', titleKey: 'card.act.moveBackTitle' }]
 }
 
 /**
@@ -86,7 +90,7 @@ function ratingHtml(label: string, value: number): string {
   for (let i = 1; i <= MAX_CARD_LEVEL; i += 1) {
     dots.push(`<span class="sb-course__dot${i <= value ? ' sb-course__dot--on' : ''}"></span>`)
   }
-  const text = value > 0 ? `${value} / ${MAX_CARD_LEVEL}` : '未填'
+  const text = value > 0 ? `${value} / ${MAX_CARD_LEVEL}` : t('card.unset')
   return `
     <div class="sb-course__rating">
       <span class="sb-course__rating-label">${escapeHtml(label)}</span>
@@ -118,15 +122,15 @@ function wishFrontHtml(card: CourseCard): string {
     <div class="sb-itemcard__face sb-itemcard__face--front">
       <div class="sb-course__top">${nameHtml(card)}</div>
       <div class="sb-course__wish">
-        <div class="sb-course__block-title">想修的理由</div>
+        <div class="sb-course__block-title">${escapeHtml(t('card.reasonTitle'))}</div>
         ${
           reason
             ? `<p class="sb-course__wish-text">${escapeHtml(reason)}</p>`
-            : `<p class="sb-course__wish-text sb-course__wish-text--empty">还没写。双击卡片补上——过一阵子你自己也会忘了当初为什么想修它。</p>`
+            : `<p class="sb-course__wish-text sb-course__wish-text--empty">${escapeHtml(t('card.reasonEmpty'))}</p>`
         }
       </div>
       <div class="sb-course__footrow">
-        <span class="sb-course__chip" title="计划什么时候修">计划 ${escapeHtml(semester || '未定')}</span>
+        <span class="sb-course__chip" title="${escapeHtml(t('card.plannedWhen'))}">${escapeHtml(t('card.planned', { term: semester || t('card.termUnset') }))}</span>
       </div>
     </div>
   `
@@ -138,7 +142,7 @@ function frontHtml(card: CourseCard): string {
   // 打分是「结果」，做成右上角的徽章；没填就整个不渲染，不留一个空占位
   const score = card.score.trim()
   const badge = score.length > 0
-    ? `<span class="sb-course__score" title="打分：${escapeHtml(score)}">${escapeHtml(score)}</span>`
+    ? `<span class="sb-course__score" title="${escapeHtml(t('card.scoreTitle', { score }))}">${escapeHtml(score)}</span>`
     : ''
 
   return `
@@ -148,8 +152,8 @@ function frontHtml(card: CourseCard): string {
         ${badge}
       </div>
       <div class="sb-course__ratings">
-        ${ratingHtml('难度', card.difficulty)}
-        ${ratingHtml('掌握', card.mastery)}
+        ${ratingHtml(t('card.difficulty'), card.difficulty)}
+        ${ratingHtml(t('card.mastery'), card.mastery)}
       </div>
     </div>
   `
@@ -162,8 +166,8 @@ function backHtml(card: CourseCard): string {
     return `
       <div class="sb-itemcard__face sb-itemcard__face--back">
         <div class="sb-course__block">
-          <div class="sb-course__block-title">还没上过这门课</div>
-          <p class="sb-course__block-body">这一面留给「给分标准」和「课程结构」，等真的开始修了再回来补。现在先把想修的理由写清楚就够了。</p>
+          <div class="sb-course__block-title">${escapeHtml(t('card.notTakenTitle'))}</div>
+          <p class="sb-course__block-body">${escapeHtml(t('card.notTakenBody'))}</p>
         </div>
       </div>
     `
@@ -174,8 +178,8 @@ function backHtml(card: CourseCard): string {
     return `
       <div class="sb-itemcard__face sb-itemcard__face--back">
         <div class="sb-course__empty">
-          <div class="sb-course__empty-title">背面还空着</div>
-          <p class="sb-course__empty-hint">双击卡片，补上「给分标准」和「课程大致结构」。</p>
+          <div class="sb-course__empty-title">${escapeHtml(t('card.backEmptyTitle'))}</div>
+          <p class="sb-course__empty-hint">${escapeHtml(t('card.backEmptyHint'))}</p>
         </div>
       </div>
     `
@@ -191,10 +195,10 @@ function backHtml(card: CourseCard): string {
   const parts: string[] = []
   // 学期只在背面顶端带一行：正面高度是写死的，再多塞一行会把课程名挤到一行去
   if (card.semester.length > 0) {
-    parts.push(`<div class="sb-course__semester">学期 · ${escapeHtml(card.semester)}</div>`)
+    parts.push(`<div class="sb-course__semester">${escapeHtml(t('card.termLine', { term: card.semester }))}</div>`)
   }
-  if (card.gradingPolicy.length > 0) parts.push(block('给分标准', card.gradingPolicy))
-  if (card.outline.length > 0) parts.push(block('课程结构', card.outline))
+  if (card.gradingPolicy.length > 0) parts.push(block(t('card.grading'), card.gradingPolicy))
+  if (card.outline.length > 0) parts.push(block(t('card.outline'), card.outline))
   return `<div class="sb-itemcard__face sb-itemcard__face--back">${parts.join('')}</div>`
 }
 
@@ -205,7 +209,7 @@ function statusButtonsHtml(card: CourseCard, enabled: boolean): string {
     .map(
       (action) => `
         <button class="sb-itemcard__status" type="button" data-act="status" data-to="${action.to}"
-                title="${escapeHtml(action.title)}">${escapeHtml(action.label)}</button>
+                title="${escapeHtml(t(action.titleKey))}">${escapeHtml(t(action.labelKey))}</button>
       `
     )
     .join('')
@@ -222,12 +226,12 @@ function cardHtml(
   const materialButton =
     materialsEnabled && materialCount !== null
       ? `<button class="sb-itemcard__mats" type="button" data-act="materials"
-              title="这门课的资料">▣ ${materialCount > 0 ? materialCount : '资料'}</button>`
+              title="${escapeHtml(t('card.materials'))}">▣ ${materialCount > 0 ? materialCount : escapeHtml(t('card.materialsShort'))}</button>`
       : ''
   return `
     <div class="sb-itemcard" data-id="${escapeHtml(card.id)}" data-status="${card.status}">
       <div class="sb-itemcard__flip" data-act="flip" role="button" tabindex="0"
-           aria-label="${escapeHtml(card.courseName)}，点击翻转，双击修改">
+           aria-label="${escapeHtml(t('card.cardLabel', { name: card.courseName }))}">
         <div class="sb-itemcard__inner">
           ${frontHtml(card)}
           ${backHtml(card)}
@@ -235,16 +239,16 @@ function cardHtml(
       </div>
       <div class="sb-itemcard__foot">
         <button class="sb-itemcard__note" type="button" data-act="note"
-                title="${linked ? '打开这门课的笔记' : '这门课还没有笔记，去笔记页新建一篇'}">
-          记笔记
+                title="${escapeHtml(t(linked ? 'card.openNote' : 'study.noNoteYet'))}">
+          ${escapeHtml(t('card.takeNotes'))}
         </button>
         ${materialButton}
         <span class="sb-itemcard__actions">
           ${statusButtonsHtml(card, statusEnabled)}
           ${
             editable
-              ? `<button class="sb-iconbtn" type="button" data-act="edit" title="修改" aria-label="修改 ${escapeHtml(card.courseName)}">✎</button>
-                 <button class="sb-iconbtn sb-iconbtn--danger" type="button" data-act="remove" title="删除卡片" aria-label="删除 ${escapeHtml(card.courseName)}">✕</button>`
+              ? `<button class="sb-iconbtn" type="button" data-act="edit" title="${escapeHtml(t('common.edit'))}" aria-label="${escapeHtml(t('card.editLabel', { name: card.courseName }))}">✎</button>
+                 <button class="sb-iconbtn sb-iconbtn--danger" type="button" data-act="remove" title="${escapeHtml(t('card.removeTitle'))}" aria-label="${escapeHtml(t('card.removeLabel', { name: card.courseName }))}">✕</button>`
               : ''
           }
         </span>
@@ -266,8 +270,8 @@ export function createCardGrid(options: CardGridOptions): CardGridHandle {
   const empty = document.createElement('p')
   empty.className = 'sb-empty'
   empty.textContent = options.editable
-    ? '还没有课程卡片。点「新建卡片」开始，课程名和老师可以直接从课表带过来。'
-    : '还没有课程卡片，去「课程与学习」页添加。'
+    ? t('card.emptyWithAction')
+    : t('card.empty')
   empty.hidden = true
   element.appendChild(empty)
 
@@ -378,7 +382,7 @@ export function createCardGrid(options: CardGridOptions): CardGridHandle {
           <section class="sb-cards__group">
             <div class="sb-cards__group-head">
               <h3 class="sb-cards__group-title">${escapeHtml(group.label)}</h3>
-              <span class="sb-cards__group-count">${group.cards.length} 门</span>
+              <span class="sb-cards__group-count">${escapeHtml(t('card.groupCount', { count: group.cards.length }))}</span>
             </div>
             ${list}
           </section>
