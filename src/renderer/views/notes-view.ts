@@ -12,7 +12,7 @@ import type { ViewContext, ViewInstance } from '../app-shell'
 import { MODE_HINT, MODE_LABEL, type EditorHandle, type EditorMode } from '../lib/editor/commands'
 import { outlineParents, parseHeadings, type OutlineItem } from '../lib/editor/outline'
 import { createEditorToolbar } from '../lib/editor/toolbar'
-import { t } from '../lib/i18n'
+import { t, tm } from '../lib/i18n'
 import { escapeHtml } from '../lib/html'
 import { bridge, formatError, toast, unwrap } from '../lib/ipc'
 import { confirmAction, openModalCard, promptText, showFloating } from '../lib/overlay'
@@ -47,10 +47,10 @@ const AUTOSAVE_DELAY = 800
  * 四种格式一屏放得下，不需要再分组或折叠。
  */
 const EXPORT_ITEMS: ReadonlyArray<{ format: ExportFormat; label: string }> = [
-  { format: 'md', label: 'Markdown 原文' },
-  { format: 'html', label: '网页' },
-  { format: 'docx', label: 'Word 文档' },
-  { format: 'pdf', label: 'PDF 文档' }
+  { format: 'md', label: 'notes.export.md' },
+  { format: 'html', label: 'notes.export.html' },
+  { format: 'docx', label: 'notes.export.docx' },
+  { format: 'pdf', label: 'notes.export.pdf' }
 ]
 
 /**
@@ -59,13 +59,13 @@ const EXPORT_ITEMS: ReadonlyArray<{ format: ExportFormat; label: string }> = [
  * 给几个「按一下就能用」的起点，比让用户对着空输入框自己想措辞友好得多。
  * 它们只是把文字填进输入框，用户可以随手改——所以这些是**例句**不是枚举值。
  */
-const AI_PRESETS: ReadonlyArray<{ label: string; instruction: string }> = [
-  { label: '整理成大纲', instruction: '把这篇笔记整理成层级清晰的大纲，保留原有信息，不要增删事实' },
-  { label: '提炼要点', instruction: '提炼出这篇笔记的核心要点，用无序列表逐条列出，每条一句话' },
-  { label: '复习提纲', instruction: '根据这篇笔记生成一份复习提纲，按知识点分组，标出需要重点记忆的地方' },
-  { label: '解释难点', instruction: '找出这篇笔记里最难的几个概念，用更通俗的话解释一遍，可以打比方' },
-  { label: '出练习题', instruction: '根据这篇笔记出 5 道练习题并附答案，覆盖主要知识点' },
-  { label: '润色文字', instruction: '把这篇笔记的文字润色得更通顺，去掉口语和重复，不要改变原意' }
+const AI_PRESETS: ReadonlyArray<{ labelKey: string; instructionKey: string }> = [
+  { labelKey: 'notes.ai.outline.label', instructionKey: 'notes.ai.outline.instruction' },
+  { labelKey: 'notes.ai.keypoints.label', instructionKey: 'notes.ai.keypoints.instruction' },
+  { labelKey: 'notes.ai.review.label', instructionKey: 'notes.ai.review.instruction' },
+  { labelKey: 'notes.ai.explain.label', instructionKey: 'notes.ai.explain.instruction' },
+  { labelKey: 'notes.ai.quiz.label', instructionKey: 'notes.ai.quiz.instruction' },
+  { labelKey: 'notes.ai.polish.label', instructionKey: 'notes.ai.polish.instruction' }
 ]
 
 export function createNotesView(ctx: ViewContext): ViewInstance {
@@ -74,44 +74,44 @@ export function createNotesView(ctx: ViewContext): ViewInstance {
   element.innerHTML = `
     <div class="sb-view__head">
       <div>
-        <h1 class="sb-view__title">笔记</h1>
-        <p class="sb-view__desc">纯 Markdown 存在本地，目录可以直接作为 Obsidian 库打开。</p>
+        <h1 class="sb-view__title">${escapeHtml(t('nav.notes'))}</h1>
+        <p class="sb-view__desc">${escapeHtml(t('notes.desc'))}</p>
       </div>
       <div class="sb-toolbar">
-        <button class="sb-btn" type="button" data-action="open">打开笔记库</button>
-        <button class="sb-btn sb-btn--primary" type="button" data-action="new">新建笔记</button>
+        <button class="sb-btn" type="button" data-action="open">${escapeHtml(t('notes.openLibrary'))}</button>
+        <button class="sb-btn sb-btn--primary" type="button" data-action="new">${escapeHtml(t('notes.newNote'))}</button>
       </div>
     </div>
 
-    <div class="sb-notice" data-role="lib-path">读取中…</div>
+    <div class="sb-notice" data-role="lib-path">${escapeHtml(t('common.loading'))}</div>
 
     <div class="sb-notes">
       <aside class="sb-notes__list" data-role="list">
         <div class="sb-notes__course" data-role="course-materials" hidden>
-          <div class="sb-notes__course-head">本课资料</div>
+          <div class="sb-notes__course-head">${escapeHtml(t('notes.courseMaterials'))}</div>
           <div data-role="course-materials-list"></div>
         </div>
       </aside>
       <section class="sb-notes__editor">
-        <p class="sb-empty" data-role="placeholder">从左边选一篇笔记，或者新建一篇。</p>
+        <p class="sb-empty" data-role="placeholder">${escapeHtml(t('notes.pickOrCreate'))}</p>
         <div class="sb-notes__pane" data-role="pane" hidden>
           <div class="sb-notes__pane-head">
-            <input class="sb-input sb-notes__title" data-role="title" type="text" maxlength="80" aria-label="笔记标题" />
+            <input class="sb-input sb-notes__title" data-role="title" type="text" maxlength="80" aria-label="${escapeHtml(t('notes.titleLabel'))}" />
             <div class="sb-toolbar">
               <span class="sb-badge" data-role="meta"></span>
-              <button class="sb-btn sb-btn--ghost" type="button" data-action="materials">插资料</button>
-              <button class="sb-btn sb-btn--ghost" type="button" data-action="ai">AI 助手</button>
-              <button class="sb-btn sb-btn--ghost" type="button" data-action="export">导出</button>
-              <button class="sb-btn sb-btn--ghost" type="button" data-action="notion">推送到 Notion</button>
-              <button class="sb-btn sb-btn--ghost" type="button" data-action="rename">重命名</button>
-              <button class="sb-btn sb-btn--ghost" type="button" data-action="delete">删除</button>
+              <button class="sb-btn sb-btn--ghost" type="button" data-action="materials">${escapeHtml(t('notes.insertMaterial'))}</button>
+              <button class="sb-btn sb-btn--ghost" type="button" data-action="ai">${escapeHtml(t('settings.ai'))}</button>
+              <button class="sb-btn sb-btn--ghost" type="button" data-action="export">${escapeHtml(t('notes.exportLabel'))}</button>
+              <button class="sb-btn sb-btn--ghost" type="button" data-action="notion">${escapeHtml(t('notes.pushNotion'))}</button>
+              <button class="sb-btn sb-btn--ghost" type="button" data-action="rename">${escapeHtml(t('common.rename'))}</button>
+              <button class="sb-btn sb-btn--ghost" type="button" data-action="delete">${escapeHtml(t('common.delete'))}</button>
             </div>
           </div>
 
           <div class="sb-notes__modebar">
-            <div class="sb-modeswitch" role="radiogroup" aria-label="编辑模式">
+            <div class="sb-modeswitch" role="radiogroup" aria-label="${escapeHtml(t('notes.editorMode'))}">
               <button class="sb-modeswitch__item" type="button" role="radio" data-mode="markdown">Markdown</button>
-              <button class="sb-modeswitch__item" type="button" role="radio" data-mode="richtext">富文本</button>
+              <button class="sb-modeswitch__item" type="button" role="radio" data-mode="richtext">${escapeHtml(t('settings.editor.richtext'))}</button>
             </div>
             <span class="sb-hint" data-role="mode-hint"></span>
           </div>
@@ -120,11 +120,11 @@ export function createNotesView(ctx: ViewContext): ViewInstance {
 
           <div class="sb-notes__main">
             <div class="sb-notes__stage" data-role="stage"></div>
-            <aside class="sb-notes__outline" data-role="outline" hidden aria-label="文档大纲">
+            <aside class="sb-notes__outline" data-role="outline" hidden aria-label="${escapeHtml(t('notes.outline'))}">
               <div class="sb-notes__outline-head">
-                <span>大纲</span>
+                <span>${escapeHtml(t('notes.outlineTitle'))}</span>
                 <button class="sb-iconbtn" type="button" data-outline-act="collapse"
-                        title="全部收起" aria-label="全部收起">⤒</button>
+                        title="${escapeHtml(t('notes.collapseAll'))}" aria-label="${escapeHtml(t('notes.collapseAll'))}">⤒</button>
               </div>
               <div class="sb-notes__outline-body" data-role="outline-body"></div>
             </aside>
@@ -198,7 +198,7 @@ export function createNotesView(ctx: ViewContext): ViewInstance {
   function renderList(): void {
     if (!listEl) return
     if (notes.length === 0 && groups.length === 0) {
-      listEl.innerHTML = '<p class="sb-empty">笔记库还是空的，点右上角「新建笔记」。</p>'
+      listEl.innerHTML = `<p class="sb-empty">${escapeHtml(t('notes.libraryEmpty'))}</p>`
       return
     }
     listEl.innerHTML = `${toolbarHtml()}<div class="sb-notes__tree">${treeHtml()}</div>`
@@ -208,8 +208,8 @@ export function createNotesView(ctx: ViewContext): ViewInstance {
   function toolbarHtml(): string {
     return `
       <div class="sb-notes__listbar">
-        <button class="sb-btn sb-btn--sm sb-btn--primary" type="button" data-list-act="new-note">新建笔记</button>
-        <button class="sb-btn sb-btn--sm" type="button" data-list-act="new-group">新建分组</button>
+        <button class="sb-btn sb-btn--sm sb-btn--primary" type="button" data-list-act="new-note">${escapeHtml(t('notes.newNote'))}</button>
+        <button class="sb-btn sb-btn--sm" type="button" data-list-act="new-group">${escapeHtml(t('notes.newGroup'))}</button>
       </div>
     `
   }
@@ -258,16 +258,16 @@ export function createNotesView(ctx: ViewContext): ViewInstance {
           <div class="sb-notes__group-row${expanded ? ' sb-notes__group-row--open' : ''}">
             <button class="sb-notes__twisty" type="button" data-group-act="toggle"
                     aria-expanded="${expanded ? 'true' : 'false'}"
-                    title="${expanded ? '收起' : '展开'}" aria-label="${expanded ? '收起' : '展开'} ${escapeHtml(group.name)}"
+                    title="${escapeHtml(t(expanded ? 'notes.collapse' : 'notes.expand'))}" aria-label="${escapeHtml(t(expanded ? 'notes.collapse' : 'notes.expand'))} ${escapeHtml(group.name)}"
                     >${expanded ? '▾' : '▸'}</button>
             <span class="sb-notes__group-name" title="${escapeHtml(group.name)}">${escapeHtml(group.name)}</span>
             <span class="sb-notes__group-count">${totalOf(group.id)}</span>
             <span class="sb-notes__row-actions">
-              <button class="sb-iconbtn" type="button" data-group-act="add-note" title="在这个分组里新建笔记" aria-label="在 ${escapeHtml(group.name)} 里新建笔记">＋</button>
-              <button class="sb-iconbtn" type="button" data-group-act="add-sub" title="新建子分组" aria-label="在 ${escapeHtml(group.name)} 下新建子分组">⊞</button>
-              <button class="sb-iconbtn" type="button" data-group-act="rename" title="重命名分组" aria-label="重命名 ${escapeHtml(group.name)}">✎</button>
-              <button class="sb-iconbtn" type="button" data-group-act="move" title="移动分组" aria-label="移动 ${escapeHtml(group.name)}">⇄</button>
-              <button class="sb-iconbtn sb-iconbtn--danger" type="button" data-group-act="remove" title="删除分组（笔记会保留）" aria-label="删除分组 ${escapeHtml(group.name)}">✕</button>
+              <button class="sb-iconbtn" type="button" data-group-act="add-note" title="${escapeHtml(t('notes.group.addNoteTitle'))}" aria-label="${escapeHtml(t('notes.group.addNote', { name: group.name }))}">＋</button>
+              <button class="sb-iconbtn" type="button" data-group-act="add-sub" title="${escapeHtml(t('notes.group.addSubTitle'))}" aria-label="${escapeHtml(t('notes.group.addSub', { name: group.name }))}">⊞</button>
+              <button class="sb-iconbtn" type="button" data-group-act="rename" title="${escapeHtml(t('notes.group.renameTitle'))}" aria-label="${escapeHtml(t('notes.group.rename', { name: group.name }))}">✎</button>
+              <button class="sb-iconbtn" type="button" data-group-act="move" title="${escapeHtml(t('notes.group.moveTitle'))}" aria-label="${escapeHtml(t('notes.group.move', { name: group.name }))}">⇄</button>
+              <button class="sb-iconbtn sb-iconbtn--danger" type="button" data-group-act="remove" title="${escapeHtml(t('notes.group.removeTitle'))}" aria-label="${escapeHtml(t('notes.group.remove', { name: group.name }))}">✕</button>
             </span>
           </div>
           ${
@@ -290,7 +290,7 @@ export function createNotesView(ctx: ViewContext): ViewInstance {
           ? `<div class="sb-notes__group sb-notes__group--loose">
                <div class="sb-notes__group-row">
                  <span class="sb-notes__twisty sb-notes__twisty--static">·</span>
-                 <span class="sb-notes__group-name">未分组</span>
+                 <span class="sb-notes__group-name">${escapeHtml(t('notes.ungrouped'))}</span>
                  <span class="sb-notes__group-count">${loose.length}</span>
                </div>
                <div class="sb-notes__group-body">${notesHtml('')}</div>
@@ -318,7 +318,7 @@ export function createNotesView(ctx: ViewContext): ViewInstance {
         <span class="sb-notes__item-date">${escapeHtml(note.updatedAt.slice(0, 10))}</span>
         <span class="sb-notes__row-actions">
           <button class="sb-iconbtn" type="button" data-note-act="move"
-                  title="移动到分组" aria-label="把「${escapeHtml(note.title)}」移动到分组">⇄</button>
+                  title="${escapeHtml(t('notes.moveToGroup'))}" aria-label="${escapeHtml(t('notes.moveToGroupLabel', { name: note.title }))}">⇄</button>
         </span>
       </div>
     `
@@ -333,7 +333,7 @@ export function createNotesView(ctx: ViewContext): ViewInstance {
       notes = nextNotes
       groups = nextGroups
     } catch (error) {
-      toast(`笔记列表加载失败：${formatError(error)}`, 'error')
+      toast(t('notes.listFailed', { reason: tm(formatError(error)) }), 'error')
       notes = []
       groups = []
     }
@@ -346,14 +346,14 @@ export function createNotesView(ctx: ViewContext): ViewInstance {
   async function createNote(groupId = ''): Promise<void> {
     try {
       const doc = await unwrap(
-        bridge().notes.create(groupId ? { title: '未命名笔记', groupId } : '未命名笔记')
+        bridge().notes.create(groupId ? { title: t('notes.untitled'), groupId } : t('notes.untitled'))
       )
       await refreshList()
       await open(doc.id)
       titleInput?.focus()
       titleInput?.select()
     } catch (error) {
-      toast(`新建失败：${formatError(error)}`, 'error')
+      toast(t('notes.createFailed', { reason: tm(formatError(error)) }), 'error')
     }
   }
 
@@ -413,9 +413,9 @@ export function createNotesView(ctx: ViewContext): ViewInstance {
       modal.card.innerHTML = `
         <div class="sb-modal__title">${escapeHtml(title)}</div>
         <div class="sb-field">
-          <label for="sb-group-pick">目标分组</label>
+          <label for="sb-group-pick">${escapeHtml(t('notes.targetGroup'))}</label>
           <select class="sb-select" id="sb-group-pick" data-field="pick">
-            <option value="">（顶层 / 未分组）</option>
+            <option value="">${escapeHtml(t('notes.topLevel'))}</option>
             ${options
               .map(
                 (group) =>
@@ -425,8 +425,8 @@ export function createNotesView(ctx: ViewContext): ViewInstance {
           </select>
         </div>
         <div class="sb-modal__actions">
-          <button class="sb-btn" type="button" data-role="cancel">取消</button>
-          <button class="sb-btn sb-btn--primary" type="button" data-role="confirm">确定</button>
+          <button class="sb-btn" type="button" data-role="cancel">${escapeHtml(t('common.cancel'))}</button>
+          <button class="sb-btn sb-btn--primary" type="button" data-role="confirm">${escapeHtml(t('common.confirm'))}</button>
         </div>
       `
 
@@ -451,13 +451,13 @@ export function createNotesView(ctx: ViewContext): ViewInstance {
   async function moveNote(noteId: string): Promise<void> {
     const note = notes.find((item) => item.id === noteId)
     if (!note) return
-    const groupId = await pickGroup(`移动「${note.title}」`, new Set())
+    const groupId = await pickGroup(t('notes.moveNamed', { name: note.title }), new Set())
     if (groupId === null) return
     try {
       notes = await unwrap(bridge().notes.setGroup({ id: noteId, groupId }))
       renderList()
       const target = groups.find((item) => item.id === groupId)
-      setStatus(target ? `已移动到「${target.name}」` : '已移出分组')
+      setStatus(target ? t('notes.movedTo', { name: target.name }) : t('notes.movedOut'))
     } catch (error) {
       toast(formatError(error), 'error')
     }
@@ -470,14 +470,14 @@ export function createNotesView(ctx: ViewContext): ViewInstance {
     }
     if (act === 'new-group') {
       const name = await promptText({
-        title: '新建分组',
-        label: '分组名',
-        placeholder: '例如：高等数学',
+        title: t('notes.groupDialog.create'),
+        label: t('notes.groupDialog.label'),
+        placeholder: t('notes.groupDialog.example'),
         maxLength: 40,
-        hint: '分组可以再建子分组，最多 4 层。'
+        hint: t('notes.groupDialog.hint'),
       })
       if (!name) return
-      await applyGroups(bridge().notes.createGroup({ name }), `已新建分组「${name}」`)
+      await applyGroups(bridge().notes.createGroup({ name }), t('notes.groupDialog.created', { name }))
     }
   }
 
@@ -497,34 +497,34 @@ export function createNotesView(ctx: ViewContext): ViewInstance {
         return
       case 'add-sub': {
         const name = await promptText({
-          title: `在「${group.name}」下新建子分组`,
-          label: '分组名',
-          placeholder: '例如：第一章',
+          title: t('notes.groupDialog.createSub', { name: group.name }),
+          label: t('notes.groupDialog.label'),
+          placeholder: t('notes.groupDialog.exampleSub'),
           maxLength: 40
         })
         if (!name) return
         await applyGroups(
           bridge().notes.createGroup({ name, parentId: groupId }),
-          `已新建子分组「${name}」`
+          t('notes.groupDialog.subCreated', { name })
         )
         return
       }
       case 'rename': {
         const name = await promptText({
-          title: '重命名分组',
-          label: '分组名',
+          title: t('notes.groupDialog.rename'),
+          label: t('notes.groupDialog.label'),
           value: group.name,
           maxLength: 40
         })
         if (!name || name === group.name) return
-        await applyGroups(bridge().notes.renameGroup({ id: groupId, name }), '已重命名分组')
+        await applyGroups(bridge().notes.renameGroup({ id: groupId, name }), t('notes.groupDialog.renamed'))
         return
       }
       case 'move': {
         // 排除自己这棵子树：挪进去会让整段从侧栏消失（笔记还在，但找不到了）
-        const parentId = await pickGroup(`移动「${group.name}」`, subtreeIds(groupId))
+        const parentId = await pickGroup(t('notes.moveNamed', { name: group.name }), subtreeIds(groupId))
         if (parentId === null || parentId === group.parentId) return
-        await applyGroups(bridge().notes.moveGroup({ id: groupId, parentId }), '已移动分组')
+        await applyGroups(bridge().notes.moveGroup({ id: groupId, parentId }), t('notes.groupDialog.moved'))
         return
       }
       case 'remove': {
@@ -532,12 +532,12 @@ export function createNotesView(ctx: ViewContext): ViewInstance {
         const inside = notes.filter((note) => note.groupId === groupId).length
         const consequence =
           kids + inside > 0
-            ? `里面的 ${inside} 篇笔记和 ${kids} 个子分组会移到上一层，**不会被删除**。`
-            : '这个分组是空的。'
+            ? t('notes.groupDialog.removeBody', { notes: inside, groups: kids })
+            : t('notes.groupDialog.removeEmpty')
         const ok = await confirmAction({
-          title: `删除分组「${group.name}」？`,
+          title: t('notes.groupDialog.removeTitle', { name: group.name }),
           message: consequence,
-          confirmText: '删除分组',
+          confirmText: t('notes.groupDialog.removeConfirm'),
           danger: true
         })
         if (!ok) return
@@ -547,7 +547,7 @@ export function createNotesView(ctx: ViewContext): ViewInstance {
           notes = await unwrap(bridge().notes.list())
           collapsedGroups.delete(groupId)
           renderList()
-          setStatus('已删除分组')
+          setStatus(t('notes.groupDialog.removed'))
         } catch (error) {
           toast(formatError(error), 'error')
         }
@@ -629,7 +629,7 @@ export function createNotesView(ctx: ViewContext): ViewInstance {
               kids
                 ? `<button class="sb-notes__outline-twisty" type="button" data-outline-act="toggle" data-outline-index="${i}"
                            aria-expanded="${collapsed ? 'false' : 'true'}"
-                           aria-label="${collapsed ? '展开' : '收起'} ${escapeHtml(item.text)}">${collapsed ? '▸' : '▾'}</button>`
+                           aria-label="${escapeHtml(t(collapsed ? 'notes.expand' : 'notes.collapse'))} ${escapeHtml(item.text)}">${collapsed ? '▸' : '▾'}</button>`
                 : '<span class="sb-notes__outline-twisty sb-notes__outline-twisty--leaf"></span>'
             }
             <button class="sb-notes__outline-label" type="button" data-outline-act="jump" data-outline-index="${i}"
@@ -715,7 +715,7 @@ export function createNotesView(ctx: ViewContext): ViewInstance {
 
     const shared = {
       value: md,
-      placeholder: '在这里写……',
+      placeholder: t('notes.editorPlaceholder'),
       onChange: () => {
         scheduleSave()
         toolbar?.refresh()
@@ -745,7 +745,7 @@ export function createNotesView(ctx: ViewContext): ViewInstance {
   function updateCount(): void {
     if (!countEl || !editor) return
     const text = editor.getMarkdown()
-    countEl.textContent = `${text.length} 字 · ${text.split('\n').length} 行`
+    countEl.textContent = t('notes.count', { chars: text.length, lines: text.split('\n').length })
   }
 
   /**
@@ -770,18 +770,18 @@ export function createNotesView(ctx: ViewContext): ViewInstance {
     dirty = false
     try {
       await unwrap(bridge().notes.write({ id: noteId, content: markdown, mode }))
-      setStatus('已保存')
+      setStatus(t('notes.saved'))
       await refreshList()
     } catch (error) {
       dirty = true
-      setStatus('保存失败')
-      toast(`保存失败：${formatError(error)}`, 'error')
+      setStatus(t('notes.saveFailedShort'))
+      toast(t('notes.saveFailed', { reason: tm(formatError(error)) }), 'error')
     }
   }
 
   function scheduleSave(): void {
     dirty = true
-    setStatus('编辑中…')
+    setStatus(t('notes.editing'))
     scheduleCount()
     window.clearTimeout(timer)
     timer = window.setTimeout(() => {
@@ -803,7 +803,7 @@ export function createNotesView(ctx: ViewContext): ViewInstance {
       renderList()
       void refreshCourseMaterials()
     } catch (error) {
-      toast(`打不开这篇笔记：${formatError(error)}`, 'error')
+      toast(t('notes.openFailed', { reason: tm(formatError(error)) }), 'error')
     }
   }
 
@@ -840,7 +840,7 @@ export function createNotesView(ctx: ViewContext): ViewInstance {
         .map(
           (item) => `
             <button class="sb-notes__material" type="button" data-material="${escapeHtml(item.id)}"
-                    title="${escapeHtml(item.fileName)}（点击打开）">
+                    title="${escapeHtml(t('notes.openFile', { name: item.fileName }))}">
               <span class="sb-notes__material-kind">${escapeHtml(item.ext.toUpperCase())}</span>
               <span class="sb-notes__material-name">${escapeHtml(item.title)}</span>
             </button>
@@ -867,7 +867,7 @@ export function createNotesView(ctx: ViewContext): ViewInstance {
    */
   async function insertMaterialReference(imagesOnly = false): Promise<void> {
     if (!editor || !activeId) {
-      toast('先选一篇笔记再插资料', 'info')
+      toast(t('notes.pickFirst'), 'info')
       return
     }
     try {
@@ -875,7 +875,7 @@ export function createNotesView(ctx: ViewContext): ViewInstance {
       const card = cards.find((entry) => entry.noteId === activeId)
       const items = await unwrap(bridge().materials.list())
       if (imagesOnly && !items.some((item) => isImageExtension(item.ext) && !item.missing)) {
-        toast('资料库里还没有图片。先到「课程资料」页导入，或把图片拖进窗口。', 'info')
+        toast(t('notes.noImages'), 'info')
         return
       }
       const { openMaterialPickDialog } = await import('../components/material-form')
@@ -885,14 +885,14 @@ export function createNotesView(ctx: ViewContext): ViewInstance {
       if (isImageExtension(picked.ext)) {
         // 相对路径（`attachments/文件名`）：这样 .md 拿到 Obsidian 里同样是通的
         const ok = editor.insertImage(`attachments/${picked.fileName}`, picked.title)
-        setStatus(ok ? '已插入图片' : '当前编辑器不支持插入图片')
+        setStatus(t(ok ? 'notes.imageInserted' : 'notes.imageUnsupported'))
         return
       }
       // Obsidian 的嵌入语法：库内文件名即路径，Obsidian 里能直接预览 PDF
       editor.insertText(`![[${picked.fileName}]]`)
-      setStatus('已插入资料引用')
+      setStatus(t('notes.materialInserted'))
     } catch (error) {
-      toast(`插入失败：${formatError(error)}`, 'error')
+      toast(t('notes.insertFailed', { reason: tm(formatError(error)) }), 'error')
     }
   }
 
@@ -904,10 +904,10 @@ export function createNotesView(ctx: ViewContext): ViewInstance {
     // 切到富文本前先备份：md 表达不了的东西（合并单元格、文字颜色）互转时会退化
     if (next === 'richtext') {
       const confirmed = await confirmAction({
-        title: '切到富文本模式？',
+        title: t('notes.switchToRichTitle'),
         message:
-          '富文本用同一份 .md 文件做后端，Markdown 表达不了的格式（文字颜色、合并单元格等）在两者之间转换时会退化。\n\n切换前会自动把当前文件备份到笔记库的 .study-board/backups 目录。',
-        confirmText: '切换'
+          t('notes.switchToRichBody'),
+        confirmText: t('notes.switchConfirm')
       })
       if (!confirmed) return
 
@@ -916,7 +916,7 @@ export function createNotesView(ctx: ViewContext): ViewInstance {
         console.info('[notes] 已备份到', saved)
       } catch (error) {
         // 备份失败就别切了——宁可让用户重试一次，也不要在没有退路的情况下转换格式
-        toast(`备份失败，已取消切换：${formatError(error)}`, 'error')
+        toast(t('notes.backupFailed', { reason: tm(formatError(error)) }), 'error')
         return
       }
     }
@@ -929,10 +929,10 @@ export function createNotesView(ctx: ViewContext): ViewInstance {
       window.clearTimeout(timer)
       await unwrap(bridge().notes.write({ id: activeId, content: markdown, mode: next }))
       await mountEditor(markdown, next)
-      setStatus('已切换模式')
-      toast(next === 'richtext' ? '已切到富文本模式' : '已切到 Markdown 模式', 'success')
+      setStatus(t('notes.modeSwitched'))
+      toast(t(next === 'richtext' ? 'notes.switchedToRich' : 'notes.switchedToMarkdown'), 'success')
     } catch (error) {
-      toast(`切换失败：${formatError(error)}`, 'error')
+      toast(t('notes.switchFailed', { reason: tm(formatError(error)) }), 'error')
     } finally {
       switching = false
     }
@@ -964,7 +964,7 @@ export function createNotesView(ctx: ViewContext): ViewInstance {
       // 正在编辑的这篇被外面删了。必须把编辑器收起来——留着的话，
       // 自动保存会把刚被删掉的文件又写回来，用户会觉得「怎么删都删不掉」
       clearEditor()
-      toast('这篇笔记在外部被删除了，已从编辑器里收起来', 'error')
+      toast(t('notes.deletedOutside'), 'error')
       return
     }
 
@@ -988,15 +988,15 @@ export function createNotesView(ctx: ViewContext): ViewInstance {
 
     if (dirty) {
       const useDisk = await confirmAction({
-        title: '这篇笔记在外部被修改了',
+        title: t('notes.changedOutsideTitle'),
         message:
-          '你正在编辑的内容还没有保存。载入磁盘版本会丢掉刚输入的内容；保留你的内容的话，稍后的自动保存会覆盖磁盘上这次的改动。',
-        confirmText: '载入磁盘版本',
-        cancelText: '保留我的内容',
+          t('notes.changedOutsideBody'),
+        confirmText: t('notes.loadFromDisk'),
+        cancelText: t('notes.keepMine'),
         danger: true
       })
       if (!useDisk) {
-        setStatus('外部已修改 · 保留了你正在编辑的内容')
+        setStatus(t('notes.keptMine'))
         return
       }
       // 一定要先把「待保存」清掉：open() 开头会 flush() 一次，
@@ -1007,7 +1007,7 @@ export function createNotesView(ctx: ViewContext): ViewInstance {
     }
 
     await open(id)
-    setStatus('已从磁盘刷新')
+    setStatus(t('notes.reloadedFromDisk'))
   }
 
   /* ---------------------------------------------------------------- 导出 */
@@ -1024,7 +1024,7 @@ export function createNotesView(ctx: ViewContext): ViewInstance {
     menu.element.innerHTML = EXPORT_ITEMS.map(
       (item) => `
         <button class="sb-menu__item" type="button" data-format="${item.format}">
-          <span>${escapeHtml(item.label)}</span>
+          <span>${escapeHtml(t(item.label))}</span>
           <span class="sb-menu__hint">.${EXPORT_EXTENSIONS[item.format]}</span>
         </button>
       `
@@ -1046,7 +1046,7 @@ export function createNotesView(ctx: ViewContext): ViewInstance {
     // 导出读的是磁盘上那份文件，所以先把编辑器里还没落盘的内容写下去。
     // 少了这一步，用户刚敲的一段话会在「导出成功」的提示里凭空消失
     await flush()
-    setStatus('导出中…')
+    setStatus(t('notes.exporting'))
     try {
       const result = await unwrap(bridge().exporter.note({ noteId, format }))
       if (result.cancelled || !result.filePath) {
@@ -1054,18 +1054,18 @@ export function createNotesView(ctx: ViewContext): ViewInstance {
         return
       }
       const path = result.filePath
-      setStatus('已导出')
+      setStatus(t('notes.exported'))
       // 导出十有八九是为了把文件发给别人，顺手把目录打开能省一步找文件
       const reveal = await confirmAction({
-        title: '导出完成',
-        message: `已保存到：\n${path}`,
-        confirmText: '打开所在文件夹',
-        cancelText: '知道了'
+        title: t('notes.exportDoneTitle'),
+        message: t('notes.exportDoneBody', { path }),
+        confirmText: t('notes.openContainingFolder'),
+        cancelText: t('common.gotIt')
       })
       if (reveal) await unwrap(bridge().app.revealPath(path))
     } catch (error) {
       setStatus('')
-      toast(`导出失败：${formatError(error)}`, 'error')
+      toast(t('notes.exportFailed', { reason: tm(formatError(error)) }), 'error')
     }
   }
 
@@ -1087,7 +1087,7 @@ export function createNotesView(ctx: ViewContext): ViewInstance {
 
     const source = editor.getMarkdown()
     if (!source.trim()) {
-      toast('这篇笔记还是空的，先写点内容再让 AI 整理', 'error')
+      toast(t('notes.ai.empty'), 'error')
       return
     }
 
@@ -1097,10 +1097,10 @@ export function createNotesView(ctx: ViewContext): ViewInstance {
     // 这条判据要和主进程一致（看地址，不看预设 id），否则界面放行、主进程拦下
     if (!settings.ai.hasApiKey && !isLoopbackBaseUrl(settings.ai.baseUrl)) {
       const go = await confirmAction({
-        title: '还没配置 AI 服务',
+        title: t('notes.ai.notConfiguredTitle'),
         message:
-          '请先在「设置 → AI 助手」里选一个服务商并保存 API Key。密钥是加密存在本机的，不会明文落盘，界面也不会回读。',
-        confirmText: '去设置'
+          t('notes.ai.notConfiguredBody'),
+        confirmText: t('notes.ai.goSettings')
       })
       if (go) ctx.navigate('settings')
       return
@@ -1112,40 +1112,40 @@ export function createNotesView(ctx: ViewContext): ViewInstance {
       onClose: () => window.clearTimeout(armTimer)
     })
 
-    const scope = `${escapeHtml(preset?.label ?? '自定义')} · ${escapeHtml(settings.ai.model || '未设置模型')}`
+    const scope = `${escapeHtml(preset?.label ?? t('settings.customProvider'))} · ${escapeHtml(settings.ai.model || t('notes.ai.noModel'))}`
     modal.card.innerHTML = `
-      <div class="sb-modal__title">AI 助手</div>
-      <p class="sb-modal__message">处理整篇笔记（约 ${source.length} 字）· ${scope}</p>
+      <div class="sb-modal__title">${escapeHtml(t('settings.ai'))}</div>
+      <p class="sb-modal__message">${escapeHtml(t('notes.ai.scope', { chars: source.length }))} · ${scope}</p>
 
       <div class="sb-ai__presets" data-role="presets">
         ${AI_PRESETS.map(
           (item, index) =>
-            `<button class="sb-chip" type="button" data-preset="${index}">${escapeHtml(item.label)}</button>`
+            `<button class="sb-chip" type="button" data-preset="${index}">${escapeHtml(t(item.labelKey))}</button>`
         ).join('')}
       </div>
 
       <div class="sb-field">
-        <label for="sb-ai-instruction">整理要求</label>
+        <label for="sb-ai-instruction">${escapeHtml(t('notes.ai.instructionLabel'))}</label>
         <textarea id="sb-ai-instruction" class="sb-textarea" rows="3"
-                  placeholder="例如：把这篇笔记整理成一份复习提纲"></textarea>
+                  placeholder="${escapeHtml(t('notes.ai.instructionPlaceholder'))}"></textarea>
       </div>
       <div class="sb-field">
-        <label for="sb-ai-focus">参考重点（可选）</label>
-        <input id="sb-ai-focus" class="sb-input" type="text" placeholder="例如：只看第三章" />
+        <label for="sb-ai-focus">${escapeHtml(t('notes.ai.focusLabel'))}</label>
+        <input id="sb-ai-focus" class="sb-input" type="text" placeholder="${escapeHtml(t('notes.ai.focusPlaceholder'))}" />
       </div>
 
       <div class="sb-ai__result" data-role="result" hidden>
         <div class="sb-ai__preview" data-role="preview"></div>
         <p class="sb-hint" data-role="usage"></p>
         <div class="sb-inline sb-ai__apply">
-          <button class="sb-btn" type="button" data-role="replace">替换全文</button>
-          <button class="sb-btn sb-btn--primary" type="button" data-role="append">插入到文末</button>
+          <button class="sb-btn" type="button" data-role="replace">${escapeHtml(t('notes.ai.replace'))}</button>
+          <button class="sb-btn sb-btn--primary" type="button" data-role="append">${escapeHtml(t('notes.ai.append'))}</button>
         </div>
       </div>
 
       <div class="sb-modal__actions">
-        <button class="sb-btn" type="button" data-role="cancel">关闭</button>
-        <button class="sb-btn sb-btn--primary" type="button" data-role="run">生成</button>
+        <button class="sb-btn" type="button" data-role="cancel">${escapeHtml(t('common.close'))}</button>
+        <button class="sb-btn sb-btn--primary" type="button" data-role="run">${escapeHtml(t('notes.ai.run'))}</button>
       </div>
     `
 
@@ -1165,7 +1165,7 @@ export function createNotesView(ctx: ViewContext): ViewInstance {
       armed = false
       window.clearTimeout(armTimer)
       if (!replaceButton) return
-      replaceButton.textContent = '替换全文'
+      replaceButton.textContent = t('notes.ai.replace')
       replaceButton.classList.remove('sb-btn--danger')
     }
 
@@ -1174,7 +1174,7 @@ export function createNotesView(ctx: ViewContext): ViewInstance {
         ?.dataset['preset']
       const item = raw === undefined ? undefined : AI_PRESETS[Number(raw)]
       if (!item || !instruction) return
-      instruction.value = item.instruction
+      instruction.value = t(item.instructionKey)
       instruction.focus()
       // 换了要求，上一次的结果就作废了——留着会让人以为新要求已经生效
       generated = null
@@ -1186,19 +1186,19 @@ export function createNotesView(ctx: ViewContext): ViewInstance {
       if (!instruction) return
       const text = instruction.value.trim()
       if (!text) {
-        toast('先写下你想要的整理方式', 'error')
+        toast(t('notes.ai.needInstruction'), 'error')
         instruction.focus()
         return
       }
       // 渲染层先拦一次是为了给出人话提示（别等发出去才报错）；主进程那边还会再收敛一次
       if (source.length > MAX_AI_CONTEXT) {
-        toast(`这篇笔记太长了（${source.length} 字），超出单次能发送的上限`, 'error')
+        toast(t('notes.ai.tooLong', { chars: source.length }), 'error')
         return
       }
 
       if (runButton) {
         runButton.disabled = true
-        runButton.textContent = '生成中…'
+        runButton.textContent = t('notes.ai.running')
       }
       if (cancelButton) cancelButton.disabled = true
       try {
@@ -1213,7 +1213,7 @@ export function createNotesView(ctx: ViewContext): ViewInstance {
         disarm()
         if (resultBox) resultBox.hidden = false
         if (usageEl) {
-          usageEl.textContent = `${result.model} · 输入 ${result.usage.promptTokens} / 输出 ${result.usage.completionTokens} tokens`
+          usageEl.textContent = t('notes.ai.usage', { model: result.model, input: result.usage.promptTokens, output: result.usage.completionTokens })
         }
         if (preview) {
           // 预览用的是和富文本编辑器**同一份** Markdown 解析器，
@@ -1221,10 +1221,10 @@ export function createNotesView(ctx: ViewContext): ViewInstance {
           const { markdownFragmentToHtml } = await import('../lib/editor/convert')
           preview.innerHTML = markdownFragmentToHtml(result.text)
         }
-        if (runButton) runButton.textContent = '重新生成'
+        if (runButton) runButton.textContent = t('notes.ai.regenerate')
       } catch (error) {
-        toast(`AI 请求失败：${formatError(error)}`, 'error')
-        if (runButton) runButton.textContent = '生成'
+        toast(t('notes.ai.failed', { reason: tm(formatError(error)) }), 'error')
+        if (runButton) runButton.textContent = t('notes.ai.run')
       } finally {
         if (runButton) runButton.disabled = false
         if (cancelButton) cancelButton.disabled = false
@@ -1251,7 +1251,7 @@ export function createNotesView(ctx: ViewContext): ViewInstance {
       if (!generated) return
       applyResult(generated, false)
       modal.close()
-      toast('已插入到笔记末尾', 'success')
+      toast(t('notes.ai.appended'), 'success')
     })
 
     replaceButton?.addEventListener('click', () => {
@@ -1260,7 +1260,7 @@ export function createNotesView(ctx: ViewContext): ViewInstance {
         // 就地二次确认，不再叠一层确认框：那个新框和这个框都监听 Esc，
         // 按一下会把两个一起关掉，连预览都没了
         armed = true
-        replaceButton.textContent = '确认替换全文？'
+        replaceButton.textContent = t('notes.ai.confirmReplace')
         replaceButton.classList.add('sb-btn--danger')
         armTimer = window.setTimeout(disarm, 4000)
         return
@@ -1268,7 +1268,7 @@ export function createNotesView(ctx: ViewContext): ViewInstance {
       window.clearTimeout(armTimer)
       applyResult(generated, true)
       modal.close()
-      toast('已用 AI 的结果替换全文', 'success')
+      toast(t('notes.ai.replaced'), 'success')
     })
 
     runButton?.addEventListener('click', () => void run())
@@ -1305,7 +1305,7 @@ export function createNotesView(ctx: ViewContext): ViewInstance {
     }
     if (act === 'jump' && Number.isInteger(index)) {
       if (!editor?.revealHeading(index)) {
-        toast('这一节在当前编辑模式里找不到，切到 Markdown 模式试试', 'info')
+        toast(t('notes.outlineNotFound'), 'info')
       }
     }
   })
@@ -1380,7 +1380,7 @@ export function createNotesView(ctx: ViewContext): ViewInstance {
       try {
         await unwrap(bridge().materials.open(id))
       } catch (error) {
-        toast(`打不开：${formatError(error)}`, 'error')
+        toast(t('notes.openPathFailed', { reason: tm(formatError(error)) }), 'error')
       }
     })
 
@@ -1403,18 +1403,18 @@ export function createNotesView(ctx: ViewContext): ViewInstance {
 
   titleInput?.addEventListener('input', () => {
     dirty = true
-    setStatus('标题待保存…')
+    setStatus(t('notes.titlePending'))
   })
 
   function renderPath(): void {
-    if (pathEl) pathEl.textContent = `笔记库目录：${ctx.getSettings().notesLibraryDir}`
+    if (pathEl) pathEl.textContent = t('notes.libraryPath', { path: ctx.getSettings().notesLibraryDir })
   }
 
   element.querySelector('[data-action="open"]')?.addEventListener('click', async () => {
     try {
       await unwrap(bridge().app.openPath(ctx.getSettings().notesLibraryDir))
     } catch (error) {
-      toast(`无法打开目录：${formatError(error)}`, 'error')
+      toast(t('notes.openDirFailed', { reason: tm(formatError(error)) }), 'error')
     }
   })
 
@@ -1443,20 +1443,20 @@ export function createNotesView(ctx: ViewContext): ViewInstance {
     if (!activeId) return
     const button = event.currentTarget as HTMLButtonElement
     button.disabled = true
-    setStatus('正在推送到 Notion…')
+    setStatus(t('notes.notionPushing'))
     try {
       await flush()
       const result = await unwrap(bridge().notion.push([activeId]))
-      setStatus('已推送到 Notion')
+      setStatus(t('notes.notionPushed'))
       toast(
         result.skipped > 0 && result.pushed === 0
-          ? '这篇没有变化，已跳过'
-          : `已推送到 Notion（${result.pushed} 篇）`,
+          ? t('notes.notionUnchanged')
+          : t('notes.notionPushedCount', { count: result.pushed }),
         'success'
       )
     } catch (error) {
       setStatus('')
-      toast(`推送失败：${formatError(error)}`, 'error')
+      toast(t('notes.notionFailed', { reason: tm(formatError(error)) }), 'error')
     } finally {
       button.disabled = false
     }
@@ -1466,7 +1466,7 @@ export function createNotesView(ctx: ViewContext): ViewInstance {
     if (!activeId || !titleInput) return
     const next = titleInput.value.trim()
     if (next.length === 0) {
-      toast('标题不能为空', 'error')
+      toast(t('notes.titleEmpty'), 'error')
       return
     }
     try {
@@ -1474,9 +1474,9 @@ export function createNotesView(ctx: ViewContext): ViewInstance {
       activeId = doc.id
       titleInput.value = doc.title
       await refreshList()
-      setStatus('已重命名')
+      setStatus(t('notes.renamed'))
     } catch (error) {
-      toast(`重命名失败：${formatError(error)}`, 'error')
+      toast(t('notes.renameFailed', { reason: tm(formatError(error)) }), 'error')
     }
   })
 
@@ -1484,9 +1484,9 @@ export function createNotesView(ctx: ViewContext): ViewInstance {
     if (!activeId) return
     const current = notes.find((note) => note.id === activeId)
     const confirmed = await confirmAction({
-      title: `删除「${current?.title ?? '这篇笔记'}」？`,
-      message: '文件会被移入笔记库的 .study-board/trash 目录，不会真正抹掉，需要时可以自己找回来。',
-      confirmText: '删除',
+      title: t('notes.removeTitle', { name: current?.title ?? t('notes.thisNote') }),
+      message: t('notes.removeBody'),
+      confirmText: t('common.delete'),
       danger: true
     })
     if (!confirmed) return
@@ -1498,16 +1498,16 @@ export function createNotesView(ctx: ViewContext): ViewInstance {
       await unwrap(bridge().notes.remove(id))
       clearEditor()
       await refreshList()
-      toast('已移入回收站', 'success')
+      toast(t('notes.movedToTrash'), 'success')
     } catch (error) {
-      toast(`删除失败：${formatError(error)}`, 'error')
+      toast(t('notes.removeFailed', { reason: tm(formatError(error)) }), 'error')
     }
   })
 
   // 内容太长时提前拦住，别等到主进程才报错、用户白写一场
   stage?.addEventListener('blur', () => {
     if (editor && editor.getMarkdown().length * 4 > MAX_NOTE_BYTES) {
-      toast('这篇笔记已经很大了，建议拆分成多篇', 'error')
+      toast(t('notes.tooBigToSplit'), 'error')
     }
   })
 
