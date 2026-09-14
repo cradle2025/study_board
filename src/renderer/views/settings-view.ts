@@ -9,7 +9,7 @@ import type { AppSettings, ThemeMode, UiLanguage, NoteEditorMode, NotionConflict
 import type { ViewContext, ViewInstance } from '../app-shell'
 import { escapeHtml } from '../lib/html'
 import { bridge, formatError, toast, unwrap } from '../lib/ipc'
-import { openModalCard } from '../lib/overlay'
+import { openModalCard, showInfo } from '../lib/overlay'
 import { describePlatform } from '../lib/platform'
 
 /* ------------------------------------------------------------ 冲突问询 */
@@ -281,6 +281,7 @@ export function createSettingsView(ctx: ViewContext): ViewInstance {
     <section class="sb-section">
       <div class="sb-section__head"><h2 class="sb-section__title">关于</h2></div>
       <div class="sb-card" style="padding:16px">
+        <p class="sb-banner sb-banner--warn" data-role="data-warning" hidden></p>
         <dl class="sb-kv" data-role="about"></dl>
         <p class="sb-hint" data-role="about-note"></p>
       </div>
@@ -388,12 +389,32 @@ export function createSettingsView(ctx: ViewContext): ViewInstance {
       ['Chromium', info.chrome],
       ['Node', info.node],
       ['运行平台', describePlatform(info.platform, info.arch)],
+      // 数据格式版本与「这份数据是哪个版本写的」一起显示：
+      // 出问题时这两个数字是判断「要不要先备份再降级」的唯一依据
+      ['数据格式', `v${info.dataSchema}${info.dataWrittenBy ? `（由 v${info.dataWrittenBy} 写入）` : ''}`],
       ['数据目录', info.paths.userData],
       ['笔记库', info.paths.notesLibrary],
       ['运行日志', info.paths.logs]
     ]
       .map(([k, v]) => `<div><dt>${k}</dt><dd>${escape(String(v))}</dd></div>`)
       .join('')
+
+    /**
+     * 数据版本不匹配的提示。**放在最显眼的位置**，而不是只写进日志。
+     *
+     * 降级这件事必须让用户看到：它接下来每次自动保存都可能抹掉新版写入
+     * 的内容，而界面上完全看不出来。程序已经自动备份过一份，
+     * 但用户得知道「现在不该继续用」。
+     */
+    const banner = $('[data-role="data-warning"]')
+    if (banner) {
+      if (info.dataWarning) {
+        banner.textContent = info.dataWarning
+        banner.hidden = false
+      } else {
+        banner.hidden = true
+      }
+    }
 
     // 把「适配哪些系统」写清楚。进程自己只能知道「我跑在什么上」，
     // 安装包提供哪些架构是打包时定的，所以这句是固定文案而不是读出来的
@@ -462,10 +483,32 @@ export function createSettingsView(ctx: ViewContext): ViewInstance {
   })
 
   $<HTMLInputElement>('#set-portable')?.addEventListener('change', async (event) => {
-    const checked = (event.target as HTMLInputElement).checked
-    await patch({ portableMode: checked })
-    if (ctx.getInfo() && checked !== ctx.getSettings().portableMode) return
-    toast('便携模式已修改，重启后生效', 'info')
+    const input = event.target as HTMLInputElement
+    const checked = input.checked
+    try {
+      const result = await unwrap(bridge().settings.setPortable(checked))
+      if (!result.changed) {
+        toast('数据已经在这个位置了', 'info')
+        return
+      }
+      /**
+       * 成功了要把**两个**路径都告诉用户。
+       *
+       * 旧目录刻意保留着当兜底，不说清楚的话用户会以为数据被复制了一份
+       * 而不敢删；说清楚了他才知道「确认没问题之后可以自己清掉」。
+       */
+      await showInfo({
+        title: '数据位置已切换',
+        message:
+          `数据已复制到：\n${result.target}\n\n` +
+          `原位置仍然保留：\n${result.previous}\n\n` +
+          `重启 StudyBoard 后生效。确认新位置一切正常之后，可以自行删除原目录。`
+      })
+    } catch (error) {
+      // 失败必须把勾**退回去**：留着一个勾选状态会让人以为已经切过去了
+      input.checked = ctx.getSettings().portableMode
+      toast(`切换失败：${formatError(error)}`, 'error')
+    }
   })
 
   // 收件箱路径：失焦即存。留空表示用默认位置（下载目录/StudyBoard收件箱）

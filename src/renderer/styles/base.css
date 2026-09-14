@@ -438,6 +438,24 @@ h4 {
   color: var(--text-tertiary);
 }
 
+/* 需要用户读完的横幅（目前只有「数据版本不匹配」一处）。
+   用 pre-line 是因为它的文案里带换行和路径，折成一行就没法看了 */
+.sb-banner {
+  margin: 0 0 12px;
+  padding: 10px 12px;
+  border-radius: var(--radius-sm);
+  font-size: 12.5px;
+  line-height: 1.6;
+  white-space: pre-line;
+  word-break: break-word;
+}
+
+.sb-banner--warn {
+  background: rgba(183, 121, 31, 0.12);
+  border: 1px solid rgba(183, 121, 31, 0.35);
+  color: var(--color-warning);
+}
+
 .sb-kv {
   display: grid;
   grid-template-columns: 92px 1fr;
@@ -2380,6 +2398,9 @@ h4 {
   font-size: 13px;
   color: var(--text-secondary);
   word-break: break-word;
+  /* 消息里带换行的调用点不止一处（切模式、数据位置切换），
+     而 HTML 默认把连续空白折成一个空格——不写这行，那些换行白写了 */
+  white-space: pre-line;
 }
 
 .sb-modal__actions {

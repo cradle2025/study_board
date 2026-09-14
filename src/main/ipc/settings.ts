@@ -6,12 +6,13 @@ import type {
   AiPatch,
   AppSettings,
   NotionPatch,
+  PortableSwitchResult,
   SettingsPatch,
   TimetablePatch
 } from '@shared/types'
 
 import { context, refreshBuckets } from '../context'
-import { ensureDir } from '../paths'
+import { copyDataRoot, dataRoot, detectPortableMode, ensureDir } from '../paths'
 import { MAX_PERIODS, MIN_PERIODS, resolveNotesDir } from '../services/settings'
 import { broadcast, handle } from './index'
 import { restartNotesSync } from './notes'
@@ -62,7 +63,10 @@ function sanitizePatch(raw: unknown): SettingsPatch {
     )
   }
   if ('portableMode' in input) {
-    patch.portableMode = Boolean(input.portableMode)
+    // 便携模式不走补丁。它要搬整个数据目录，而 patch 的语义是「改个字段」。
+    // 直接报错而不是静默忽略：静默忽略正是 0.1.0 那个 bug 的形态——
+    // 界面上的勾变了，数据位置从来没动过，两边都以为对方成功了
+    throw new Error('便携模式请用「切换数据位置」，它需要重启才生效')
   }
   if ('notesLibraryDir' in input) {
     const dir = asString(input.notesLibraryDir, 1024).trim()
@@ -170,5 +174,29 @@ export function registerSettingsHandlers(): void {
     broadcast(CHANNELS.EVENT_SETTINGS_CHANGED, next)
     console.info(`[settings] 笔记库已回退到默认位置（原目录：${settings.notesLibraryDir}）`)
     return structuredClone(next) as AppSettings
+  })
+
+  /**
+   * 切换便携模式：把数据整份复制到另一个根目录，然后写 / 删标记文件。
+   *
+   * 本次会话**不换**数据根目录。换根意味着正在跑的存储、文件监听、
+   * 资源桶全都要在运行中重建，而它们此刻还开着旧目录的文件句柄——
+   * 那是一条很容易写出「半个进程读旧目录、半个读新目录」的路。
+   * 复制 + 标记 + 重启，每一步都是可验证的。
+   */
+  handle<unknown, PortableSwitchResult>(CHANNELS.SETTINGS_SET_PORTABLE, (raw) => {
+    if (!raw || typeof raw !== 'object') throw new Error('参数不合法')
+    const wanted = Boolean((raw as { portable?: unknown }).portable)
+    const current = detectPortableMode()
+
+    if (wanted === current) {
+      const root = dataRoot(current)
+      return { changed: false, target: root, previous: root, restartRequired: false }
+    }
+
+    const previous = dataRoot(current)
+    const target = copyDataRoot(current, wanted)
+    console.info(`[settings] 数据目录已复制：${previous} → ${target}`)
+    return { changed: true, target, previous, restartRequired: true }
   })
 }

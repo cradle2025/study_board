@@ -28,6 +28,7 @@ import type {
   NotionResolveResult,
   NotionTestResult,
   PortalSite,
+  PortableSwitchResult,
   PortalSiteInput,
   SettingsPatch,
   TimetableData,
@@ -82,7 +83,9 @@ const api = {
     get: () => invoke<AppSettings>(CHANNELS.SETTINGS_GET),
     patch: (patch: SettingsPatch) => invoke<AppSettings>(CHANNELS.SETTINGS_PATCH, patch),
     chooseLibrary: () => invoke<AppSettings>(CHANNELS.SETTINGS_CHOOSE_LIBRARY),
-    resetLibrary: () => invoke<AppSettings>(CHANNELS.SETTINGS_RESET_LIBRARY)
+    resetLibrary: () => invoke<AppSettings>(CHANNELS.SETTINGS_RESET_LIBRARY),
+    setPortable: (portable: boolean) =>
+      invoke<PortableSwitchResult>(CHANNELS.SETTINGS_SET_PORTABLE, { portable })
   },
 
   secrets: {

@@ -19,6 +19,14 @@ export const CHANNELS = {
   SETTINGS_PATCH: 'settings:patch',
   SETTINGS_CHOOSE_LIBRARY: 'settings:choose-library',
   SETTINGS_RESET_LIBRARY: 'settings:reset-library',
+  /**
+   * 切换便携模式。
+   *
+   * 单独开一条通道而不是并进 `SETTINGS_PATCH`：这不是改一个字段，
+   * 而是**搬整个数据目录**——有前置校验、可能失败、需要重启才生效。
+   * 混在通用 patch 里，调用方会以为它和「改主题」一样是一次原子写入。
+   */
+  SETTINGS_SET_PORTABLE: 'settings:set-portable',
 
   /* 密钥（写入后再也不回读，只回布尔） */
   SECRET_SET_AI_KEY: 'secret:set-ai-key',

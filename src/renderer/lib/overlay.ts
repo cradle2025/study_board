@@ -194,7 +194,7 @@ export function openModalCard(options: ModalCardOptions = {}): ModalCardHandle {
   return { card, close }
 }
 
-/* ------------------------------------------------------------------ 确认框 */
+/* -------------------------------------------------------------- 提示 / 确认框 */
 
 export interface ConfirmOptions {
   title: string
@@ -202,6 +202,50 @@ export interface ConfirmOptions {
   confirmText?: string
   cancelText?: string
   danger?: boolean
+}
+
+/**
+ * 只有一个「知道了」的提示框。
+ *
+ * 存在的理由：有些事必须让用户读完（比如数据被复制到了哪里），
+ * 用 toast 会飘走、也没法选中复制；而 `confirmAction` 固定两个按钮，
+ * 拿它来做纯提示会多出一个语义不明的「取消」。
+ */
+export function showInfo(options: { title: string; message: string; confirmText?: string }): Promise<void> {
+  return new Promise((resolve) => {
+    let settled = false
+    const finish = (): void => {
+      if (settled) return
+      settled = true
+      resolve()
+    }
+
+    /**
+     * 三条关闭路径（按钮、Esc、点遮罩）全都算「读完了」。
+     *
+     * 纯提示没有「反悔」这个状态，所以不需要像 `confirmAction` 那样
+     * 区分用户是怎么关的——这也是它能用 `onClose` 一个钩子兜住的原因。
+     */
+    const modal = openModalCard({ onClose: () => finish() })
+    modal.card.innerHTML = `
+      <div class="sb-modal__title"></div>
+      <p class="sb-modal__message"></p>
+      <div class="sb-modal__actions">
+        <button class="sb-btn sb-btn--primary" type="button" data-role="confirm"></button>
+      </div>
+    `
+    const titleEl = modal.card.querySelector<HTMLElement>('.sb-modal__title')
+    const messageEl = modal.card.querySelector<HTMLElement>('.sb-modal__message')
+    const confirmBtn = modal.card.querySelector<HTMLButtonElement>('[data-role="confirm"]')
+    if (titleEl) titleEl.textContent = options.title
+    if (messageEl) messageEl.textContent = options.message
+    if (confirmBtn) confirmBtn.textContent = options.confirmText ?? '知道了'
+
+    confirmBtn?.addEventListener('click', () => {
+      modal.close()
+      finish()
+    })
+  })
 }
 
 /** 居中确认框。返回用户是否点了「确定」。 */

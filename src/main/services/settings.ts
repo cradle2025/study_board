@@ -57,6 +57,18 @@ export class SettingsStore {
     ensureDir(dataRoot(portable))
     this.#file = configFile(portable)
     this.#cache = { ...buildDefaults(portable), ...this.#readRaw() }
+    /**
+     * `portableMode` 是**探测结果的镜像**，不是独立输入。
+     *
+     * 数据实际住在哪，由「程序同级目录里有没有 portable.flag」决定；
+     * 配置里那个字段只用来让界面显示当前状态。两者不一致时必须以探测
+     * 结果为准——否则会出现「设置说便携模式开着，数据其实还在
+     * %APPDATA%」这种自相矛盾的状态，而界面上看不出任何异常。
+     *
+     * 0.1.0 就踩过这个坑：切换开关只写了配置字段、没写标记文件，
+     * 于是开关看着生效了（勾选状态变了），数据位置从来没变过。
+     */
+    this.#cache.portableMode = portable
     this.#cache.timetable = {
       ...buildDefaults(portable).timetable,
       ...this.#cache.timetable,

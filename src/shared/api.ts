@@ -25,6 +25,7 @@ import type {
   NotionTestResult,
   PortalSite,
   PortalSiteInput,
+  PortableSwitchResult,
   SettingsPatch,
   TimetableData,
   TimetableImageImportResult,
@@ -60,6 +61,8 @@ export interface StudyBoardApi {
     patch(patch: SettingsPatch): Promise<IpcResult<AppSettings>>
     chooseLibrary(): Promise<IpcResult<AppSettings>>
     resetLibrary(): Promise<IpcResult<AppSettings>>
+    /** 切换便携模式：复制数据目录 + 写标记，重启后生效 */
+    setPortable(portable: boolean): Promise<IpcResult<PortableSwitchResult>>
   }
 
   secrets: {

@@ -1,6 +1,7 @@
 import { app } from 'electron'
 import { dirname, isAbsolute, join, normalize, resolve, sep } from 'node:path'
-import { mkdirSync, existsSync, writeFileSync, rmSync } from 'node:fs'
+import { mkdirSync, cpSync, existsSync, writeFileSync, renameSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
 
 import type { AppPaths } from '@shared/types'
 import { MATERIALS_DIRNAME } from '@shared/materials'
@@ -60,6 +61,72 @@ export function writePortableFlag(portable: boolean): void {
   } else if (existsSync(flag)) {
     rmSync(flag, { force: true })
   }
+}
+
+/**
+ * 安装程序在更新时会把便携数据目录暂存到 `$TEMP`（见 `build/installer.nsh`），
+ * 装完再挪回来。如果安装中途失败，它就会留在那儿 —— 而程序找不到
+ * `study-board-data` 时会退回 `%APPDATA%`，用户看到的就是「数据全没了」。
+ *
+ * 这里做一次兜底：暂存还在、原位却空了，就把它挪回去。
+ *
+ * **只在原位不存在时恢复**。原位已经有东西的时候把陈旧的暂存挪回去，
+ * 等于用旧数据覆盖新的 —— 那比不恢复更糟。
+ */
+export function rescueStashedPortableData(): string | null {
+  if (!app.isPackaged) return null
+  const stash = join(tmpdir(), 'StudyBoard-portable-stash')
+  if (!existsSync(stash)) return null
+
+  const target = portableRoot()
+  if (existsSync(target)) return null
+
+  try {
+    mkdirSync(dirname(target), { recursive: true })
+    renameSync(stash, target)
+    return target
+  } catch {
+    // 挪不动就留着，下次启动再试。绝不能在这里删它
+    return null
+  }
+}
+
+/** `child` 是否落在 `parent` 里面（含自身）。用来挡住「把目录复制进自己」 */
+function isInside(parent: string, child: string): boolean {
+  const a = resolve(normalize(parent))
+  const b = resolve(normalize(child))
+  return b === a || b.startsWith(a + sep)
+}
+
+/**
+ * 数据根目录搬迁：把数据从「现在住的地方」整份复制到「要搬去的地方」。
+ *
+ * 三件事按这个顺序做，顺序本身是安全设计：
+ *  1. 拒绝「搬进自己里面」——否则复制会无限递归，把磁盘写满；
+ *  2. **复制**（而不是移动）到新位置。复制失败时旧数据一个字节都没动，
+ *     用户重来一次就行；移动失败则会留下一个「两边都不完整」的烂摊子；
+ *  3. 复制**成功之后**才写 / 删标记文件。标记决定下次启动读哪里，
+ *     先写标记再复制的话，中途失败就等于把用户指向一个空目录。
+ *
+ * 刻意**不删旧目录**：它是这次搬迁的兜底。用户确认新位置没问题之后
+ * 可以自己删掉，界面上会告诉他旧目录在哪。
+ */
+export function copyDataRoot(fromPortable: boolean, toPortable: boolean): string {
+  const from = dataRoot(fromPortable)
+  const to = dataRoot(toPortable)
+  if (isInside(from, to)) throw new Error('目标目录在数据目录内部，拒绝搬迁')
+  if (isInside(to, from)) throw new Error('数据目录在目标目录内部，拒绝搬迁')
+  if (!existsSync(from)) throw new Error('当前数据目录不存在')
+
+  ensureDir(dirname(to))
+  // force:true —— 目标目录里可能有上一轮留下的旧文件（比如用户来回切过
+  // 便携模式），必须让**当前位置**成为唯一事实来源，否则会读出一个
+  // 「新旧混在一起」的数据目录。中途失败也不要紧：标记文件还没写，
+  // 下次启动仍然读原位置，而原位置一个字节都没动
+  cpSync(from, to, { recursive: true, force: true, errorOnExist: false })
+
+  writePortableFlag(toPortable)
+  return to
 }
 
 export function configFile(portable: boolean): string {
