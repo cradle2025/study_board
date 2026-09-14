@@ -149,6 +149,27 @@ function imageParts(text: string): { src: string; alt: string } | null {
 }
 
 /**
+ * 这个地址值不值得渲染成图。
+ *
+ * 只认两种情况：
+ *  - 内联数据（`data:image/...`）；
+ *  - **扩展名像图片**的相对路径或 sb-asset 地址。
+ *
+ * 别的（`http(s)`、绝对路径、指向 .pdf 的引用、越界路径）一律**保持源码形态**。
+ * 因为那些地址注定加载不出来（CSP 挡住外网、越界被 safeJoin 拒掉），
+ * 渲染的结果是一个破图图标——它只说了「这里坏了」，却不说「坏在哪」；
+ * 而源码那一行直接写着用户自己敲的路径，错别字一眼就能看见。
+ *
+ * 代价是「文件名拼错」的情况会显示源码而不是破图。这个取舍是划算的：
+ * 拼错的时候用户最需要的恰恰是看见自己拼了什么。
+ */
+function renderableImage(src: string): boolean {
+  const raw = src.trim()
+  if (/^data:image\//i.test(raw)) return true
+  return /\.(png|jpe?g|gif|webp|bmp|avif|heic|heif)([?#]|$)/i.test(raw)
+}
+
+/**
  * 找出可视区里所有该被渲染成图片的位置。
  *
  * 用**语法树**而不是正则扫全篇：正则会误伤代码块里的 `![x](y)`
@@ -180,6 +201,7 @@ function buildImageDecorations(view: EditorView): DecorationSet {
         }
         const parts = imageParts(state.sliceDoc(node.from, node.to))
         if (!parts) return
+        if (!renderableImage(parts.src)) return
         builder.add(
           node.from,
           node.to,
