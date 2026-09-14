@@ -1,4 +1,6 @@
 import { semesterRank, UNKNOWN_SEMESTER } from '@shared/course'
+import { escapeHtml } from '../lib/html'
+import { t } from '../lib/i18n'
 import type { CourseCard } from '@shared/types'
 
 import type { ViewContext, ViewInstance } from '../app-shell'
@@ -49,23 +51,22 @@ export function createArchivedView(ctx: ViewContext): ViewInstance {
   element.innerHTML = `
     <div class="sb-view__head">
       <div>
-        <h1 class="sb-view__title">已学库</h1>
-        <p class="sb-view__desc">修完的课都收在这里，按学期排好。想翻复习资料就点「记笔记」；还要接着上，就点「移回在学」。</p>
+        <h1 class="sb-view__title">${escapeHtml(t('nav.archived'))}</h1>
+        <p class="sb-view__desc">${escapeHtml(t('archived.desc'))}</p>
       </div>
       <div class="sb-toolbar">
-        <button class="sb-btn" type="button" data-action="to-study">课程与学习</button>
+        <button class="sb-btn" type="button" data-action="to-study">${escapeHtml(t('nav.study'))}</button>
       </div>
     </div>
 
     <section class="sb-section">
       <div class="sb-section__head">
-        <h2 class="sb-section__title">已学课程</h2>
+        <h2 class="sb-section__title">${escapeHtml(t('archived.title'))}</h2>
         <span class="sb-badge" data-role="meta">—</span>
       </div>
       <div data-role="cards"></div>
       <p class="sb-hint">
-        归档只是把卡片的状态标成「已学」，笔记一篇都不会少；
-        双击卡片还能补打分、给分标准和课程结构——这些通常是修完之后才写得出来。
+        ${escapeHtml(t('archived.hint'))}
       </p>
     </section>
   `
@@ -81,11 +82,11 @@ export function createArchivedView(ctx: ViewContext): ViewInstance {
     onData(_all, visible) {
       if (!meta) return
       if (visible.length === 0) {
-        meta.textContent = '还没有已学的课'
+        meta.textContent = t('archived.emptyMeta')
         return
       }
       const semesters = new Set(visible.map((card) => card.semester.trim() || UNKNOWN_SEMESTER))
-      meta.textContent = `${visible.length} 门 · ${semesters.size} 个学期`
+      meta.textContent = t('archived.meta', { count: visible.length, semesters: semesters.size })
     },
 
     onEdit(card) {
@@ -96,7 +97,7 @@ export function createArchivedView(ctx: ViewContext): ViewInstance {
           // 在归档页把状态改成别的，卡片会当场消失——说一句它去哪了，
           // 否则看起来像「改完就没了」
           if (result.status !== 'learned') {
-            toast(result.status === 'wish' ? '已挪到愿望单' : '已挪回在学，去「课程与学习」找', 'info')
+            toast(t(result.status === 'wish' ? 'archived.movedToWish' : 'archived.movedBack'), 'info')
           }
         } catch (error) {
           toast(error instanceof Error ? error.message : String(error), 'error')
@@ -106,7 +107,7 @@ export function createArchivedView(ctx: ViewContext): ViewInstance {
 
     onOpenNote(card) {
       if (card.noteId.length === 0) {
-        toast('这门课还没有笔记，去笔记页新建一篇', 'info')
+        toast(t('study.noNoteYet'), 'info')
         ctx.navigate('notes')
         return
       }
@@ -122,7 +123,7 @@ export function createArchivedView(ctx: ViewContext): ViewInstance {
     element,
     async onEnter() {
       controller.grid.setEmptyText(
-        '已学库还是空的。在「课程与学习」里修完一门课，点卡片上的「归档」，它就会出现在这里。'
+        t('archived.emptyHint')
       )
       await controller.load()
     },

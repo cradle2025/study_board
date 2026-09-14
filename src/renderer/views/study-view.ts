@@ -1,4 +1,6 @@
 import type { CourseStatus } from '@shared/course'
+import { escapeHtml } from '../lib/html'
+import { t } from '../lib/i18n'
 
 import type { ViewContext, ViewInstance } from '../app-shell'
 import { openCardForm } from '../components/card-form'
@@ -29,14 +31,13 @@ type StudyTab = Extract<CourseStatus, 'learning' | 'wish'>
 const TAB_ORDER: readonly StudyTab[] = ['learning', 'wish']
 
 const TAB_LABEL: Record<StudyTab, string> = {
-  learning: '在学',
-  wish: '想学'
+  learning: 'study.tab.learning',
+  wish: 'study.tab.wish'
 }
 
 const TAB_EMPTY: Record<StudyTab, string> = {
-  learning:
-    '还没有在学的课程。点「新建卡片」开始——课程名和老师可以直接从课表带过来；学完了点卡片上的「归档」，它就会挪进已学库。',
-  wish: '愿望单是空的。把想修但还没排上的课放进来，顺手写一句为什么想修——过一学期再回来看，这句话比课名有用。'
+  learning: 'study.empty.learning',
+  wish: 'study.empty.wish'
 }
 
 export function createStudyView(ctx: ViewContext): ViewInstance {
@@ -45,22 +46,22 @@ export function createStudyView(ctx: ViewContext): ViewInstance {
   element.innerHTML = `
     <div class="sb-view__head">
       <div>
-        <h1 class="sb-view__title">课程与学习</h1>
-        <p class="sb-view__desc">每门课一张卡片，点一下翻到背面看给分标准和课程结构，双击修改。</p>
+        <h1 class="sb-view__title">${escapeHtml(t('nav.study'))}</h1>
+        <p class="sb-view__desc">${escapeHtml(t('study.desc'))}</p>
       </div>
       <div class="sb-toolbar">
-        <button class="sb-btn" type="button" data-action="to-notes">全部笔记</button>
-        <button class="sb-btn" type="button" data-action="to-archived">已学库</button>
-        <button class="sb-btn sb-btn--primary" type="button" data-action="add">新建卡片</button>
+        <button class="sb-btn" type="button" data-action="to-notes">${escapeHtml(t('study.allNotes'))}</button>
+        <button class="sb-btn" type="button" data-action="to-archived">${escapeHtml(t('nav.archived'))}</button>
+        <button class="sb-btn sb-btn--primary" type="button" data-action="add">${escapeHtml(t('study.newCard'))}</button>
       </div>
     </div>
 
     <section class="sb-section">
       <div class="sb-section__head">
-        <h2 class="sb-section__title">课程卡片</h2>
-        <span class="sb-badge" data-role="meta">模块二</span>
+        <h2 class="sb-section__title">${escapeHtml(t('home.cards'))}</h2>
+        <span class="sb-badge" data-role="meta">${escapeHtml(t('nav.group.module2'))}</span>
       </div>
-      <div class="sb-switch" data-role="tabs" role="tablist" aria-label="按状态筛选">
+      <div class="sb-switch" data-role="tabs" role="tablist" aria-label="${escapeHtml(t('study.filterLabel'))}">
         ${TAB_ORDER.map(
           (item) => `
             <button class="sb-switch__item" type="button" role="tab" data-tab="${item}"
@@ -73,16 +74,15 @@ export function createStudyView(ctx: ViewContext): ViewInstance {
       </div>
       <div data-role="cards"></div>
       <p class="sb-hint">
-        新建卡片时会自动在笔记库里建一篇同名笔记（标题为「课程名_老师」），
-        之后在卡片下方点「记笔记」就能直接跳过去。学完一门课，点卡片上的「归档」收进已学库。
+        ${escapeHtml(t('study.hint'))}
       </p>
     </section>
 
     <section class="sb-section">
       <div class="sb-section__head">
-        <h2 class="sb-section__title">网站门户</h2>
+        <h2 class="sb-section__title">${escapeHtml(t('nav.portal'))}</h2>
         <div class="sb-toolbar">
-          <button class="sb-btn" type="button" data-action="to-portal">管理站点</button>
+          <button class="sb-btn" type="button" data-action="to-portal">${escapeHtml(t('home.managePortal'))}</button>
         </div>
       </div>
       <div data-role="portal"></div>
@@ -135,8 +135,8 @@ export function createStudyView(ctx: ViewContext): ViewInstance {
       const learnedCount = all.filter((card) => card.status === 'learned').length
       meta.textContent =
         all.length === 0
-          ? '还没有卡片'
-          : `共 ${all.length} 门 · ${linked} 张已连笔记 · 已学 ${learnedCount} 门`
+          ? t('home.noCards')
+          : t('study.stats', { total: all.length, linked, learned: learnedCount })
     },
 
     onEdit(card) {
@@ -153,7 +153,7 @@ export function createStudyView(ctx: ViewContext): ViewInstance {
 
     onOpenNote(card) {
       if (card.noteId.length === 0) {
-        toast('这门课还没有笔记，去笔记页新建一篇', 'info')
+        toast(t('study.noNoteYet'), 'info')
         ctx.navigate('notes')
         return
       }
@@ -179,7 +179,7 @@ export function createStudyView(ctx: ViewContext): ViewInstance {
    */
   function afterSave(status: CourseStatus): void {
     if (status === 'learned') {
-      toast('已归档，可在「已学库」里看到', 'info')
+      toast(t('study.archived'), 'info')
       return
     }
     if (status !== tab) setTab(status)

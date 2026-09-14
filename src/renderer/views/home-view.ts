@@ -1,4 +1,6 @@
 import type { ViewContext, ViewInstance } from '../app-shell'
+import { escapeHtml } from '../lib/html'
+import { t, tm } from '../lib/i18n'
 import { createPortalController } from '../components/portal-controller'
 import { createTimetableController, type TimetableController } from '../components/timetable-controller'
 import { bridge, formatError, unwrap } from '../lib/ipc'
@@ -16,42 +18,42 @@ export function createHomeView(ctx: ViewContext): ViewInstance {
   element.innerHTML = `
     <div class="sb-view__head">
       <div>
-        <h1 class="sb-view__title">今天</h1>
-        <p class="sb-view__desc">课程表固定在最上方，打开就能看到。悬停预览，双击即可编辑。</p>
+        <h1 class="sb-view__title">${escapeHtml(t('home.title'))}</h1>
+        <p class="sb-view__desc">${escapeHtml(t('home.desc'))}</p>
       </div>
       <div class="sb-toolbar">
-        <button class="sb-btn" type="button" data-action="edit-timetable">课表设置</button>
+        <button class="sb-btn" type="button" data-action="edit-timetable">${escapeHtml(t('home.timetableSettings'))}</button>
       </div>
     </div>
 
     <section class="sb-section">
       <div class="sb-section__head">
-        <h2 class="sb-section__title">课程表</h2>
-        <span class="sb-badge" data-role="timetable-meta">模块一</span>
+        <h2 class="sb-section__title">${escapeHtml(t('nav.timetable'))}</h2>
+        <span class="sb-badge" data-role="timetable-meta">${escapeHtml(t('nav.group.module1'))}</span>
       </div>
       <div data-role="timetable-slot"></div>
     </section>
 
     <section class="sb-section">
       <div class="sb-section__head">
-        <h2 class="sb-section__title">网站门户</h2>
-        <span class="sb-badge" data-role="portal-meta">模块二</span>
+        <h2 class="sb-section__title">${escapeHtml(t('nav.portal'))}</h2>
+        <span class="sb-badge" data-role="portal-meta">${escapeHtml(t('nav.group.module2'))}</span>
       </div>
       <div class="sb-toolbar sb-toolbar--right">
-        <button class="sb-btn" type="button" data-action="manage-portal">管理站点</button>
+        <button class="sb-btn" type="button" data-action="manage-portal">${escapeHtml(t('home.managePortal'))}</button>
       </div>
       <div data-role="portal-slot"></div>
     </section>
 
     <section class="sb-section">
       <div class="sb-section__head">
-        <h2 class="sb-section__title">课程卡片</h2>
-        <span class="sb-badge" data-role="cards-meta">模块二</span>
+        <h2 class="sb-section__title">${escapeHtml(t('home.cards'))}</h2>
+        <span class="sb-badge" data-role="cards-meta">${escapeHtml(t('nav.group.module2'))}</span>
       </div>
       <div class="sb-toolbar sb-toolbar--right">
-        <button class="sb-btn" type="button" data-action="manage-cards">课程与学习</button>
+        <button class="sb-btn" type="button" data-action="manage-cards">${escapeHtml(t('nav.study'))}</button>
       </div>
-      <p class="sb-hint" data-role="cards-slot">加载中…</p>
+      <p class="sb-hint" data-role="cards-slot">${escapeHtml(t('common.loading'))}</p>
     </section>
   `
 
@@ -66,7 +68,7 @@ export function createHomeView(ctx: ViewContext): ViewInstance {
     onData(list) {
       if (!portalMeta) return
       const shown = list.filter((site) => !site.hidden).length
-      portalMeta.textContent = `${shown} 个站点`
+      portalMeta.textContent = t('home.siteCount', { count: shown })
     }
   })
   portalSlot?.appendChild(portal.grid.element)
@@ -86,26 +88,26 @@ export function createHomeView(ctx: ViewContext): ViewInstance {
     try {
       const cards = await unwrap(bridge().cards.list())
       const count = (status: string): number => cards.filter((card) => card.status === status).length
-      cardsMeta.textContent = cards.length === 0 ? '还没有卡片' : `共 ${cards.length} 门`
+      cardsMeta.textContent = cards.length === 0 ? t('home.noCards') : t('home.cardCount', { count: cards.length })
       cardsSlot.textContent =
         cards.length === 0
-          ? '还没有课程卡片。去「课程与学习」新建一张——课程名和老师可以从课表直接带过来。'
-          : `在学 ${count('learning')} 门 · 想学 ${count('wish')} 门 · 已学 ${count('learned')} 门`
+          ? t('home.noCardsHint')
+          : t('home.cardStats', { learning: count('learning'), wish: count('wish'), learned: count('learned') })
     } catch (error) {
-      cardsSlot.textContent = `卡片统计读不出来：${formatError(error)}`
+      cardsSlot.textContent = t('home.cardStatsFailed', { reason: tm(formatError(error)) })
     }
   }
 
   const controller: TimetableController = createTimetableController({
     editable: true,
-    errorPrefix: '课表',
+    errorPrefix: t('nav.timetable'),
     onData(data) {
       if (!meta) return
       if (data.mode === 'image') {
-        meta.textContent = `图片模式 · ${data.images.length} 张`
+        meta.textContent = t('home.imageMode', { count: data.images.length })
       } else {
         const filled = Object.keys(data.cells).length
-        meta.textContent = `表格模式 · ${data.periodCount} 节 · 已填 ${filled} 格`
+        meta.textContent = t('home.tableMode', { periods: data.periodCount, filled })
       }
     }
   })
@@ -128,7 +130,7 @@ export function createHomeView(ctx: ViewContext): ViewInstance {
   const emptyHint = document.createElement('p')
   emptyHint.className = 'sb-hint sb-ttpanel__hint'
   emptyHint.hidden = true
-  emptyHint.textContent = '还没有录入任何课程：双击任意单元格开始填写，或到「课程表」页导入照片。'
+  emptyHint.textContent = t('home.timetableEmpty')
   slot?.appendChild(emptyHint)
 
   return {
