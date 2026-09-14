@@ -93,7 +93,7 @@ export interface ToolbarItem {
   command: EditorCommand
   /** 按钮上的字，尽量短——工具栏一行放得下十几个按钮 */
   label: string
-  title: string
+  titleKey: string
   /** 同一组内的按钮挨着放，组与组之间加竖线 */
   group: number
   /** 只在 Markdown 模式下有意义 */
@@ -107,42 +107,42 @@ export interface ToolbarItem {
  * 加粗、标题、列表最常用，表格和对齐放在后面。
  */
 export const TOOLBAR: readonly ToolbarItem[] = [
-  { command: 'undo', label: '↶', title: '撤销', group: 0 },
-  { command: 'redo', label: '↷', title: '重做', group: 0 },
+  { command: 'undo', label: '↶', titleKey: 'editor.undo', group: 0 },
+  { command: 'redo', label: '↷', titleKey: 'editor.redo', group: 0 },
 
-  { command: 'bold', label: 'B', title: '加粗（Ctrl/⌘ + B）', group: 1 },
-  { command: 'italic', label: 'I', title: '斜体（Ctrl/⌘ + I）', group: 1 },
-  { command: 'strike', label: 'S', title: '删除线', group: 1 },
-  { command: 'code', label: '‹›', title: '行内代码', group: 1 },
-  { command: 'underline', label: 'U', title: '下划线（Markdown 不支持，仅富文本）', group: 1, richOnly: true },
-  { command: 'highlight', label: '▨', title: '高亮（Markdown 不支持，仅富文本）', group: 1, richOnly: true },
-  { command: 'link', label: '🔗', title: '插入链接', group: 1 },
+  { command: 'bold', label: 'B', titleKey: 'editor.bold', group: 1 },
+  { command: 'italic', label: 'I', titleKey: 'editor.italic', group: 1 },
+  { command: 'strike', label: 'S', titleKey: 'editor.strike', group: 1 },
+  { command: 'code', label: '‹›', titleKey: 'editor.code', group: 1 },
+  { command: 'underline', label: 'U', titleKey: 'editor.underline', group: 1, richOnly: true },
+  { command: 'highlight', label: '▨', titleKey: 'editor.highlight', group: 1, richOnly: true },
+  { command: 'link', label: '🔗', titleKey: 'editor.link', group: 1 },
   {
     command: 'image',
     label: '🖼',
-    title: '插入图片（从资料库选，或直接拖图片进编辑器）',
+    titleKey: 'editor.image',
     group: 1
   },
 
-  { command: 'h1', label: 'H1', title: '一级标题', group: 2 },
-  { command: 'h2', label: 'H2', title: '二级标题', group: 2 },
-  { command: 'h3', label: 'H3', title: '三级标题', group: 2 },
-  { command: 'paragraph', label: '¶', title: '正文', group: 2 },
+  { command: 'h1', label: 'H1', titleKey: 'editor.h1', group: 2 },
+  { command: 'h2', label: 'H2', titleKey: 'editor.h2', group: 2 },
+  { command: 'h3', label: 'H3', titleKey: 'editor.h3', group: 2 },
+  { command: 'paragraph', label: '¶', titleKey: 'editor.paragraph', group: 2 },
 
-  { command: 'bulletList', label: '•', title: '无序列表', group: 3 },
-  { command: 'orderedList', label: '1.', title: '有序列表', group: 3 },
-  { command: 'blockquote', label: '❝', title: '引用', group: 3 },
-  { command: 'codeBlock', label: '{ }', title: '代码块', group: 3 },
-  { command: 'hr', label: '—', title: '分隔线', group: 3 },
+  { command: 'bulletList', label: '•', titleKey: 'editor.bulletList', group: 3 },
+  { command: 'orderedList', label: '1.', titleKey: 'editor.orderedList', group: 3 },
+  { command: 'blockquote', label: '❝', titleKey: 'editor.blockquote', group: 3 },
+  { command: 'codeBlock', label: '{ }', titleKey: 'editor.codeBlock', group: 3 },
+  { command: 'hr', label: '—', titleKey: 'editor.hr', group: 3 },
 
-  { command: 'table', label: '▦', title: '插入表格', group: 4 },
-  { command: 'tableRow', label: '+行', title: '在下方插入一行', group: 4, richOnly: true },
-  { command: 'tableCol', label: '+列', title: '在右侧插入一列', group: 4, richOnly: true },
-  { command: 'tableDelete', label: '−表', title: '删除当前表格', group: 4, richOnly: true },
+  { command: 'table', label: '▦', titleKey: 'editor.table', group: 4 },
+  { command: 'tableRow', label: '+行', titleKey: 'editor.tableRow', group: 4, richOnly: true },
+  { command: 'tableCol', label: '+列', titleKey: 'editor.tableCol', group: 4, richOnly: true },
+  { command: 'tableDelete', label: '−表', titleKey: 'editor.tableDelete', group: 4, richOnly: true },
 
-  { command: 'alignLeft', label: '⇤', title: '左对齐', group: 5, richOnly: true },
-  { command: 'alignCenter', label: '⇹', title: '居中', group: 5, richOnly: true },
-  { command: 'alignRight', label: '⇥', title: '右对齐', group: 5, richOnly: true }
+  { command: 'alignLeft', label: '⇤', titleKey: 'editor.alignLeft', group: 5, richOnly: true },
+  { command: 'alignCenter', label: '⇹', titleKey: 'editor.alignCenter', group: 5, richOnly: true },
+  { command: 'alignRight', label: '⇥', titleKey: 'editor.alignRight', group: 5, richOnly: true }
 ]
 
 /** 当前模式下这条命令能不能用 */
@@ -158,10 +158,10 @@ export function isCommandAvailable(item: ToolbarItem, mode: EditorMode): boolean
  */
 export const MODE_LABEL: Record<EditorMode, string> = {
   markdown: 'Markdown',
-  richtext: '富文本'
+  richtext: 'editor.mode.richtext'
 }
 
 export const MODE_HINT: Record<EditorMode, string> = {
-  markdown: '直接写 Markdown 源码，所见即所得的高亮，格式能力最全',
-  richtext: '像 Word 那样编辑，适合不熟悉 Markdown 语法的时候用'
+  markdown: 'editor.mode.markdownHint',
+  richtext: 'editor.mode.richtextHint'
 }

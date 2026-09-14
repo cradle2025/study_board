@@ -12,6 +12,7 @@ import type { ViewContext, ViewInstance } from '../app-shell'
 import { MODE_HINT, MODE_LABEL, type EditorHandle, type EditorMode } from '../lib/editor/commands'
 import { outlineParents, parseHeadings, type OutlineItem } from '../lib/editor/outline'
 import { createEditorToolbar } from '../lib/editor/toolbar'
+import { t } from '../lib/i18n'
 import { escapeHtml } from '../lib/html'
 import { bridge, formatError, toast, unwrap } from '../lib/ipc'
 import { confirmAction, openModalCard, promptText, showFloating } from '../lib/overlay'
@@ -190,8 +191,8 @@ export function createNotesView(ctx: ViewContext): ViewInstance {
       button.setAttribute('aria-checked', active ? 'true' : 'false')
       button.classList.toggle('sb-modeswitch__item--on', active)
     }
-    if (modeHint) modeHint.textContent = MODE_HINT[mode]
-    if (metaBadge) metaBadge.textContent = MODE_LABEL[mode]
+    if (modeHint) modeHint.textContent = t(MODE_HINT[mode])
+    if (metaBadge) metaBadge.textContent = t(MODE_LABEL[mode])
   }
 
   function renderList(): void {

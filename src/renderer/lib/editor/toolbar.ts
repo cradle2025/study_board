@@ -1,4 +1,5 @@
 import { escapeHtml } from '../html'
+import { t } from '../i18n'
 import { TOOLBAR, isCommandAvailable, type EditorCommand, type EditorMode, type EditorHandle } from './commands'
 
 /**
@@ -54,7 +55,7 @@ export function createEditorToolbar(options: ToolbarOptions): ToolbarHandle {
         .map(
           (item) => `
             <button class="sb-editorbar__btn" type="button" data-command="${item.command}"
-                    title="${escapeHtml(item.title)}" aria-label="${escapeHtml(item.title)}">
+                    title="${escapeHtml(t(item.titleKey))}" aria-label="${escapeHtml(t(item.titleKey))}">
               ${escapeHtml(item.label)}
             </button>
           `

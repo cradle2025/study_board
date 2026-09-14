@@ -29,6 +29,8 @@ import {
   setUserDataOverride,
   tempDir
 } from './paths'
+import { dictionaryGaps } from '@shared/i18n'
+
 import { DATA_SCHEMA, readStamp } from './services/dataVersion'
 import { resolveNotesDir } from './services/settings'
 import { encodePng } from './services/png'
@@ -769,12 +771,47 @@ const BASIC_PROBE = `(async () => {
     versionText.includes('Windows') || versionText.includes('macOS') || versionText.includes('Linux')
   const hasBits = versionText.includes('位') || versionText.includes('ARM')
 
+  /**
+   * 切语言必须**真的改变界面文字**。
+   *
+   * 这条是冲着那个 bug 去的：语言下拉以前只写配置，界面一个字都不变。
+   * 所以断言不能只看「下拉框的值变了」——那正是当时骗过所有人的现象。
+   * 必须读**界面上真实的文字**。
+   *
+   * 判据取导航分组标题（「看板」/「Dashboard」）：它在每次语言切换时
+   * 由 AppShell 的 relocalize 重建，是最直接反映「有没有重绘」的地方。
+   */
+  const navGroupText = () => document.querySelector('.sb-nav__group')?.textContent ?? ''
+  const zhGroup = navGroupText()
+
+  await window.studyBoard.settings.patch({ language: 'en-US' })
+  // 重绘是异步的（要重挂当前路由），所以轮询等文字变过来
+  let enGroup = ''
+  for (let i = 0; i < 60; i += 1) {
+    enGroup = navGroupText()
+    if (enGroup && enGroup !== zhGroup) break
+    await wait(100)
+  }
+
+  // 切回去，确认是双向的而不是「变了一次就再也回不来」
+  await window.studyBoard.settings.patch({ language: 'zh-CN' })
+  let backGroup = ''
+  for (let i = 0; i < 60; i += 1) {
+    backGroup = navGroupText()
+    if (backGroup === zhGroup) break
+    await wait(100)
+  }
+
   return JSON.stringify({
     customElement: Boolean(document.querySelector('study-board-app')),
     mounted: Boolean(shell),
     bridge: typeof window.studyBoard === 'object',
     versionText,
-    versionLabelOk: Boolean(versionText && !rawTokenShown && hasOsName && hasBits)
+    versionLabelOk: Boolean(versionText && !rawTokenShown && hasOsName && hasBits),
+    zhGroup,
+    enGroup,
+    backGroup,
+    languageSwitchOk: Boolean(zhGroup) && enGroup !== zhGroup && backGroup === zhGroup
   })
 })()`
 
@@ -1966,7 +2003,12 @@ export function runSmokeTestIfRequested(win: BrowserWindow): void {
                       parsed['customElement'] &&
                         parsed['mounted'] &&
                         parsed['bridge'] &&
-                        parsed['versionLabelOk']
+                        parsed['versionLabelOk'] &&
+                        // 切语言真的改变界面文字，而且切得回去
+                        parsed['languageSwitchOk'] &&
+                        // 中英词条必须一一对应：加了中文忘了英文，
+                        // 英文界面就会在那一处悄悄回落到中文
+                        dictionaryOk()
                     )
 
         // 安全场景还有两笔账要在退出前结掉：
@@ -3933,6 +3975,24 @@ function verifyStampPreserved(): boolean {
  * 不写的话，下次启动会把同一批数据再迁一遍、再备份一遍 ——
  * 备份目录会一次比一次多，而用户什么都没做。
  */
+/**
+ * 中英词条是否一一对应。
+ *
+ * 漏一条的后果是「英文界面里突然冒出一句中文」，而且没有任何报错——
+ * 因为 `translate()` 找不到就回落中文，那正是它该做的。所以这件事
+ * 必须由测试来盯，不能指望人肉记住。
+ */
+function dictionaryOk(): boolean {
+  const gaps = dictionaryGaps()
+  if (gaps.missingInEn.length > 0) {
+    console.error('[smoke] 英文词典缺条目：', gaps.missingInEn.join(', '))
+  }
+  if (gaps.missingInZh.length > 0) {
+    console.error('[smoke] 中文词典缺条目：', gaps.missingInZh.join(', '))
+  }
+  return gaps.missingInEn.length === 0 && gaps.missingInZh.length === 0
+}
+
 function verifyStampIsCurrent(): boolean {
   const stamp = readStamp(false)
   if (!stamp) {
