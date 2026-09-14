@@ -56,6 +56,30 @@ export interface AppInfo {
   arch: string
   locale: string
   paths: AppPaths
+  /** 当前程序认识的数据格式版本 */
+  dataSchema: number
+  /** 这份数据是被哪个程序版本写的（没有印记时为 null） */
+  dataWrittenBy: string | null
+  /** 数据格式不匹配时的提示语；正常为 null */
+  dataWarning: string | null
+}
+
+/**
+ * 切换便携模式的结果。
+ *
+ * 刻意**不返回新的设置对象**：便携模式要重启才生效，本次会话的
+ * 设置并没有变。返回一个「看起来变了的设置」会让调用方以为可以
+ * 立刻按新路径读数据，而实际读到的还是旧路径。
+ */
+export interface PortableSwitchResult {
+  /** 是否真的动了数据（目标已经就是当前状态时为 false） */
+  changed: boolean
+  /** 迁移后数据所在目录 */
+  target: string
+  /** 迁移前数据所在目录（保留着，用户确认后自行删除） */
+  previous: string
+  /** 是否需要重启才生效 */
+  restartRequired: boolean
 }
 
 /* ------------------------------------------------------------------ 设置 */
@@ -124,7 +148,17 @@ export type TimetablePatch = Partial<TimetableSettings>
 export type AiPatch = Partial<Omit<AiSettings, 'hasApiKey'>>
 export type NotionPatch = Partial<Omit<NotionSettings, 'hasToken'>>
 
-export type SettingsPatch = Partial<Omit<AppSettings, 'timetable' | 'ai' | 'notion' | 'materials'>> & {
+/**
+ * 设置补丁。
+ *
+ * 刻意排除 `portableMode`：它不是「改一个字段」，而是搬整个数据目录，
+ * 走 `settings:set-portable` 那条单独通道。留在补丁里的话，
+ * 调用方会以为一次 `patch` 就能切过去，而实际只会写下一个
+ * 与真实数据位置矛盾的字段值。
+ */
+export type SettingsPatch = Partial<
+  Omit<AppSettings, 'timetable' | 'ai' | 'notion' | 'materials' | 'portableMode'>
+> & {
   timetable?: TimetablePatch
   ai?: AiPatch
   notion?: NotionPatch

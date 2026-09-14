@@ -4,7 +4,7 @@ import { isAbsolute, resolve, sep } from 'node:path'
 import { CHANNELS } from '@shared/channels'
 import type { AppInfo } from '@shared/types'
 
-import { context } from '../context'
+import { context, dataStatus } from '../context'
 import { dataRoot, resolveAppPaths } from '../paths'
 import { openExternalSafely } from '../security'
 import { resolveNotesDir } from '../services/settings'
@@ -28,6 +28,7 @@ function assertInsideAppRoots(target: string): string {
 export function registerSystemHandlers(): void {
   handle<unknown, AppInfo>(CHANNELS.APP_INFO, () => {
     const settings = context().settings.get()
+    const data = dataStatus()
     return {
       name: app.getName(),
       version: app.getVersion(),
@@ -37,7 +38,10 @@ export function registerSystemHandlers(): void {
       platform: process.platform,
       arch: process.arch,
       locale: app.getLocale(),
-      paths: resolveAppPaths(settings.portableMode, resolveNotesDir(settings))
+      paths: resolveAppPaths(settings.portableMode, resolveNotesDir(settings)),
+      dataSchema: data.supported,
+      dataWrittenBy: data.stamp?.app || null,
+      dataWarning: data.warning
     }
   })
 

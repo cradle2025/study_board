@@ -4,11 +4,13 @@ import {
   ensureDir,
   iconsCacheDir,
   portalFile,
+  rescueStashedPortableData,
   timetableFile,
   timetableImagesDir
 } from './paths'
 import type { AssetBuckets } from './services/assetProtocol'
 import { CardsStore } from './services/cards'
+import { DATA_SCHEMA, prepareDataDir, readStamp, type PrepareResult } from './services/dataVersion'
 import { MaterialsStore } from './services/materials'
 import { NotesStore } from './services/notes'
 import { PortalStore } from './services/portal'
@@ -36,6 +38,18 @@ export interface AppContext {
 
 let current: AppContext | null = null
 
+/**
+ * 上一次数据闸口的结果。
+ *
+ * 存下来是为了让「升级搬过东西」「数据来自更新的版本」这两件事
+ * 能被设置页和自检看到 —— 否则它们只存在于一行 console 里，
+ * 而打包后的应用没有控制台。
+ */
+let lastPrepare: PrepareResult | null = null
+
+/** 闸口当时认定的数据位置。存下来，免得闸口结论和「现在读哪个目录」对不上 */
+let lastPortable = false
+
 function buildBuckets(portable: boolean, notesDir: string): AssetBuckets {
   return {
     notes: ensureDir(notesDir),
@@ -44,8 +58,28 @@ function buildBuckets(portable: boolean, notesDir: string): AssetBuckets {
   }
 }
 
+/**
+ * 启动时先过数据闸口，再建存储。
+ *
+ * **顺序不能反**：存储的构造函数会读文件，读完就形成了内存态；
+ * 那时候再迁移，内存里拿的还是旧格式，等于白搬一次。
+ */
 export function initContext(): AppContext {
+  // 先看有没有「上一次更新失败留下的暂存」要救回来。必须排在探测之前：
+  // 暂存挪回去之后，便携模式才认得出来
+  const rescued = rescueStashedPortableData()
+  if (rescued) console.warn(`[data] 已恢复上次更新暂存的便携数据：${rescued}`)
+
   const portable = detectPortableMode()
+  lastPortable = portable
+
+  // 闸口只做「备份 + 迁移 + 写印记」，不弹窗。弹窗要等窗口起来之后再说 ——
+  // 启动路径上一个模态框会让人以为程序卡住了
+  lastPrepare = prepareDataDir(portable)
+  if (lastPrepare.actions.length > 0) {
+    console.info(`[data] 数据闸口：${lastPrepare.actions.join('；')}`)
+  }
+
   const settings = new SettingsStore(portable)
   const snapshot = settings.get()
 
@@ -97,6 +131,23 @@ export function sweepOrphanFiles(): void {
 export function context(): AppContext {
   if (!current) throw new Error('应用上下文尚未初始化')
   return current
+}
+
+/** 数据闸口的结论，供设置页与自检读取。未初始化时返回空壳而不是抛异常 */
+export function dataStatus(): {
+  supported: number
+  stamp: ReturnType<typeof readStamp>
+  verdict: PrepareResult['verdict'] | null
+  actions: string[]
+  warning: string | null
+} {
+  return {
+    supported: DATA_SCHEMA,
+    stamp: readStamp(lastPortable),
+    verdict: lastPrepare?.verdict ?? null,
+    actions: lastPrepare?.actions ?? [],
+    warning: lastPrepare?.warning ?? null
+  }
 }
 
 /**

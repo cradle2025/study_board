@@ -1,13 +1,14 @@
 import { BrowserWindow, app } from 'electron'
 
 import { benchEnabled, prepareBenchDataIfRequested, runBenchIfRequested } from './bench'
-import { context, initContext, sweepOrphanFiles } from './context'
+import { context, dataStatus, initContext, sweepOrphanFiles } from './context'
 import { startMaterialsInboxWatch } from './ipc/materials'
 import { startNotesSync } from './ipc/notes'
 import { registerIpcHandlers } from './ipc/register'
 import { mark } from './metrics'
 import { installMainProcessGuards, logLine } from './resilience'
 import { installAssetProtocol } from './services/assetProtocol'
+import { reportDataWarning } from './services/dataVersion'
 import {
   hardenBeforeReady,
   installSessionHardening,
@@ -16,6 +17,7 @@ import {
 import {
   prepareIsolatedDataDir,
   prepareSmokeDataIfRequested,
+  prepareUpdateScenarioIfRequested,
   runSmokeTestIfRequested,
   smokeEnabled
 } from './smoke'
@@ -29,6 +31,8 @@ mark('main:hardened')
 
 // 自动化运行（冒烟 / 基准）跑在临时数据目录里，绝不碰用户真实数据
 prepareIsolatedDataDir()
+// 更新场景要在数据闸口（initContext）之前把「未来版本」的印记摆好
+prepareUpdateScenarioIfRequested()
 
 // 只允许运行一个实例，避免两个进程同时写同一个笔记库
 if (!app.requestSingleInstanceLock()) {
@@ -73,6 +77,17 @@ if (!app.requestSingleInstanceLock()) {
       const win = createMainWindow()
       mark('window:created')
       logLine('start', `v${app.getVersion()} ${process.platform}/${process.arch} electron=${process.versions['electron']}`)
+
+      /**
+       * 数据版本不匹配的警告，等窗口起来之后再说。
+       *
+       * 放在 `initContext` 里直接弹的话，那是一个**窗口都还没出现**的
+       * 模态框，用户看到的就是「双击了没反应」。而且自检 / 基准跑的时候
+       * 它会永远卡在一个没人点的确认框上。
+       */
+      const dataWarning = dataStatus().warning
+      if (dataWarning) reportDataWarning(dataWarning, !smokeEnabled() && !benchEnabled())
+
       win.once('ready-to-show', () => {
         mark('window:ready-to-show')
         // 首屏显示之后的空闲时间再做清理，不跟首屏抢
