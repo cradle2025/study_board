@@ -19,6 +19,16 @@ jobs:
         include:
           - os: windows-latest
             target: win
+          # macOS **只验证能构建，不往 Release 上挂**。
+          #
+          # 原因：没有签名和公证的 .app 在 macOS 上**根本打不开** ——
+          # Gatekeeper 是直接拦死，不是 Windows 那种「点一下仍要运行」
+          # 就能过。往 Release 上挂一个谁都用不了的 .dmg，比不挂更糟：
+          # 用户下载、打不开、来提 issue，而下载页上写着「支持 macOS」。
+          #
+          # 留着这个 job 是为了让「mac 构建有没有被改坏」在 CI 里可见。
+          # 等有了 Apple Developer 账号（$99/年）+ 公证流程，
+          # 再把它加进下面的 Release 附件列表。
           - os: macos-latest
             target: mac
 
@@ -38,11 +48,30 @@ jobs:
       - name: Typecheck
         run: npm run typecheck
 
+      # 自检必须在打包**之前**跑。
+      #
+      # 这一条原来缺了：工作流只跑 typecheck 就打包。而类型检查只能证明
+      # 「编译得过」，证明不了「界面起得来、数据读得出、安全闸还在」。
+      # 那样打出来的包，会被贴上一个「上次测过」的印象 —— 比不测更危险。
+      #
+      # 自检跑的是**测试版构建**（STUDY_BOARD_TEST_BUILD=1），会覆盖 out/，
+      # 所以后面必须重新 build 一次生产产物。
+      - name: Smoke test
+        run: npm run smoke
+
       - name: Build renderer and main
         run: npm run build
 
       - name: Package installers
         run: npx electron-builder --${{ matrix.target }} --config electron-builder.yml --publish never
+
+      - name: Generate checksums
+        if: matrix.target == 'win'
+        shell: bash
+        run: |
+          cd release/*/
+          sha256sum ./*.exe > SHA256SUMS.txt
+          cat SHA256SUMS.txt
 
       - name: Upload installers as workflow artifacts
         uses: actions/upload-artifact@v4
@@ -51,13 +80,33 @@ jobs:
           if-no-files-found: error
           path: |
             release/**/*.exe
+            release/**/*.exe.blockmap
             release/**/*.dmg
+            release/**/SHA256SUMS.txt
 
+      # 只挂 Windows。见上面 mac 那段注释。
       - name: Attach installers to GitHub Release
-        if: startsWith(github.ref, 'refs/tags/v')
+        if: startsWith(github.ref, 'refs/tags/v') && matrix.target == 'win'
         uses: softprops/action-gh-release@v2
         with:
           files: |
             release/**/*.exe
-            release/**/*.dmg
+            release/**/*.exe.blockmap
+            release/**/SHA256SUMS.txt
           generate_release_notes: true
+          draft: true
+          body: |
+            ### 安装
+
+            下载 `StudyBoard-<版本>-win-x64-setup.exe` 直接安装即可（Windows 64 位）。
+
+            > 首次运行 Windows 可能提示「已保护你的电脑」——这是因为安装包
+            > **没有代码签名证书**。点「更多信息」→「仍要运行」即可。
+            > 校验和见 `SHA256SUMS.txt`。
+
+            ### 数据
+
+            所有数据存在本机（`%APPDATA%\StudyBoard`，或便携模式下的
+            `study-board-data`）。升级会保留数据，迁移前会自动备份到
+            `.backups/`。应用不联网，唯一的例外是你在设置里主动点
+            「测试连接」或抓取网站图标时。
