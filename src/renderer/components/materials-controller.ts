@@ -1,5 +1,6 @@
 import type { MaterialImportResult, MaterialInboxCandidate, MaterialItem } from '@shared/types'
 
+import { t, tm } from '../lib/i18n'
 import { bridge, formatError, toast, unwrap } from '../lib/ipc'
 import { confirmAction } from '../lib/overlay'
 import { createMaterialsGrid, type MaterialGridHandle } from './materials-grid'
@@ -39,11 +40,11 @@ export interface MaterialsController {
 function announceResult(result: MaterialImportResult): void {
   const failed = result.errors.length
   if (result.added > 0 && failed === 0) {
-    toast(`已导入 ${result.added} 份资料`, 'success')
+    toast(t('shell.importedCount', { count: result.added }), 'success')
   } else if (result.added > 0) {
-    toast(`导入 ${result.added} 份，${failed} 份失败：${result.errors[0]}`, 'info')
+    toast(t('materials.importPartial', { added: result.added, failed, reason: tm(result.errors[0] ?? '') }), 'info')
   } else if (failed > 0) {
-    toast(`导入失败：${result.errors[0]}`, 'error')
+    toast(t('materials.importFailed', { reason: tm(result.errors[0] ?? '') }), 'error')
   }
   notifyMaterialsChanged()
 }
@@ -60,24 +61,24 @@ export function createMaterialsController(options: MaterialsControllerOptions): 
       try {
         await unwrap(bridge().materials.open(item.id))
       } catch (error) {
-        toast(`打不开：${formatError(error)}`, 'error')
+        toast(t('notes.openPathFailed', { reason: tm(formatError(error)) }), 'error')
       }
     },
 
     async onRemove(item) {
       const confirmed = await confirmAction({
-        title: `删除「${item.title}」？`,
-        message: '文件会移入系统回收站，误删了还能捞回来。',
-        confirmText: '删除',
+        title: t('materials.removeTitle', { name: item.title }),
+        message: t('materials.removeBody'),
+        confirmText: t('common.delete'),
         danger: true
       })
       if (!confirmed) return
       try {
         await unwrap(bridge().materials.remove(item.id))
-        toast('已删除（文件在回收站里）', 'success')
+        toast(t('materials.removed'), 'success')
         notifyMaterialsChanged()
       } catch (error) {
-        toast(`删除失败：${formatError(error)}`, 'error')
+        toast(t('materials.removeFailed', { reason: tm(formatError(error)) }), 'error')
       }
     },
 
@@ -88,10 +89,10 @@ export function createMaterialsController(options: MaterialsControllerOptions): 
       if (next === null) return
       try {
         await unwrap(bridge().materials.setCard({ id: item.id, courseCardId: next }))
-        toast(next === '' ? '已设为未归类' : '已改归属', 'success')
+        toast(t(next === '' ? 'materials.setUngrouped' : 'materials.setCourseDone'), 'success')
         notifyMaterialsChanged()
       } catch (error) {
-        toast(`改归属失败：${formatError(error)}`, 'error')
+        toast(t('materials.setCourseFailed', { reason: tm(formatError(error)) }), 'error')
       }
     },
 
@@ -101,10 +102,10 @@ export function createMaterialsController(options: MaterialsControllerOptions): 
       if (title === null) return
       try {
         await unwrap(bridge().materials.rename({ id: item.id, title }))
-        toast('已重命名', 'success')
+        toast(t('notes.renamed'), 'success')
         notifyMaterialsChanged()
       } catch (error) {
-        toast(`重命名失败：${formatError(error)}`, 'error')
+        toast(t('notes.renameFailed', { reason: tm(formatError(error)) }), 'error')
       }
     }
   })
@@ -131,7 +132,7 @@ export function createMaterialsController(options: MaterialsControllerOptions): 
         items = await unwrap(bridge().materials.list())
         apply()
       } catch (error) {
-        toast(`资料加载失败：${formatError(error)}`, 'error')
+        toast(t('materials.loadFailed', { reason: tm(formatError(error)) }), 'error')
       }
       return items
     },
@@ -145,7 +146,7 @@ export function createMaterialsController(options: MaterialsControllerOptions): 
         apply()
         announceResult(result)
       } catch (error) {
-        toast(`导入失败：${formatError(error)}`, 'error')
+        toast(t('materials.importFailed', { reason: tm(formatError(error)) }), 'error')
       }
     },
 
@@ -156,7 +157,7 @@ export function createMaterialsController(options: MaterialsControllerOptions): 
         apply()
         announceResult(result)
       } catch (error) {
-        toast(`导入失败：${formatError(error)}`, 'error')
+        toast(t('materials.importFailed', { reason: tm(formatError(error)) }), 'error')
       }
     },
 
@@ -167,7 +168,7 @@ export function createMaterialsController(options: MaterialsControllerOptions): 
         apply()
         announceResult(result)
       } catch (error) {
-        toast(`收编失败：${formatError(error)}`, 'error')
+        toast(t('materials.adoptFailed', { reason: tm(formatError(error)) }), 'error')
       }
     },
 
@@ -175,7 +176,7 @@ export function createMaterialsController(options: MaterialsControllerOptions): 
       try {
         return await unwrap(bridge().materials.unregistered())
       } catch (error) {
-        toast(`扫描失败：${formatError(error)}`, 'error')
+        toast(t('materials.scanFailed', { reason: tm(formatError(error)) }), 'error')
         return []
       }
     },

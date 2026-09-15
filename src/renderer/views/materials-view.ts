@@ -1,8 +1,10 @@
 import type { ViewContext, ViewInstance } from '../app-shell'
+import { escapeHtml } from '../lib/html'
 import {
   createMaterialsController,
   type MaterialsController
 } from '../components/materials-controller'
+import { t, tm } from '../lib/i18n'
 import { bridge, formatError, toast, unwrap } from '../lib/ipc'
 
 /**
@@ -21,25 +23,24 @@ export function createMaterialsView(ctx: ViewContext): ViewInstance {
   element.innerHTML = `
     <div class="sb-view__head">
       <div>
-        <h1 class="sb-view__title">课程资料</h1>
-        <p class="sb-view__desc">课件、大纲、实验指导、拍的板书照片都收在这里，按课程分组。把文件拖进窗口就能导入。</p>
+        <h1 class="sb-view__title">${escapeHtml(t('nav.materials'))}</h1>
+        <p class="sb-view__desc">${escapeHtml(t('materials.desc'))}</p>
       </div>
       <div class="sb-toolbar">
-        <button class="sb-btn" type="button" data-action="scan">扫描未登记</button>
-        <button class="sb-btn sb-btn--primary" type="button" data-action="import">导入资料</button>
+        <button class="sb-btn" type="button" data-action="scan">${escapeHtml(t('materials.scan'))}</button>
+        <button class="sb-btn sb-btn--primary" type="button" data-action="import">${escapeHtml(t('materials.import'))}</button>
       </div>
     </div>
 
     <section class="sb-section">
       <div class="sb-section__head">
-        <h2 class="sb-section__title">全部资料</h2>
+        <h2 class="sb-section__title">${escapeHtml(t('materials.all'))}</h2>
         <span class="sb-badge" data-role="meta">—</span>
       </div>
       <div data-role="materials"></div>
       <button class="sb-filternote" type="button" data-role="filter-note" hidden></button>
       <p class="sb-hint">
-        资料存在笔记库的 attachments/ 目录里，Obsidian 能直接预览其中的 PDF 和图片；
-        删除只是移入系统回收站。显示「文件丢失」的条目多半是被挪走了，找回来后这里会自动恢复。
+        ${escapeHtml(t('materials.hint'))}
       </p>
     </section>
   `
@@ -67,8 +68,8 @@ export function createMaterialsView(ctx: ViewContext): ViewInstance {
       const lost = items.filter((item) => item.missing).length
       meta.textContent =
         items.length === 0
-          ? '还没有资料'
-          : `共 ${items.length} 份${lost > 0 ? ` · ${lost} 份丢失` : ''}`
+          ? t('materials.none')
+          : t('materials.total', { total: items.length }) + (lost > 0 ? t('materials.lostSuffix', { lost }) : '')
     }
   })
 
@@ -83,7 +84,7 @@ export function createMaterialsView(ctx: ViewContext): ViewInstance {
     if (filterNote) {
       filterNote.hidden = focusCardId === null
       if (focusCardId !== null) {
-        filterNote.textContent = `只看「${courseName}」的资料 · 显示全部`
+        filterNote.textContent = t('materials.filteredBy', { name: courseName })
       }
     }
   }
@@ -107,7 +108,7 @@ export function createMaterialsView(ctx: ViewContext): ViewInstance {
       if (!choice) return
       await controller.importPaths(picked.paths, choice.courseCardId, choice.title)
     } catch (error) {
-      toast(`导入失败：${formatError(error)}`, 'error')
+      toast(t('materials.importFailed', { reason: tm(formatError(error)) }), 'error')
     }
   }
 
@@ -115,7 +116,7 @@ export function createMaterialsView(ctx: ViewContext): ViewInstance {
   async function scanUnregistered(): Promise<void> {
     const found = await controller.unregistered()
     if (found.length === 0) {
-      toast('没有发现未登记的资料文件', 'info')
+      toast(t('materials.scanEmpty'), 'info')
       return
     }
     const { inboxCandidateEntries, openMaterialImportDialog } = await import(

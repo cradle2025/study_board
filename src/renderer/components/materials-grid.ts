@@ -1,6 +1,7 @@
 import { MATERIAL_KIND_LABEL, isImageExtension } from '@shared/materials'
 import type { MaterialItem } from '@shared/types'
 
+import { getLang, t } from '../lib/i18n'
 import { materialAssetUrl } from '../lib/asset'
 import { escapeHtml } from '../lib/html'
 import { openLightbox } from '../lib/overlay'
@@ -35,7 +36,19 @@ function formatBytes(bytes: number): string {
   return `${(bytes / 1024 / 1024).toFixed(1)} MB`
 }
 
-const UNKNOWN_COURSE = '未归类'
+/**
+ * 没有归属课程的哨兵值。
+ *
+ * 它同时被当作**分组键**（比较用）和**显示名**（渲染用），所以不能直接
+ * 把中文换成 key —— 比较逻辑会跟着一起变。这里保持它是一个不可能与
+ * 真实课程名撞车的哨兵，显示时用 `courseLabel()` 翻。
+ */
+const UNKNOWN_COURSE = '\u0000ungrouped'
+
+/** 分组标题：哨兵翻成「未归类」，真实课程名原样 */
+function courseLabel(name: string): string {
+  return name === UNKNOWN_COURSE ? t('materials.ungrouped') : name
+}
 
 /**
  * 左侧那格：图片给缩略图，其它给扩展名徽标。
@@ -55,7 +68,7 @@ function thumbHtml(item: MaterialItem): string {
   }
   return `
     <button class="sb-material__thumb" type="button" data-act="preview"
-            title="点开看大图" aria-label="预览 ${escapeHtml(item.title)}">
+            title="${escapeHtml(t('materials.previewHint'))}" aria-label="${escapeHtml(t('materials.preview', { name: item.title }))}">
       <img src="${escapeHtml(materialAssetUrl(item.fileName))}" alt="" loading="lazy" decoding="async" />
     </button>
   `
@@ -71,18 +84,18 @@ function rowHtml(item: MaterialItem): string {
         <span class="sb-material__title" title="${escapeHtml(item.title)}">${escapeHtml(item.title)}</span>
         <span class="sb-material__meta">
           ${escapeHtml(kind)} · ${formatBytes(item.bytes)}
-          ${lost ? ' · <b>文件丢失</b>（可能被移动或删除）' : ''}
+          ${lost ? ' · ' + escapeHtml(t('materials.missing')) : ''}
         </span>
       </span>
       <span class="sb-material__actions">
         ${
           lost
             ? ''
-            : `<button class="sb-btn sb-btn--sm" type="button" data-act="open" title="用系统默认程序打开">打开</button>`
+            : `<button class="sb-btn sb-btn--sm" type="button" data-act="open" title="${escapeHtml(t('materials.openWith'))}">${escapeHtml(t('common.open'))}</button>`
         }
-        <button class="sb-iconbtn" type="button" data-act="rename" title="重命名" aria-label="重命名 ${escapeHtml(item.title)}">✎</button>
-        <button class="sb-iconbtn" type="button" data-act="setcard" title="改归属课程">⇄</button>
-        <button class="sb-iconbtn sb-iconbtn--danger" type="button" data-act="remove" title="删除（进回收站）" aria-label="删除 ${escapeHtml(item.title)}">✕</button>
+        <button class="sb-iconbtn" type="button" data-act="rename" title="${escapeHtml(t('common.rename'))}" aria-label="${escapeHtml(t('materials.renameLabel', { name: item.title }))}">✎</button>
+        <button class="sb-iconbtn" type="button" data-act="setcard" title="${escapeHtml(t('materials.setCourse'))}">⇄</button>
+        <button class="sb-iconbtn sb-iconbtn--danger" type="button" data-act="remove" title="${escapeHtml(t('materials.removeHint'))}" aria-label="${escapeHtml(t('materials.removeLabel', { name: item.title }))}">✕</button>
       </span>
     </div>
   `
@@ -94,7 +107,7 @@ export function createMaterialsGrid(options: MaterialGridOptions): MaterialGridH
 
   const empty = document.createElement('p')
   empty.className = 'sb-empty'
-  empty.textContent = '还没有课程资料。把下载好的 PDF / PPT / 图片直接拖进窗口，或点「导入资料」。'
+  empty.textContent = t('materials.emptyHint')
   empty.hidden = true
   element.appendChild(empty)
 
@@ -119,7 +132,7 @@ export function createMaterialsGrid(options: MaterialGridOptions): MaterialGridH
     const ordered = [...groups.entries()].sort((a, b) => {
       if (a[0] === UNKNOWN_COURSE) return 1
       if (b[0] === UNKNOWN_COURSE) return -1
-      return a[0].localeCompare(b[0], 'zh-Hans-CN')
+      return a[0].localeCompare(b[0], getLang())
     })
 
     body.innerHTML = ordered
@@ -128,9 +141,9 @@ export function createMaterialsGrid(options: MaterialGridOptions): MaterialGridH
         return `
           <section class="sb-materials__group">
             <div class="sb-materials__group-head">
-              <h3 class="sb-materials__group-title">${escapeHtml(course)}</h3>
+              <h3 class="sb-materials__group-title">${escapeHtml(courseLabel(course))}</h3>
               <span class="sb-materials__group-count">
-                ${list.length} 份${lostCount > 0 ? ` · ${lostCount} 份丢失` : ''}
+                ${escapeHtml(t('materials.total', { total: list.length }))}${lostCount > 0 ? escapeHtml(t('materials.lostSuffix', { lost: lostCount })) : ''}
               </span>
             </div>
             ${list.map((item) => rowHtml(item)).join('')}
