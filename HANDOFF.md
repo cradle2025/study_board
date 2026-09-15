@@ -3,77 +3,90 @@
 > 本文件**每次交接覆盖重写**，只保留当前战役。
 > 历史由 git 承担；跨战役的决策沉淀进 `DECISIONS.md`。
 >
-> 交接时间：2026-09-15 晚
+> 交接时间：2026-09-15 晚（第二次交接）
 > 交接人：小鲸（DeepSeek 娘）
-> 交接时的 HEAD：`0aecbf9`（`chore: LICENSE 版权人改成 salty`）
+> 交接时的分支：**`feat/week-rules`**（不是 `master`）
+> 交接时的 HEAD：`48d5b72`（`test(smoke): 周次功能四条断言`）；
+> 本文件所在的那个提交在它之上（`docs: 交接文档覆盖重写 + D-010`）
+
+---
+
+## 0. 给下一个 agent 的对账清单（先做这个）
+
+```bash
+cd <项目根>
+git branch --show-current     # 应该是 feat/week-rules
+git log --oneline -4          # 应看到 48d5b72 / 1525294 / 1f7a8a4
+git status                    # 应无输出
+npx tsc --noEmit -p tsconfig.node.json && npx tsc --noEmit -p tsconfig.web.json
+npm run smoke                 # 约 1 分钟
+```
+
+**⚠️ 本仓库的分支是 `master`，不是 `main`。** 上一版 HANDOFF 写的 `main` 是错的，
+已在此更正。`master` 停在 `1f7a8a4`，是干净的 0.3.0（可发）。
+
+**⚠️ 本环境的 git 有一个会咬人的沙箱行为，先看第 6 节 K-006。**
+写完任何 `git commit` 之后**必须核对分支 ref 还在不在**，否则会以为提交丢了。
 
 ---
 
 ## 1. 目标与范围边界
 
-### 当前战役：**课表支持「按周次不同」**
+### 当前战役：**课表支持「按周次不同」** —— 已完成（未打包、未合并）
 
 用户原话：「每一周的课表可能都不一样，这一点需要做成新功能」。
 
-已与用户确认的两个设计前提（**不要再重新辩论**）：
+已确认的两个设计前提（**不要再重新辩论**）：
 
-1. **做到「单元格级周次」** —— 用户明确选了三个方案里最灵活的那个，
-   即每个格子标记适用周次（每周/单周/双周/指定周），**同一时间段可以并存多门课**。
+1. **单元格级周次** —— 每个格子标记适用周次（每周/单周/双周/指定周），
+   **同一时间段可以并存多门课**。
 2. **老数据自动铺到所有周次** —— 现有已录入的课视为「每周都上」，
-   用户只需补充「只有某些周才上」的课。对现有数据零操作。
+   用户对现有数据零操作。
 
-### 边界（不要越界）
+### 边界（本轮遵守情况）
 
-- **不要动**笔记、课程卡片、资料、门户、AI、Notion 这些模块。
-- **不要**顺手做「整列复制」—— 用户明确说了**不值得，不做**。
-- 这次要动**数据格式**，所以必须同步处理迁移（见第 8 节）。
-- 版本号建议升到 **0.4.0**（数据格式变更）。
+- ✅ **没有动**笔记、课程卡片、资料、门户、AI、Notion。
+- ✅ **没有做**「整列复制」（用户明确否决，见 D-007）。
+- ✅ 数据格式变更已同步处理迁移（第 2 节）。
+- ✅ 版本号已升到 **0.4.0**（`package.json`）。
 
 ---
 
 ## 2. 已完成事实（均附验证方式）
 
-### 2.1 发布链路（本战役之前的成果，已闭环）
-
 | 事项 | 状态 | 验证方式 |
 |---|---|---|
-| 数据格式版本闸口 | 完成 | `npm run smoke:update` + `npm run smoke:migrate` 通过 |
-| 便携模式数据在升级中不丢 | 完成 | 实机：装 0.3.0 → 植入数据 → 覆盖安装 → 数据完好 |
-| 便携模式开关真的生效 | 完成 | 走 `settings:set-portable` 通道，真的搬数据 |
-| 界面完整双语（602 词条） | 完成 | `npm run smoke:i18n`；渲染层只剩 2 处 `console.*` 中文 |
-| 署名 salty | 完成 | `package.json` 的 `author`、`LICENSE` 版权人 |
-| GitHub Actions 发布工作流 | 完成 | `.github/workflows/release.yml`（**从未在真实 Actions 上跑过**，见第 4 节） |
+| 数据形状 v1 → v2（`DATA_SCHEMA` 1 → 2） | 完成 | `src/shared/types.ts` 的 `WeekRule` / `TimetableCell[]` |
+| v1 → v2 迁移，**幂等** | 完成 | `verifyTimetableMigration()`，随 `smoke:timetable` / `smoke:migrate` 跑 |
+| 迁移前备份（闸口自带） | 完成 | 断言**备份里那份还是 v1 单对象形状** |
+| 存储按 id 增删改 + 批量 `setCells` | 完成 | `src/main/services/timetable.ts` |
+| IPC 三件套（channels / api / preload） | 完成 | `npm run typecheck`（契约共用，漏改一侧编译不过） |
+| 一格多课渲染 + 周次角标 + 按周过滤 | 完成 | `smoke:timetable` 的 `multiOk` / `filterOk` |
+| 编辑器「列表 / 表单」两形态 + 周次选择器 | 完成 | `smoke:timetable` 的 `noSilentDeleteOk` |
+| 编辑页「当前第几周」「一学期多少周」 | 完成 | 截图 `.preview/timetable-table.png` |
+| i18n 新增 29 条 × 2 语言 | 完成 | `npm run smoke:i18n`（`dictionaryOk()` 对齐） |
+| 版本 0.4.0 | 完成 | `package.json` |
 
-### 2.2 课表「连堂复用」（上一个战役，已闭环）
-
-| 事项 | 状态 | 验证方式 |
-|---|---|---|
-| 「复制上一节」按钮 | 完成 | `npm run smoke:timetable` 的 `reuseOk: true` |
-| 「复用已录入的课程」下拉 + 原生 autocomplete | 完成 | 同上，`reuseOptionCount: 5` |
-| 编辑器高度上限（防止按钮掉出视口） | 完成 | `src/renderer/styles/base.css` 的 `.sb-tt-editor` |
-
-### 2.3 全量自检
-
-交接时**15 个场景全绿** + `npm run typecheck` 通过。
-跑法见 `AGENTS.md`；全套约 7 分钟（含重试）。
-
-### 2.4 当前发布候选产物
+### 本轮跑过的自检（全绿）
 
 ```
-release/0.3.0/StudyBoard-0.3.0-win-x64-setup.exe   106,596,634 字节
-sha256  4afb948724a79f806705595e32d6a541ef2b5e46b2e348b5856ee83c97f3246f
+npm run typecheck          通过（node + web）
+npm run smoke              通过（basic）
+npm run smoke:timetable    通过（含 4 条新断言 + verifyTimetableMigration）
+npm run smoke:migrate      通过（含同一条迁移校验）
+npm run smoke:i18n         通过（英文逐页截图）
 ```
 
-验证方式：`sha256sum release/0.3.0/StudyBoard-0.3.0-win-x64-setup.exe`
-
-包内容已审计：`out/main/index.js` 里「自检」出现 **0 次**；asar 361 条目，
-smoke / bench / sourcemap / secrets 全为 0。
+> 注：`smoke:timetable` 现在**从一个 v1 数据目录启动**，所以它每次都真的走
+> 「备份 → 迁移 → 再启动」这条路径。这一点是本轮有意的设计（见第 5.3 节）。
 
 ---
 
 ## 3. 进行中半成品
 
-**无。** 工作区干净（`git status` 无输出），所有改动已提交。
+**无。** `git status` 干净，改动全部提交在 `feat/week-rules` 上。
+
+**`feat/week-rules` 没有合并回 `master`** —— 用户要求自己审。
 
 ---
 
@@ -81,36 +94,32 @@ smoke / bench / sourcemap / secrets 全为 0。
 
 | 事项 | 卡在哪 | 需要谁 |
 |---|---|---|
-| **GitHub 仓库还没建** | 用户第一次做，我给了逐步指导但还没执行 | **用户**：填表建仓库 → `git push` |
-| **代码签名签不签** | 需要花钱（OV 约 $200/年，EV 约 $400/年） | **用户**决策 |
-| **Actions 工作流从未真跑过** | 依赖仓库先建好 | 建仓库后第一次推 tag 才能验证 |
-| **macOS 构建** | 未签名 = 完全打不开；需要 Apple Developer 账号（$99/年）+ 公证 | 用户决策 |
+| **0.4.0 还没打包** | 用户明确说「不要打包，那是下一步的事」 | 用户发话后跑 `npm run package:win` |
+| **分支要不要合进 master** | 用户要自己审 | **用户** |
+| GitHub 仓库还没建 | 同上个战役，未动 | 用户 |
+| 代码签名 / macOS 构建 | 未动 | 用户决策 |
 
-### 关于 GitHub 仓库（给用户的指导已发出，此处存要点）
+### 打包前必须注意（顺序会咬人）
 
-- 仓库名建议 `study-board`
-- **表单里「添加 README / .gitignore / 许可」三项必须全部关掉** ——
-  本地仓库已有这三样，让 GitHub 再建一份会导致第一次 push 被拒
-  （`non-fast-forward`，报错信息对新手完全不可读）
-- 可见度：要给别人下载安装包就必须**公开**（私人仓库的 Release 对非协作者是 404）
-- 用户 GitHub **显示名**是 `摇篮2025`，但登录名（ASCII）**尚未确认** ——
-  填 `repository` 字段前必须先问清楚
+1. **`npm run smoke*` 会覆盖 `out/`**（它跑的是测试版构建），
+   所以自检要排在 `npm run build` **之前**。`scripts/smoke.mjs` 里有双向校验会拦。
+2. 打包后审计：`out/main/index.js` 里「自检」应为 **0 次**；
+   asar 里 smoke / bench / sourcemap / secrets 应为 **0**。
+3. 打包前先把 `feat/week-rules` 合进 `master`（或直接在分支上打），
+   否则打的还是 0.3.0。
 
 ---
 
-## 5. 关键决策及理由（本战役相关子集）
+## 5. 关键决策及理由（本战役）
 
-### 5.1 周次功能为什么必须「整套一起改」
+### 5.1 为什么数据层与 UI 必须同批落地（已遵守）
 
-**做了什么**：决定数据层与 UI 层必须同一次落地，不做「先数据后 UI」的分阶段。
+数据层先支持「一格多门课」、UI 还按「一格一门课」读写的话，用户双击编辑
+一个格子再保存会**静默删掉**这一格里其它周次的课。没有安全的中间点。
 
-**为什么**：数据层先支持「一格多门课」、而 UI 还按「一格一门课」读写的话，
-用户双击编辑一个格子再保存，**会静默删掉这一格里其它周次的课** ——
-没有任何提示，用户只会发现课没了。
-
-**否掉了什么**：「先改 store + 迁移，UI 下个会话再跟」这个看似稳妥的分阶段方案。
-
-**下一步依赖**：无。
+**落实方式**：`feat/week-rules` 上第一个提交 `1525294` 同时包含
+types / limits / 迁移 / 存储 / IPC / 渲染层 / i18n，没有分阶段。
+自检的第 4 条断言（`noSilentDeleteOk`）就是盯着这个风险写的。
 
 ### 5.2 周次规则的数据形状
 
@@ -119,21 +128,45 @@ type WeekRule =
   | { kind: 'all' }                    // 每周
   | { kind: 'odd' }                    // 单周
   | { kind: 'even' }                   // 双周
-  | { kind: 'list'; weeks: number[] }  // 指定周（如 [1,3,5] 或 1–8 展开）
+  | { kind: 'list'; weeks: number[] }  // 指定周（去重、升序）
 ```
 
-**为什么这么选**：这四种恰好覆盖国内教务系统的常见表达；用判别联合而不是
-「`weeks: number[]` + 特殊空值」，是因为「每周」和「单周」语义不同，
-塞进同一个数组会让渲染层到处写 `if (weeks.length === 0)` 这种判空。
+判别联合而不是「`weeks: number[]` + 空数组表示每周」：两者语义不同，
+塞进同一个数组会让渲染层到处判空，且判不出「指定了 0 周」。
 
-### 5.3 迁移策略（用户选定）
+### 5.3 迁移自检为什么放进 `smoke:timetable` 的数据准备里
 
-现有 `cells` 的每个格子 → 包成**单元素数组**，补 `id`，`weeks` 设为 `{kind:'all'}`。
-因为闸口在迁移前会**整目录备份**，这一步可回退。
+第 8 节原本要求四条断言都放 `smoke:timetable`。迁移那一条需要
+「**在闸口跑之前**就有一份 v1 数据」，而 `prepareUpdateScenarioIfRequested()`
+是唯一能在那之前写文件的入口（它本来只服务 update / migrate）。
 
-### 5.4 其他相关决策
+做法：让 `timetable` 场景也走这个入口，写一份 v1 的 `timetable.json` +
+`schema: 1` 的印记。副作用是 `smoke:timetable` 每次都在**迁移后的数据**上
+验界面 —— 这恰好是我们想要的（老用户升级才是最危险的路径），
+代价是 `filledOk` / `filledAfterEditOk` 的期望值从 3 / 4 变成 4 / 5。
 
-见 `DECISIONS.md`（尤其 D-001 数据格式闸口、D-004 i18n 的扁平 key 与两层降级）。
+同一条校验也挂在了 `smoke:migrate` 上（它才是数据闸口的专用场景）。
+
+### 5.4 迁移函数为什么要 `export`
+
+幂等性**没法从外部观察**（第二次跑完形状应该「不变」），必须能再调一次
+才能断言。所以 `migrateTimetableV1ToV2` 被导出，只为自检调用；
+主进程内部没有别的调用点，注释里写明了原因。
+
+### 5.5 编辑器为什么分「列表 / 表单」两形态
+
+- 空格子 → 直接进表单。最常见的情况是「往空格里加一门课」，
+  让用户先看一个空列表再点「添加」是白加一步。
+- 已有课 → 先列出这一格的所有课，每门可单独编辑 / 删除，底部有
+  「＋ 添加另一门课」。保存一门课走 `setCell` 按 id 落地，同格其它课不受影响。
+
+### 5.6 「复制上一节」在列表形态下变成批量写入
+
+表单形态的「复制上一节」仍是**预填表单**（单个课程，保持 D-007 的行为）。
+列表形态新增的「复制上一节」把上一节的**所有课**一次性复制过来，
+走 `setCells` 批量接口 —— 这也是 `setCells` 唯一的真实调用点。
+复制过来的课**清空 id**，由主进程重新分配（沿用来源 id 会让同格出现两个
+同 id 的课，之后按 id 删除会打到错误的那一门上）。
 
 ---
 
@@ -143,81 +176,70 @@ type WeekRule =
 
 - **现象**：改 `src/main/smoke.ts` 里的探针后，`tsc` 报
   `error TS1005: ',' expected`，位置指向探针内部某行，看不出跟反引号有关。
-- **根因**：探针本身是一个 `` `...` `` 模板字符串。在它的注释里再写一对反引号
-  （例如 `` `loading="lazy"` ``）会**提前截断模板**，后面的代码变成普通文本。
-- **解法**：探针的注释里**一律不写反引号**，用引号或直接写标识符。
+- **根因**：探针本身是一个模板字符串。在它的注释里再写一对反引号会
+  **提前截断模板**，后面的代码变成普通文本。
+- **解法**：探针的注释与代码里**一律不写反引号**，用引号或字符串拼接。
+  （本轮新增的探针片段里，拼选择器用的是 `'a' + key + 'b'` 而不是模板串。）
 - **验证方式**：`npx tsc --noEmit -p tsconfig.node.json` 无报错。
-- **失效模式**：只影响 `smoke.ts` 里那几个 `*_PROBE` 常量；
-  普通源码里的模板字符串不受此限。
+- **失效模式**：只影响 `smoke.ts` 里那几个 `*_PROBE` 常量。
 
-### K-002 · 图片断言必须考虑 `loading="lazy"`
+### K-006 · 本环境的 git 会「吞掉」分支 ref 的写入
 
-- **现象**：`smoke:materials` 的 `imageThumbOk` 约 50% 概率失败，
-  失败信息看着像「缩略图坏了」。
-- **根因**：缩略图是 `loading="lazy"`。落在首屏之外时 Chromium
-  **根本不发起请求** —— 元素在、`src` 正确，但 `currentSrc` 为空、`complete` 为 false。
-  图在不在首屏内取决于布局时机，所以时好时坏。
-- **解法**：断言里**显式把 `loading` 置为 `eager` 并重设 `src`** 强制发起加载。
-  （`scrollIntoView` 试过，**不可靠**：四次里四次仍然没加载。）
-- **验证方式**：`npm run smoke:materials` 连跑 4 次全绿。
-- **失效模式**：这条只解决「测试触发不了懒加载」。
-  如果将来改成 `IntersectionObserver` 之类的自定义懒加载，要重新处理。
+- **现象**：`git checkout -b feat/week-rules` 报告成功、`git branch --show-current`
+  也对，但下一条命令里 `git log` 报
+  `fatal: your current branch 'feat/week-rules' does not have any commits yet`。
+  更坑的是：`git commit` 打印了 `[feat/week-rules 1525294] ...`，
+  **紧接着同一行 shell 里的 `git log` 就已经看不到这个分支了**。
+- **根因**：`refs/heads/<名字>` 里带斜杠时，git 会新建一个**目录**
+  （`refs/heads/feat/`）。这个目录的创建会被沙箱环境回滚掉；
+  而 commit 对象本身（`.git/objects/` 下）是留下来的。
+  所以「提交没丢，只是分支指针没了」。
+  直接写 `refs/heads/master`（不带斜杠、文件已存在）不受影响。
+- **解法**：git 命令用 `dangerouslyDisableSandbox: true` 跑，
+  **并且每次 `git commit` 之后核对分支 ref，缺了就手工补**：
 
-### K-003 · 改了 `Record<X, string>` 表之后必须 grep 所有取值处
+  ```bash
+  git rev-parse --verify refs/heads/feat/week-rules || {
+    mkdir -p .git/refs/heads/feat
+    git rev-parse HEAD > .git/refs/heads/feat/week-rules
+  }
+  ```
 
-- **现象**：把 `TAB_LABEL` / `TAB_EMPTY` 从「存文案」改成「存 key」后，
-  界面上**直接显示 key 本身**（`study.tab.learning`）。渲染不报错、控制台无输出。
-- **根因**：漏了三个调用点没包 `t()`。表里存 key 之后，漏包的调用点
-  不会编译失败（`string` 还是 `string`），只是把 key 当文案渲染出来。
-- **解法**：改完这类表**立刻 grep 一遍所有取值处**。
-  本项目涉及的表：`TAB_LABEL` / `TAB_EMPTY` / `STATUS_TOAST` / `STATUS_ACTIONS` /
-  `MODE_LABEL` / `MODE_HINT` / `EXPORT_ITEMS` / `AI_PRESETS`。
-  注意 `STATUS_ACTIONS[...]` 返回**数组**，`t()` 加在内层字段上，grep 看着「没包」是对的。
-- **验证方式**：`npm run smoke:cards` 的 `statusOk`；
-  更普适的是 `npm run smoke:i18n`（界面上不该出现 key 形式的文本）。
-- **失效模式**：只在「表的值会被渲染」时才有意义；纯内部用的表不受影响。
+  （ref 文件里必须是**完整 40 位 sha**，写短 sha 会得到
+  `your current branch appears to be broken`。）
+- **验证方式**：补完之后 `git log --oneline -3` 能看到提交、
+  `git branch -vv` 能看到 `* feat/week-rules`。
+- **失效模式**：只影响**带斜杠的分支名**（`feat/xxx`、`fix/xxx`）。
+  提交本身与对象库是安全的，不用重做提交。
 
-### K-004 · 往 fixed 浮层加内容前先看容器有没有高度约束
+### K-007 · 迁移自检必须验「备份拍在迁移之前」
 
-- **现象**：给课表单元格编辑器加了一项「复用已录入的课程」之后，
-  在小窗口 / 高 DPI 缩放 / 锚点靠下的情况下，编辑器底部的「保存」按钮
-  **被推出视口且无法滚动到**。
-- **根因**：`showFloating` 的 `place()` 只保证「尽量放进视口」：
-  翻转也放不下时把 `top` 夹在上边距 —— 元素比视口还高时底部就出界了。
-  而 `.sb-tt-editor` **没有 `max-height`**。
-  这段逻辑读起来像「已经处理好了」，其实只处理了「放得下但位置不合适」。
-- **解法**：`.sb-tt-editor` 加 `max-height: calc(100vh - 24px)` + `overflow-y: auto`。
-- **验证方式**：`npm run smoke:timetable` 通过；肉眼在小窗口下打开编辑器确认可滚动。
-- **失效模式**：其他 fixed 浮层（模态卡片等）如果也长了内容，
-  要各自检查有没有高度约束。
+- **现象**：只断言「`.backups/` 目录存在」时，把 `makeBackup` 挪到迁移
+  之后调用，自检照样全绿。
+- **根因**：备份目录存在 ≠ 备份里是**迁移前**的数据。备份晚了一步时，
+  里面存的已经是新格式，等于没有回头路。
+- **解法**：断言备份里那份 `timetable.json` 的格子**还是 v1 的单对象形状**
+  （`!Array.isArray(cell)` 且课程名对得上）。形状本身就是「拍在什么时候」
+  的判据，不用额外记时间戳。
+- **验证方式**：`verifyTimetableMigration()` 随 `smoke:timetable` / `smoke:migrate` 跑。
+- **失效模式**：这条判据绑定 v1→v2 的形状差异。将来 v2→v3 时要另找判据。
 
-### K-005 · 便携数据的升级保护依赖「被升级版本自己也带这段逻辑」
+### K-004 · 往 fixed 浮层加内容前先看容器有没有高度约束（仍有效）
 
-- **现象**：装 0.1.0（无保护）→ 植入 `study-board-data` → 装 0.3.0（有保护），
-  **数据被删了**。
-- **根因**：升级时安装程序先执行的是**已安装版本**的卸载器，
-  不是新版编译出来的那个。
-- **解法**：无法在单侧修好。已把约束写进 `build/installer.nsh` 的注释，
-  并把 `SB_STASH_DIR` 标成**跨版本契约**（升级时「暂存到哪」由旧版卸载器决定，
-  「从哪恢复」由新版安装程序决定 —— 改这个路径会让从旧版升级的数据留在 `$TEMP`）。
-- **验证方式**：装 0.3.0 → 植入数据 → 再用 0.3.0 覆盖安装 → 数据完好。
-- **失效模式**：对初版无影响（0.1.0/0.2.0 从未发布）。
-  **但如果将来改了 `SB_STASH_DIR`，从旧版升级会「看起来丢了数据」。**
+- **现象**：编辑器内容一长，底部的「保存」按钮被推出视口且无法滚动到。
+- **根因**：`showFloating` 的 `place()` 只保证「尽量放进视口」，
+  而 `.sb-tt-editor` 当时没有 `max-height`。
+- **解法**：`.sb-tt-editor` 有 `max-height: calc(100vh - 24px)` + `overflow-y: auto`。
+  **本轮又给编辑器加了「列表形态」与「周次」区块，高度只增不减，这条依然靠它兜着。**
+- **验证方式**：`npm run smoke:timetable`；肉眼在小窗口下打开编辑器确认可滚动。
+- **失效模式**：其它 fixed 浮层（模态卡片等）如果也长了内容，要各自检查。
 
-### K-006 · Python 批量改写源码时的三个固定坑
+### K-005 · 便携数据的升级保护依赖「被升级版本自己也带这段逻辑」（仍有效）
 
-- **现象**：脚本改完文件后，`tsc` 报奇怪的语法错，或 `git diff` 变成整个文件重写。
-- **根因**（三个独立原因，都踩过）：
-  1. **`str.replace` 默认替换全部**。用「插到某锚点之前」的写法时，
-     锚点若出现多次会插多份（本项目在 `smoke.ts` 里造出过重复函数）。
-  2. **路径字符串 `r'D:\...\'` 以反斜杠结尾会吞掉结束引号**。
-  3. **读写带 CRLF 的文件没用 `newline=''`**，Python 会把整个文件转成 LF。
-- **解法**：
-  1. 替换前确认锚点唯一，或显式传 `count`；**替换后立刻 grep 计数验证**。
-  2. 路径用正斜杠。
-  3. `io.open(p, encoding='utf-8', newline='')`。
-- **验证方式**：改完 `npx tsc --noEmit` + `git diff --stat` 看行数是否合理。
-- **失效模式**：只影响「用脚本批量改源码」这种工作方式。
+- **现象**：装 0.1.0（无保护）→ 植入 `study-board-data` → 装 0.3.0，**数据被删了**。
+- **根因**：升级时先执行的是**已安装版本**的卸载器，不是新版编译出来的那个。
+- **解法**：无法在单侧修好。约束已写进 `build/installer.nsh` 的注释。
+- **失效模式**：**`SB_STASH_DIR` 是跨版本契约，不能改**（见 D-003）。
 
 ---
 
@@ -225,18 +247,14 @@ type WeekRule =
 
 | 产物 | 路径 | 验证方式 |
 |---|---|---|
-| 发布候选安装包 | `release/0.3.0/StudyBoard-0.3.0-win-x64-setup.exe` | `sha256sum` = `4afb9487...`（全量见下） |
-| 差分更新块索引 | `release/0.3.0/*.blockmap` | 存在即可（将来做自动更新要用） |
-| 发布工作流 | `.github/workflows/release.yml` | 推 `v*` tag 触发；**从未真跑过** |
-| 安装器脚本 | `build/installer.nsh` | 注释里写了 `SB_STASH_DIR` 的跨版本契约 |
+| 周次功能代码 | `src/shared/types.ts` / `src/main/services/{timetable,dataVersion}.ts` / `src/renderer/components/timetable-{panel,controller}.ts` | `npm run typecheck` |
 | 自检场景 | `src/main/smoke.ts` + `scripts/smoke.mjs` | 15 个场景，见 `AGENTS.md` |
-| 中英词典 | `src/shared/i18n/{zh-CN,en-US}.ts` | 602 条，`dictionaryOk()` 断言对齐 |
-| 英文界面截图 | `npm run smoke:i18n` 生成（`.preview/i18n-*.png`） | 肉眼核对漏翻 |
+| 中英词典 | `src/shared/i18n/{zh-CN,en-US}.ts` | 新增 29 条 × 2；`dictionaryOk()` 断言对齐 |
+| 英文界面截图 | `npm run smoke:i18n` → `.preview/i18n-*.png` | 肉眼核对漏翻 |
+| 课表截图 | `npm run smoke:timetable` → `.preview/timetable-*.png` | 肉眼核对周次区块与角标 |
+| 0.3.0 安装包（**仍是上一版**） | `release/0.3.0/StudyBoard-0.3.0-win-x64-setup.exe` | `sha256sum` = `4afb948724a79f806705595e32d6a541ef2b5e46b2e348b5856ee83c97f3246f` |
 
-完整校验和：`4afb948724a79f806705595e32d6a541ef2b5e46b2e348b5856ee83c97f3246f`
-
-> 注：`.preview/` 是自检的临时产物目录（已在 `.gitignore` 里），
-> 交接时已清空。需要截图时重跑 `npm run smoke:i18n` 会重新生成。
+> `.preview/` 是自检的临时产物目录（已在 `.gitignore` 里），不提交。
 
 ---
 
@@ -244,139 +262,61 @@ type WeekRule =
 
 ### 第 0 步：接手对账（必做）
 
+见第 0 节。**特别是核对 `feat/week-rules` 的 ref 在不在**（K-006）。
+
+### 第 1 步：让用户审 `feat/week-rules`
+
 ```bash
-cd <项目根>
-git log --oneline -5          # 应看到 0aecbf9 在 HEAD
-git status                    # 应无输出
-npx tsc --noEmit -p tsconfig.node.json && npx tsc --noEmit -p tsconfig.web.json
-npm run smoke                 # 应通过（约 1 分钟）
+git diff master..feat/week-rules --stat
 ```
 
-任何一项不符 → 先查清楚再往下走，不要基于幻觉现状开工。
+三个提交：`1525294`（功能）、`48d5b72`（自检）、docs 提交。
 
-### 第 1 步：改数据模型（`src/shared/types.ts`）
+### 第 2 步：合并（用户同意后）
 
-```ts
-export type WeekRule =
-  | { kind: 'all' }
-  | { kind: 'odd' }
-  | { kind: 'even' }
-  | { kind: 'list'; weeks: number[] }
-
-export interface TimetableCell {
-  /** 新增：同一格多门课要能区分、要能单独增删改 */
-  id: string
-  courseName: string
-  teacher: string
-  location: string
-  remark: string
-  duration: string
-  /** 新增：适用周次 */
-  weeks: WeekRule
-}
+```bash
+git checkout master
+git merge --no-ff feat/week-rules
 ```
 
-`TimetableData` 的改动：
+> 合并前再确认一次 `master` 没有被别的改动污染。
 
-```ts
-  /** key = "节:列"，值是**这一格上的所有课**（不同周次可以并存） */
-  cells: Record<string, TimetableCell[]>
-  /** 一学期多少周 */
-  weekCount: number
-  /** 当前查看第几周；0 = 不按周次过滤（看全部） */
-  currentWeek: number
+### 第 3 步：打包 0.4.0
+
+```bash
+npm run typecheck
+npm run smoke:timetable && npm run smoke:migrate && npm run smoke && npm run smoke:i18n
+npm run build            # 必须在自检之后，否则 out/ 里是测试版
+npm run package:win
 ```
 
-同时在 `src/shared/limits.ts` 加 `DEFAULT_WEEK_COUNT`（建议 16）与
-`MAX_WEEK_COUNT`（建议 30）。
+审计：`out/main/index.js` 里「自检」应为 **0 次**；asar 里
+smoke / bench / sourcemap / secrets 应为 **0**。
 
-### 第 2 步：迁移（`src/main/services/dataVersion.ts`）
+### 第 4 步：实机验一次「老用户升级」
 
-1. `DATA_SCHEMA` 从 `1` 递增到 `2`
-2. 注册 v1 → v2 迁移：每个 `cells[key]` 的单对象 →
-   `[{ ...cell, id: <新生成>, weeks: { kind: 'all' } }]`；
-   `weekCount` 填 `DEFAULT_WEEK_COUNT`，`currentWeek` 填 `0`
-3. **迁移必须幂等**：已经是数组的不再包一层
-4. 备份逻辑已存在（闸口在迁移前整目录备份），不用重写
+这是本轮最该人工确认、但自动化只能验到文件层面的事：
 
-### 第 3 步：存储（`src/main/services/timetable.ts`）
-
-- 形状校验要认新结构，且**拒绝**没有 `id` 或 `weeks` 非法的新数据
-- 单格操作从「整格覆盖」改成**按 `id` 增删改**：
-  - `setCell(key, cell)` → 保留（有 `id` 则替换，无则新增）
-  - `removeCell(key, id)` → 新增
-- **同时加批量接口**（这次用得上，且避免 N 次整文件重写）：
-  `setCells(entries: Record<string, TimetableCell[]>)`，
-  内部一次性应用、**只 `#persist()` 一次**
-- `#persist()` 是整份 `timetable.json` 重写（临时文件 + rename），
-  所以**任何「一次逻辑操作」都应该只触发一次 persist**
-
-### 第 4 步：IPC 契约（三个文件，别找错）
-
-课表相关的东西分散在三处，**没有一个叫 `ipc.ts` 的文件**：
-
-| 文件 | 放什么 |
-|---|---|
-| `src/shared/channels.ts` | 通道名常量，如 `TIMETABLE_SET_CELL: 'timetable:set-cell'` |
-| `src/shared/api.ts` | 桥的**类型契约**（`window.studyBoard` 的形状） |
-| `src/preload/index.ts` | 桥的实现（把调用转成 `ipcRenderer.invoke`） |
-
-新增「按 id 删一门课」的话，三处都要加。
-改完 `npm run typecheck` 会替你检查两侧是否对齐 —— 契约是共用的，
-漏改一侧编译不过。
-
-### 第 5 步：渲染层
-
-**`src/renderer/components/timetable-panel.ts`**（工作量最大）
-
-- 一格渲染多门课：`data.cells[key]` 现在是数组。
-  建议堆叠显示，每门课带一个周次标记（如「单周」小角标）
-- 按 `currentWeek` 过滤：`currentWeek === 0` 时显示全部
-- 编辑器改成「列出这一格的所有课，每门可单独编辑/删除」+「＋ 添加另一门」
-- 每门课的编辑里加**周次规则选择器**（每周 / 单周 / 双周 / 指定周）
-
-**`src/renderer/views/timetable-editor-view.ts`**
-
-- 加「当前第几周」选择器（含「全部」）
-- 加「一学期多少周」的设置项
-
-### 第 6 步：i18n
-
-新增约 25 条 × 2 语言。**两边一起加**，否则 `dictionaryOk()` 会失败。
-改完跑 `npm run smoke:i18n`。
-
-### 第 7 步：自检
-
-在 `smoke:timetable` 里加断言，至少覆盖：
-
-1. **迁移**：构造一份 v1 形状的数据 → 启动 → 断言变成了 v2 形状、
-   原课程还在、`weeks` 是 `{kind:'all'}`、**且迁移前有备份**
-2. **一格多课**：往同一格写两门课（单周 / 双周）→ 断言两门都在
-3. **周次过滤**：切到第 3 周 → 断言只显示单周那门；切到第 4 周 → 只显示双周那门
-4. **不误删**：编辑同一格里的第一门课并保存 → 断言第二门**还在**
-   （这条直接盯着第 5.1 节那个风险）
-
-### 第 8 步：版本与打包
-
-1. `package.json` 版本升到 **0.4.0**
-2. `npm run typecheck && npm run smoke` 全绿
-3. `npm run package:win`
-4. 审计：`out/main/index.js` 里「自检」应为 **0 次**；
-   asar 里 smoke / bench / sourcemap / secrets 应为 **0**
-5. 更新本文件与 `DECISIONS.md`，commit（message 注明 handoff）
+1. 装 0.3.0 → 录入几门课（含连堂）
+2. 用 0.4.0 覆盖安装
+3. 打开课表：**课都在**、都在「每周」、能单独编辑 / 删除其中一门
+4. 确认 `%APPDATA%\StudyBoard\.backups\` 下有一份升级前的备份
 
 ---
 
 ## 交接五问自检
 
 1. **零提问测试** —— 新 agent 只读三件套 + 代码，能直接接手吗？
-   ✅ 能。周次功能的形状、迁移策略、每一步改哪个文件、断言写什么都在第 8 节。
+   ✅ 能。分支名、HEAD、跑过的自检、未做的打包、以及 K-006 这个会咬人的
+   环境坑都在上面。
 2. **重辩论测试** —— 会不会重新辩论已定的决策？
-   ✅ 不会。第 1 节写明「三个方案里选了单元格级周次」「老数据铺到所有周次」，
-   第 5.1 节写明「为什么不能分阶段」。
+   ✅ 不会。单元格级周次、老数据铺到所有周次、不做整列复制都写明了；
+   本轮新增的取舍（迁移自检的位置、编辑器两形态、复制上一节改批量）
+   在第 5 节给了理由。
 3. **验证测试** —— 能一条命令验证产物是对的吗？
-   ✅ 能。`sha256sum` + `npm run smoke`（15 场景）。
+   ✅ 能。`npm run smoke:timetable`（含 4 条新断言 + 迁移校验）。
 4. **回头路测试** —— 知不知道哪些方案已被否？
-   ✅ 知道。整列复制（用户明确否决）、「先数据后 UI」的分阶段（技术否决）。
+   ✅ 知道。整列复制（用户否决）、「先数据后 UI」的分阶段（技术否决）、
+   「只验备份目录存在」（K-007 证明不够）。
 5. **猝死测试** —— 十分钟后上下文清空，损失什么？
-   ✅ 无。所有状态已落盘，工作区干净。
+   ✅ 无。所有状态已落盘，工作区干净，分支 ref 已核对。
