@@ -30,16 +30,18 @@ export function distinctCourses(data: TimetableData | null): CourseRef[] {
   })
 
   for (const key of keys) {
-    const cell = data.cells[key]
-    if (!cell) continue
-    const courseName = cell.courseName.trim()
-    if (courseName.length === 0) continue
+    // 一格可以并存多门课（按周次区分），所以这里是列表而不是单门课。
+    // 不做周次过滤：用户要的是「这学期都有哪些课」，不是「这一周有哪些课」
+    for (const cell of data.cells[key] ?? []) {
+      const courseName = cell.courseName.trim()
+      if (courseName.length === 0) continue
 
-    const teacher = cell.teacher.trim()
-    const signature = `${courseName}\u0000${teacher}`
-    if (seen.has(signature)) continue
-    seen.add(signature)
-    out.push({ courseName, teacher })
+      const teacher = cell.teacher.trim()
+      const signature = `${courseName}\u0000${teacher}`
+      if (seen.has(signature)) continue
+      seen.add(signature)
+      out.push({ courseName, teacher })
+    }
   }
 
   return out

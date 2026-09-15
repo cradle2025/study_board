@@ -64,12 +64,46 @@ export function createTimetableController(options: TimetableControllerOptions): 
 
     async onSaveCell(key: string, cell: TimetableCell | null): Promise<void> {
       try {
-        // 一次只动一个格子，告诉面板走单格重绘而不是整表重建
+        // 一次只动一个格子，告诉面板走单格重绘而不是整表重建。
+        // setCell 按 id 落在**一门课**上，同格其它周次的课不受影响
         apply(await unwrap(bridge().timetable.setCell({ key, cell })), { kind: 'cell', key })
         toast(t(cell ? 'timetable.saved' : 'timetable.cleared'), 'success')
       } catch (error) {
         toast(t('timetable.saveFailed', { reason: tm(formatError(error)) }), 'error')
         // 保存失败时回滚界面，避免显示的内容和磁盘不一致
+        if (data) panel.render(data)
+      }
+    },
+
+    async onRemoveCell(key: string, id: string): Promise<void> {
+      try {
+        apply(await unwrap(bridge().timetable.removeCell({ key, id })), { kind: 'cell', key })
+        toast(t('timetable.courseRemoved'), 'success')
+      } catch (error) {
+        toast(t('timetable.saveFailed', { reason: tm(formatError(error)) }), 'error')
+        if (data) panel.render(data)
+      }
+    },
+
+    async onCopyPrevious(key: string, source: TimetableCell[]): Promise<void> {
+      try {
+        const existing = data?.cells[key] ?? []
+        /**
+         * 复制过来的课一律**清空 id**，让主进程重新分配。
+         *
+         * id 是「这一格里那一门课」的身份。沿用来源课的 id 会让这一格里
+         * 出现两个同 id 的课，之后按 id 删除 / 编辑会打到错误的那一门上。
+         */
+        const copies = source.map((course) => ({ ...course, id: '' }))
+        // 整格一次写回：多门课逐个 setCell 会变成多次整文件重写
+        const next = [...existing, ...copies]
+        apply(await unwrap(bridge().timetable.setCells({ cells: { [key]: next } })), {
+          kind: 'cell',
+          key
+        })
+        toast(t('timetable.copiedPrev', { count: copies.length }), 'success')
+      } catch (error) {
+        toast(t('timetable.saveFailed', { reason: tm(formatError(error)) }), 'error')
         if (data) panel.render(data)
       }
     },

@@ -2,8 +2,14 @@ import { existsSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSyn
 import { readFile, writeFile } from 'node:fs/promises'
 import { dirname, basename } from 'node:path'
 
-import { MAX_PERIODS, MAX_TIMETABLE_IMAGES, MIN_PERIODS } from '@shared/limits'
-import type { CourseImage, PeriodRow, TimetableCell } from '@shared/types'
+import {
+  DEFAULT_WEEK_COUNT,
+  MAX_PERIODS,
+  MAX_TIMETABLE_IMAGES,
+  MAX_WEEK_COUNT,
+  MIN_PERIODS
+} from '@shared/limits'
+import type { CourseImage, PeriodRow, TimetableCell, WeekRule } from '@shared/types'
 
 import { ensureDir, newId, safeJoin } from '../paths'
 import { extOf, normalizeImage } from './imageImport'
@@ -38,12 +44,29 @@ const MAX_REMARK = 300
 export interface TimetableContent {
   version: number
   rows: PeriodRow[]
-  cells: Record<string, TimetableCell>
+  /**
+   * key = "节:列"，值是**这一格上的所有课**。
+   *
+   * 从 v1 的单对象改成数组，是为了让「同一时间段、不同周次上不同课」
+   * 能并存（单周一门、双周另一门）。形状变更由数据闸口的 v1→v2 迁移负责。
+   */
+  cells: Record<string, TimetableCell[]>
+  /** 一学期多少周 */
+  weekCount: number
+  /** 当前查看第几周；0 = 不按周次过滤 */
+  currentWeek: number
   images: CourseImage[]
 }
 
 function emptyContent(): TimetableContent {
-  return { version: CONFIG_VERSION, rows: [], cells: {}, images: [] }
+  return {
+    version: CONFIG_VERSION,
+    rows: [],
+    cells: {},
+    weekCount: DEFAULT_WEEK_COUNT,
+    currentWeek: 0,
+    images: []
+  }
 }
 
 function text(value: unknown, maxLength: number): string {
@@ -53,7 +76,10 @@ function text(value: unknown, maxLength: number): string {
     .slice(0, maxLength)
 }
 
-function isBlankCell(cell: TimetableCell): boolean {
+/** 只保留非空文本字段的比较——id / weeks 不参与「内容有没有变」的判断 */
+type CellBody = Pick<TimetableCell, 'courseName' | 'teacher' | 'location' | 'duration' | 'remark'>
+
+function isBlankCell(cell: CellBody): boolean {
   return (
     cell.courseName === '' &&
     cell.teacher === '' &&
@@ -64,15 +90,105 @@ function isBlankCell(cell: TimetableCell): boolean {
 }
 
 /** 两个单元格内容是否完全一致——用来跳过「值没变却照样重写一遍文件」 */
-function sameCell(left: TimetableCell | undefined, right: TimetableCell): boolean {
+function sameCell(left: TimetableCell | undefined, right: CellBody & { weeks: WeekRule }): boolean {
   if (!left) return false
   return (
     left.courseName === right.courseName &&
     left.teacher === right.teacher &&
     left.location === right.location &&
     left.duration === right.duration &&
-    left.remark === right.remark
+    left.remark === right.remark &&
+    sameWeeks(left.weeks, right.weeks)
   )
+}
+
+function sameWeeks(left: WeekRule, right: WeekRule): boolean {
+  if (left.kind !== right.kind) return false
+  if (left.kind === 'list' && right.kind === 'list') {
+    if (left.weeks.length !== right.weeks.length) return false
+    return left.weeks.every((week, index) => week === right.weeks[index])
+  }
+  return true
+}
+
+/** 两格的课程列表是否一致（按 id 对齐，顺序无关） */
+function sameCellList(left: readonly TimetableCell[] | undefined, right: readonly TimetableCell[]): boolean {
+  if (!left || left.length !== right.length) return false
+  for (const cell of right) {
+    const found = left.find((item) => item.id === cell.id)
+    if (!found || !sameCell(found, cell)) return false
+  }
+  return true
+}
+
+/**
+ * 周次规则的形状校验。
+ *
+ * 认不出的一律返回 null（调用方决定是丢弃还是回落到「每周」），
+ * 而不是「猜一个最接近的」——把「双周」猜成「每周」会让用户在错误的
+ * 周次看到课，比直接报错更难发现。
+ */
+function sanitizeWeekRule(raw: unknown): WeekRule | null {
+  const input = (raw ?? {}) as Record<string, unknown>
+  const kind = input['kind']
+  if (kind === 'all' || kind === 'odd' || kind === 'even') return { kind }
+  if (kind !== 'list') return null
+
+  const source = input['weeks']
+  if (!Array.isArray(source)) return null
+  const seen = new Set<number>()
+  for (const item of source) {
+    const week = Math.trunc(Number(item))
+    if (!Number.isFinite(week) || week < 1 || week > MAX_WEEK_COUNT) continue
+    seen.add(week)
+  }
+  if (seen.size === 0) return null
+  return { kind: 'list', weeks: [...seen].sort((a, b) => a - b) }
+}
+
+function sanitizeId(value: unknown): string {
+  return String(value ?? '').trim().slice(0, 64)
+}
+
+/** 周数收敛到 1–MAX_WEEK_COUNT；认不出来（含未提供）时用默认学期长度 */
+function clampWeekCount(value: unknown): number {
+  const n = Math.trunc(Number(value))
+  if (!Number.isFinite(n) || n < 1) return DEFAULT_WEEK_COUNT
+  return Math.min(MAX_WEEK_COUNT, n)
+}
+
+/** 当前周次：0 表示「看全部」，其余收敛到 1–weekCount */
+function clampCurrentWeek(value: unknown, weekCount: number): number {
+  const n = Math.trunc(Number(value))
+  if (!Number.isFinite(n) || n <= 0) return 0
+  return Math.min(weekCount, n)
+}
+
+/** 写入口读到的单元格内容。`id` 可能为空串（表示新增） */
+interface CellInput extends CellBody {
+  id: string
+  weeks: WeekRule
+}
+
+/**
+ * 写入路径的读取。
+ *
+ * 与读取路径（`sanitizeCell`）刻意分开：**写**的时候允许没有 id
+ * （那是「新增一门课」），缺 weeks 时回落到「每周」；而**读磁盘**时
+ * 两者都必须存在且合法——磁盘上的数据是迁移过或程序自己写的，
+ * 不该出现半截形状。
+ */
+function readCellInput(raw: unknown): CellInput {
+  const input = (raw ?? {}) as Record<string, unknown>
+  return {
+    id: sanitizeId(input['id']),
+    courseName: text(input['courseName'], MAX_COURSE_NAME),
+    teacher: text(input['teacher'], MAX_TEACHER),
+    location: text(input['location'], MAX_LOCATION),
+    duration: text(input['duration'], MAX_DURATION),
+    remark: text(input['remark'], MAX_REMARK),
+    weeks: sanitizeWeekRule(input['weeks']) ?? { kind: 'all' }
+  }
 }
 
 function sameRows(left: readonly PeriodRow[], right: readonly PeriodRow[]): boolean {
@@ -85,14 +201,28 @@ function sameRows(left: readonly PeriodRow[], right: readonly PeriodRow[]): bool
   return true
 }
 
-function sanitizeCell(raw: unknown): TimetableCell {
+/**
+ * 读磁盘路径的单元格校验。
+ *
+ * **没有 `id` 或 `weeks` 非法一律丢弃**：id 是所有「按 id 增删改」
+ * 操作的依据，缺了它这门课就没法单独编辑或删除；weeks 认不出来则
+ * 意味着我们不知道该在哪几周显示它。两种情况都宁可不显示，
+ * 也不要凭空猜一个形状——猜错会让用户在错误的周次看到课。
+ */
+function sanitizeCell(raw: unknown): TimetableCell | null {
   const input = (raw ?? {}) as Record<string, unknown>
+  const id = sanitizeId(input['id'])
+  if (id === '') return null
+  const weeks = sanitizeWeekRule(input['weeks'])
+  if (!weeks) return null
   return {
+    id,
     courseName: text(input['courseName'], MAX_COURSE_NAME),
     teacher: text(input['teacher'], MAX_TEACHER),
     location: text(input['location'], MAX_LOCATION),
     duration: text(input['duration'], MAX_DURATION),
-    remark: text(input['remark'], MAX_REMARK)
+    remark: text(input['remark'], MAX_REMARK),
+    weeks
   }
 }
 
@@ -141,13 +271,22 @@ function sanitizeContent(raw: unknown): TimetableContent {
 
   if (input['cells'] && typeof input['cells'] === 'object') {
     for (const [key, value] of Object.entries(input['cells'] as Record<string, unknown>)) {
-      const match = CELL_KEY_PATTERN.exec(key)
-      if (!match) continue
-      const cell = sanitizeCell(value)
-      if (isBlankCell(cell)) continue
-      result.cells[key] = cell
+      if (!CELL_KEY_PATTERN.test(key)) continue
+      // v1 的「一个对象」形状在这里**被拒绝**：迁移没跑到的数据不该被
+      // 悄悄当成一门课读进来，否则会掩盖「闸口没生效」这个真问题
+      if (!Array.isArray(value)) continue
+      const list: TimetableCell[] = []
+      for (const item of value) {
+        const cell = sanitizeCell(item)
+        if (!cell || isBlankCell(cell)) continue
+        list.push(cell)
+      }
+      if (list.length > 0) result.cells[key] = list
     }
   }
+
+  result.weekCount = clampWeekCount(input['weekCount'])
+  result.currentWeek = clampCurrentWeek(input['currentWeek'], result.weekCount)
 
   if (Array.isArray(input['images'])) {
     for (const item of input['images']) {
@@ -222,7 +361,18 @@ export class TimetableStore {
     this.#persist()
   }
 
-  /** 写入 / 清空单个单元格。传入空白单元格等价于清空 */
+  /**
+   * 写入一格里的**一门课**。
+   *
+   * - 带 `id` 且这一格里有同 id 的课 → 替换那一门（其它课不动）
+   * - 带 `id` 但这一格里没有 → 当作新增
+   * - 不带 `id` → 追加一门
+   * - 传 null → 清空整格
+   * - 内容全空 → 有 id 则删掉那一门（编辑器里把字段清空再保存的语义）
+   *
+   * 「其它课不动」是这套接口存在的全部意义：早先「整格覆盖」的写法
+   * 会让编辑一门课把同格其它周次的课静默删掉。
+   */
   setCell(key: unknown, raw: unknown): void {
     const name = String(key ?? '')
     if (!CELL_KEY_PATTERN.test(name)) throw new Error('单元格坐标不合法')
@@ -234,18 +384,112 @@ export class TimetableStore {
       return
     }
 
-    const cell = sanitizeCell(raw)
-    const existing = this.#content.cells[name]
+    const input = readCellInput(raw)
+    const list = this.#content.cells[name] ?? []
 
-    if (isBlankCell(cell)) {
-      if (!existing) return
-      delete this.#content.cells[name]
-    } else {
-      if (sameCell(existing, cell)) return
-      this.#content.cells[name] = cell
+    if (isBlankCell(input)) {
+      if (input.id === '') return
+      const index = list.findIndex((cell) => cell.id === input.id)
+      if (index < 0) return
+      list.splice(index, 1)
+      if (list.length === 0) delete this.#content.cells[name]
+      else this.#content.cells[name] = list
+      this.#persist()
+      return
     }
 
+    const index = input.id === '' ? -1 : list.findIndex((cell) => cell.id === input.id)
+    if (index >= 0) {
+      if (sameCell(list[index], input)) return
+      list[index] = { ...input }
+    } else {
+      list.push({ ...input, id: input.id || newId() })
+    }
+    this.#content.cells[name] = list
     this.#persist()
+  }
+
+  /** 按 id 删掉一格里的某一门课，同格其它课不受影响 */
+  removeCell(key: unknown, id: unknown): void {
+    const name = String(key ?? '')
+    if (!CELL_KEY_PATTERN.test(name)) throw new Error('单元格坐标不合法')
+    const target = sanitizeId(id)
+    if (target === '') throw new Error('缺少课程 id')
+
+    const list = this.#content.cells[name]
+    if (!list) return
+    const index = list.findIndex((cell) => cell.id === target)
+    if (index < 0) return
+
+    list.splice(index, 1)
+    if (list.length === 0) delete this.#content.cells[name]
+    this.#persist()
+  }
+
+  /**
+   * 批量写入多个格子。
+   *
+   * 一次调用只 `#persist()` 一次 —— 逐格调用 `setCell` 会让 N 个格子
+   * 变成 N 次整份 JSON 重写，中途失败还会留下写了一半的结果。
+   * 值是**整格的完整课程列表**：空数组等价于清空该格。
+   */
+  setCells(entries: unknown): void {
+    if (!entries || typeof entries !== 'object' || Array.isArray(entries)) {
+      throw new Error('cells 必须是对象')
+    }
+
+    let changed = false
+    for (const [key, value] of Object.entries(entries as Record<string, unknown>)) {
+      if (!CELL_KEY_PATTERN.test(key)) throw new Error('单元格坐标不合法')
+      if (!Array.isArray(value)) throw new Error('每个格子必须是课程数组')
+
+      const list: TimetableCell[] = []
+      for (const item of value) {
+        const input = readCellInput(item)
+        if (isBlankCell(input)) continue
+        list.push({ ...input, id: input.id || newId() })
+      }
+
+      if (list.length === 0) {
+        if (key in this.#content.cells) {
+          delete this.#content.cells[key]
+          changed = true
+        }
+        continue
+      }
+      if (sameCellList(this.#content.cells[key], list)) continue
+      this.#content.cells[key] = list
+      changed = true
+    }
+
+    if (changed) this.#persist()
+  }
+
+  /** 学期周数与当前查看周次。周数缩小时当前周次跟着收敛，避免停在不存在的周 */
+  setWeekSettings(input: { weekCount?: unknown; currentWeek?: unknown }): void {
+    let changed = false
+
+    if (input.weekCount !== undefined) {
+      const next = clampWeekCount(input.weekCount)
+      if (next !== this.#content.weekCount) {
+        this.#content.weekCount = next
+        changed = true
+      }
+    }
+
+    if (input.currentWeek !== undefined) {
+      const next = clampCurrentWeek(input.currentWeek, this.#content.weekCount)
+      if (next !== this.#content.currentWeek) {
+        this.#content.currentWeek = next
+        changed = true
+      }
+    } else if (this.#content.currentWeek > this.#content.weekCount) {
+      // 只改了周数：原本停在第 20 周，学期缩到 16 周后不该还显示第 20 周
+      this.#content.currentWeek = this.#content.weekCount
+      changed = true
+    }
+
+    if (changed) this.#persist()
   }
 
   /**

@@ -1,4 +1,10 @@
-import { MAX_PERIODS, MIN_PERIODS, MAX_TIMETABLE_IMAGES, TIMETABLE_COLUMNS } from '@shared/limits'
+import {
+  MAX_PERIODS,
+  MAX_TIMETABLE_IMAGES,
+  MAX_WEEK_COUNT,
+  MIN_PERIODS,
+  TIMETABLE_COLUMNS
+} from '@shared/limits'
 import type { PeriodRow, TimetableData } from '@shared/types'
 
 import { createTimetableController, type TimetableController } from '../components/timetable-controller'
@@ -72,6 +78,25 @@ export function createTimetableEditorView(ctx: ViewContext): ViewInstance {
       </div>
     </section>
 
+    <section class="sb-section" data-role="week-extras">
+      <div class="sb-section__head">
+        <h2 class="sb-section__title">${escapeHtml(t('timetable.weeks'))}</h2>
+      </div>
+      <div class="sb-card sb-card--pad">
+        <div class="sb-field sb-tt-inline-field">
+          <label for="current-week">${escapeHtml(t('timetable.currentWeek'))}</label>
+          <select id="current-week" class="sb-select" data-role="current-week"></select>
+          <p class="sb-hint">${escapeHtml(t('timetable.currentWeekHint'))}</p>
+        </div>
+        <div class="sb-field sb-tt-inline-field">
+          <label for="week-count">${escapeHtml(t('timetable.weekCount', { max: MAX_WEEK_COUNT }))}</label>
+          <input id="week-count" class="sb-input" type="number"
+                 min="1" max="${MAX_WEEK_COUNT}" step="1" inputmode="numeric" />
+          <p class="sb-hint">${escapeHtml(t('timetable.weekCountHint'))}</p>
+        </div>
+      </div>
+    </section>
+
     <section class="sb-section" data-role="table-extras">
       <div class="sb-section__head">
         <h2 class="sb-section__title">${escapeHtml(t('timetable.details'))}</h2>
@@ -135,6 +160,9 @@ export function createTimetableEditorView(ctx: ViewContext): ViewInstance {
   const periodInput = element.querySelector<HTMLInputElement>('#period-count')
   const periodField = element.querySelector<HTMLElement>('[data-role="period-field"]')
   const tableExtras = element.querySelector<HTMLElement>('[data-role="table-extras"]')
+  const weekExtras = element.querySelector<HTMLElement>('[data-role="week-extras"]')
+  const weekSelect = element.querySelector<HTMLSelectElement>('#current-week')
+  const weekCountInput = element.querySelector<HTMLInputElement>('#week-count')
   const previewTitle = element.querySelector<HTMLElement>('[data-role="preview-title"]')
   const gridMeta = element.querySelector<HTMLElement>('[data-role="grid-meta"]')
   const weekdayHost = element.querySelector<HTMLElement>('[data-role="weekday-inputs"]')
@@ -167,7 +195,18 @@ export function createTimetableEditorView(ctx: ViewContext): ViewInstance {
 
     if (periodField) periodField.hidden = mode === 'image'
     if (tableExtras) tableExtras.hidden = mode === 'image'
+    if (weekExtras) weekExtras.hidden = mode === 'image'
     if (previewTitle) previewTitle.textContent = t(mode === 'image' ? 'timetable.photo' : 'timetable.previewTable')
+
+    if (weekSelect) {
+      const options = [`<option value="0">${escapeHtml(t('timetable.week.allOption'))}</option>`]
+      for (let week = 1; week <= data.weekCount; week += 1) {
+        options.push(`<option value="${week}">${escapeHtml(t('timetable.weekN', { n: week }))}</option>`)
+      }
+      weekSelect.innerHTML = options.join('')
+      weekSelect.value = String(data.currentWeek)
+    }
+    if (weekCountInput) weekCountInput.value = String(data.weekCount)
 
     if (gridMeta) {
       gridMeta.textContent =
@@ -213,6 +252,8 @@ export function createTimetableEditorView(ctx: ViewContext): ViewInstance {
     mode?: 'table' | 'image'
     periodCount?: number
     weekdays?: string[]
+    weekCount?: number
+    currentWeek?: number
   }): Promise<void> {
     try {
       const next = await unwrap(bridge().timetable.save(patch))
@@ -275,6 +316,26 @@ export function createTimetableEditorView(ctx: ViewContext): ViewInstance {
     }
     const clamped = Math.min(MAX_PERIODS, Math.max(MIN_PERIODS, raw))
     void saveShape({ periodCount: clamped })
+  })
+
+  weekSelect?.addEventListener('change', () => {
+    const week = Number.parseInt(weekSelect.value, 10)
+    if (!Number.isFinite(week)) {
+      paint()
+      return
+    }
+    // 切换查看周次会同时影响所有格子（过滤条件变了），走整表重绘
+    void saveShape({ currentWeek: week })
+  })
+
+  weekCountInput?.addEventListener('change', () => {
+    const raw = Number.parseInt(weekCountInput.value, 10)
+    if (!Number.isFinite(raw)) {
+      paint()
+      return
+    }
+    const clamped = Math.min(MAX_WEEK_COUNT, Math.max(1, raw))
+    void saveShape({ weekCount: clamped })
   })
 
   element

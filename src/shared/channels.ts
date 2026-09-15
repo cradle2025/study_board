@@ -41,6 +41,10 @@ export const CHANNELS = {
   TIMETABLE_GET: 'timetable:get',
   TIMETABLE_SAVE: 'timetable:save',
   TIMETABLE_SET_CELL: 'timetable:set-cell',
+  /** 按 id 删掉一格里的某一门课（同格其它课不动） */
+  TIMETABLE_REMOVE_CELL: 'timetable:remove-cell',
+  /** 批量写多个格子，一次落盘 */
+  TIMETABLE_SET_CELLS: 'timetable:set-cells',
   TIMETABLE_ADD_IMAGES: 'timetable:add-images',
   TIMETABLE_REMOVE_IMAGE: 'timetable:remove-image',
 

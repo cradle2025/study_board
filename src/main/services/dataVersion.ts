@@ -2,7 +2,9 @@ import { app, dialog } from 'electron'
 import { cpSync, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from 'node:fs'
 import { basename, dirname, join } from 'node:path'
 
-import { dataRoot } from '../paths'
+import { DEFAULT_WEEK_COUNT } from '@shared/limits'
+
+import { dataRoot, newId } from '../paths'
 
 /**
  * 数据格式版本，以及「换版本时数据会不会坏」这件事的唯一闸口。
@@ -45,8 +47,13 @@ import { dataRoot } from '../paths'
  * 那种情况两边都能跑，加版本号只会白白触发一次备份。
  *
  * 0.1.0 → 0.2.0 之间加过笔记分组、图片资料，都是纯新增，所以仍是 1。
+ *
+ * v1 → v2（0.4.0）：课表格子从「一个对象」变成「数组」（同一时间段
+ * 可以并存多门课，按周次区分）。这是**改形状**而不是加字段 ——
+ * 旧程序读到数组会把它当成一个残缺的对象，存盘时按自己的字段表重建，
+ * 用户录的课就被静默抹掉了。所以必须 +1。
  */
-export const DATA_SCHEMA = 1
+export const DATA_SCHEMA = 2
 
 /** 印记文件的名字。放在数据根目录下 */
 const STAMP_FILE = 'data-version.json'
@@ -250,13 +257,73 @@ function pruneBackups(portable: boolean): void {
 }
 
 /**
- * 逐级迁移。现在只有一版，所以表是空的 —— 但**闸口本身要在**。
+ * v1 → v2：课表格子从「一个对象」变成「数组」。
  *
- * 空表和「没有这个函数」是两件事：前者说明「检查过了，没有要搬的」，
- * 后者说明「没人想过这件事」。等真要迁移时，加一条 `1: (dir) => {...}`
- * 就能接上，不用回头改调用方。
+ * 为什么是整格包成单元素数组而不是拆成多条记录：现有数据里一格只有
+ * 一门课，语义上就是「每周都上这一门」。包成 `[{ ...cell, id, weeks: all }]`
+ * 之后，旧数据零操作地变成新形状里最简单的一种，用户不需要做任何事。
+ *
+ * **幂等**：`cells[key]` 已经是数组时原样保留。这条不是洁癖 ——
+ * 迁移函数可能因为「印记写失败」「备份后进程被杀」之类的原因被跑第二遍，
+ * 第二次再包一层就会变成 `[[{...}]]`，而那是个**静默的数据损坏**：
+ * 闸口照常写印记，用户下次打开课表全空了，还找不到是哪一步坏的。
+ *
+ * 导出它只为自检：幂等性没法从外部观察（第二次跑完形状应该**不变**），
+ * 必须能再调一次才能断言。主进程内部没有别的调用点。
  */
-const MIGRATIONS: Record<number, (dir: string) => void> = {}
+export function migrateTimetableV1ToV2(dir: string): void {
+  const file = join(dir, 'timetable.json')
+  if (!existsSync(file)) return
+
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(readFileSync(file, 'utf-8'))
+  } catch {
+    // 解析失败交给 TimetableStore 的「损坏文件」分支（备份 + 重建）。
+    // 迁移阶段把它删掉或重写成空文件，才是真的把用户数据弄丢
+    return
+  }
+  if (!parsed || typeof parsed !== 'object') return
+
+  const record = parsed as Record<string, unknown>
+  const rawCells = record['cells']
+
+  if (rawCells && typeof rawCells === 'object' && !Array.isArray(rawCells)) {
+    const next: Record<string, unknown> = {}
+    for (const [key, value] of Object.entries(rawCells as Record<string, unknown>)) {
+      if (Array.isArray(value)) {
+        next[key] = value
+        continue
+      }
+      if (!value || typeof value !== 'object') continue
+      const cell = value as Record<string, unknown>
+      const blank = ['courseName', 'teacher', 'location', 'duration', 'remark'].every(
+        (field) => String(cell[field] ?? '').trim() === ''
+      )
+      if (blank) continue
+      next[key] = [{ ...cell, id: newId(), weeks: { kind: 'all' } }]
+    }
+    record['cells'] = next
+  }
+
+  // 周次相关的字段是 v2 新增的，老文件里没有；补默认值让存储读到的是
+  // 「一个合法的 v2 文件」而不是半截形状
+  if (!Number.isFinite(Number(record['weekCount']))) record['weekCount'] = DEFAULT_WEEK_COUNT
+  if (!Number.isFinite(Number(record['currentWeek']))) record['currentWeek'] = 0
+
+  const tmp = `${file}.tmp`
+  writeFileSync(tmp, JSON.stringify(record, null, 2), 'utf-8')
+  renameSync(tmp, file)
+}
+
+/**
+ * 逐级迁移：`MIGRATIONS[n]` 负责把 v`n` 搬到 v`n+1`。
+ *
+ * 闸口在跑之前已经**整目录备份**，所以每一步都可以「回到操作前」。
+ */
+const MIGRATIONS: Record<number, (dir: string) => void> = {
+  1: migrateTimetableV1ToV2
+}
 
 export function inspectData(portable: boolean): SchemaVerdict {
   // 读不出来的印记单独一路：它既不是「老数据」也不是「新数据」，

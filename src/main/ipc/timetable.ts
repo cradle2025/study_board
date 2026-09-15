@@ -33,6 +33,8 @@ function compose(): TimetableData {
     weekdays: [...snapshot.timetable.weekdays],
     rows: buildRows(content.rows, snapshot.timetable.periodCount),
     cells: content.cells,
+    weekCount: content.weekCount,
+    currentWeek: content.currentWeek,
     images: content.images
   }
 }
@@ -68,9 +70,20 @@ export function registerTimetableHandlers(): void {
     }
 
     // 2. 内容部分交给课表存储
-    if ('rows' in input) context().timetable.setRows(input['rows'])
+    let contentChanged = false
+    if ('rows' in input) {
+      context().timetable.setRows(input['rows'])
+      contentChanged = true
+    }
+    if ('weekCount' in input || 'currentWeek' in input) {
+      context().timetable.setWeekSettings({
+        weekCount: input['weekCount'],
+        currentWeek: input['currentWeek']
+      })
+      contentChanged = true
+    }
 
-    if (!settingsChanged && !('rows' in input)) {
+    if (!settingsChanged && !contentChanged) {
       throw new Error('没有需要保存的内容')
     }
     return compose()
@@ -81,6 +94,20 @@ export function registerTimetableHandlers(): void {
     const input = raw as Record<string, unknown>
     const hasCell = Object.prototype.hasOwnProperty.call(input, 'cell')
     context().timetable.setCell(input['key'], hasCell ? input['cell'] : null)
+    return compose()
+  })
+
+  handle<unknown, TimetableData>(CHANNELS.TIMETABLE_REMOVE_CELL, (raw) => {
+    if (!raw || typeof raw !== 'object') throw new Error('参数不合法')
+    const input = raw as Record<string, unknown>
+    context().timetable.removeCell(input['key'], input['id'])
+    return compose()
+  })
+
+  handle<unknown, TimetableData>(CHANNELS.TIMETABLE_SET_CELLS, (raw) => {
+    if (!raw || typeof raw !== 'object') throw new Error('参数不合法')
+    const input = raw as Record<string, unknown>
+    context().timetable.setCells(input['cells'])
     return compose()
   })
 

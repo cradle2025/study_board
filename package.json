@@ -1,6 +1,6 @@
 {
   "name": "study-board",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "学习看板 —— 离线的课程表 + 课程笔记看板，数据全部保存在本地，不联网也能用",
   "keywords": [
     "electron",

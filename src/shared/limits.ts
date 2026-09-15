@@ -22,6 +22,15 @@ export const DEFAULT_WEEKDAYS: readonly string[] = Object.freeze([
 /** 单张课表最多允许的图片数量 */
 export const MAX_TIMETABLE_IMAGES = 3
 
+/**
+ * 一学期周数。
+ *
+ * 16 是国内本科最常见的教学周数；上限 30 覆盖「两学期连排」「短学期」
+ * 这类写法，同时挡住 `{kind:'list'}` 里塞进一个天文数字的周次。
+ */
+export const DEFAULT_WEEK_COUNT = 16
+export const MAX_WEEK_COUNT = 30
+
 /* ------------------------------------------------------------------ 网站门户 */
 
 /** 门户站点数量上限：够放得下全部常用学习站点，又不至于无限堆 */

@@ -33,8 +33,10 @@ import type {
   SettingsPatch,
   TimetableData,
   TimetableImageImportResult,
+  TimetableRemoveCellInput,
   TimetableSaveInput,
-  TimetableSetCellInput
+  TimetableSetCellInput,
+  TimetableSetCellsInput
 } from '@shared/types'
 
 /**
@@ -104,6 +106,10 @@ const api = {
     save: (input: TimetableSaveInput) => invoke<TimetableData>(CHANNELS.TIMETABLE_SAVE, input),
     setCell: (input: TimetableSetCellInput) =>
       invoke<TimetableData>(CHANNELS.TIMETABLE_SET_CELL, input),
+    removeCell: (input: TimetableRemoveCellInput) =>
+      invoke<TimetableData>(CHANNELS.TIMETABLE_REMOVE_CELL, input),
+    setCells: (input: TimetableSetCellsInput) =>
+      invoke<TimetableData>(CHANNELS.TIMETABLE_SET_CELLS, input),
     addImages: (paths: string[]) =>
       invoke<TimetableImageImportResult>(CHANNELS.TIMETABLE_ADD_IMAGES, paths),
     removeImage: (id: string) => invoke<TimetableData>(CHANNELS.TIMETABLE_REMOVE_IMAGE, id)

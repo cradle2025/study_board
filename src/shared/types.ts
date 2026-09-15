@@ -176,13 +176,38 @@ export interface PeriodRow {
   end: string
 }
 
+/**
+ * 一门课在哪些周上。
+ *
+ * 用判别联合而不是「`weeks: number[]` + 空数组表示每周」：
+ * 「每周」和「单周」是**两种不同的语义**，塞进同一个数组会让渲染层
+ * 到处写 `if (weeks.length === 0)` 这类判空，而且判不出「指定了 0 周」。
+ * 判别联合让每种情况各自带着自己需要的数据，`switch` 一遍就穷尽了。
+ */
+export type WeekRule =
+  /** 每周都上 */
+  | { kind: 'all' }
+  /** 单周（第 1、3、5… 周） */
+  | { kind: 'odd' }
+  /** 双周（第 2、4、6… 周） */
+  | { kind: 'even' }
+  /** 指定周次，如 [1, 3, 5] 或 1–8 展开。已去重、升序 */
+  | { kind: 'list'; weeks: number[] }
+
 export interface TimetableCell {
+  /**
+   * 同一格多门课要能区分、要能单独增删改，所以每门课都带 id。
+   * 由主进程在新增时分配，渲染层只负责回传。
+   */
+  id: string
   courseName: string
   teacher: string
   location: string
   remark: string
   /** 持续时间，例如 "45 分钟" 或 "1-2 节连上" */
   duration: string
+  /** 适用周次 */
+  weeks: WeekRule
 }
 
 export interface CourseImage {
@@ -204,8 +229,15 @@ export interface TimetableData {
   periodCount: number
   weekdays: string[]
   rows: PeriodRow[]
-  /** key 形如 "1:0"，表示第 1 节、第 0 列（周一） */
-  cells: Record<string, TimetableCell>
+  /**
+   * key 形如 "1:0"，表示第 1 节、第 0 列（周一）。
+   * 值是**这一格上的所有课**——不同周次可以并存（单周一门、双周另一门）。
+   */
+  cells: Record<string, TimetableCell[]>
+  /** 一学期多少周 */
+  weekCount: number
+  /** 当前查看第几周；0 = 不按周次过滤（看全部） */
+  currentWeek: number
   images: CourseImage[]
 }
 
@@ -220,13 +252,40 @@ export interface TimetableSaveInput {
   periodCount?: number
   weekdays?: string[]
   rows?: PeriodRow[]
+  /** 一学期多少周 */
+  weekCount?: number
+  /** 当前查看第几周；0 = 全部 */
+  currentWeek?: number
 }
 
 export interface TimetableSetCellInput {
   /** 形如 "3:2" */
   key: string
-  /** null 表示清空该单元格 */
+  /**
+   * 单门课的增改：带 `id` 时替换同一格里那一门，不带 `id` 时**追加**一门。
+   * 传 null 表示清空整格。
+   */
   cell: TimetableCell | null
+}
+
+/** 按 id 删掉某格里的一门课（其余课不受影响） */
+export interface TimetableRemoveCellInput {
+  /** 形如 "3:2" */
+  key: string
+  /** 要删掉的那门课的 id */
+  id: string
+}
+
+/**
+ * 批量写入多个格子。
+ *
+ * 存在的理由：`setCell` 每次都会 `#persist()` 一次（整份 JSON 重写），
+ * 一次多格操作走它 = N 次整文件重写，中途失败还会留下半成品。
+ * 批量接口内部一次性应用、只写盘一次。
+ */
+export interface TimetableSetCellsInput {
+  /** key 形如 "3:2"；值是该格的完整课程列表，空数组等价于清空该格 */
+  cells: Record<string, TimetableCell[]>
 }
 
 export interface TimetableImageImportResult {

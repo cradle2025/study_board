@@ -29,8 +29,10 @@ import type {
   SettingsPatch,
   TimetableData,
   TimetableImageImportResult,
+  TimetableRemoveCellInput,
   TimetableSaveInput,
-  TimetableSetCellInput
+  TimetableSetCellInput,
+  TimetableSetCellsInput
 } from './types'
 
 /**
@@ -79,7 +81,12 @@ export interface StudyBoardApi {
   timetable: {
     get(): Promise<IpcResult<TimetableData>>
     save(input: TimetableSaveInput): Promise<IpcResult<TimetableData>>
+    /** 单门课的增改（带 id 则替换那一门，不带则追加） */
     setCell(input: TimetableSetCellInput): Promise<IpcResult<TimetableData>>
+    /** 按 id 删掉一格里的某一门课 */
+    removeCell(input: TimetableRemoveCellInput): Promise<IpcResult<TimetableData>>
+    /** 批量写多个格子：一次调用只落盘一次 */
+    setCells(input: TimetableSetCellsInput): Promise<IpcResult<TimetableData>>
     addImages(paths: string[]): Promise<IpcResult<TimetableImageImportResult>>
     removeImage(id: string): Promise<IpcResult<TimetableData>>
   }
