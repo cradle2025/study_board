@@ -311,9 +311,19 @@ export interface TimetableCell {
 - `#persist()` 是整份 `timetable.json` 重写（临时文件 + rename），
   所以**任何「一次逻辑操作」都应该只触发一次 persist**
 
-### 第 4 步：IPC（`src/shared/ipc.ts` + `src/preload/`）
+### 第 4 步：IPC 契约（三个文件，别找错）
 
-跟着 store 的签名改。注意 IPC 契约是**两侧共用**的，改完 `typecheck` 会替你检查。
+课表相关的东西分散在三处，**没有一个叫 `ipc.ts` 的文件**：
+
+| 文件 | 放什么 |
+|---|---|
+| `src/shared/channels.ts` | 通道名常量，如 `TIMETABLE_SET_CELL: 'timetable:set-cell'` |
+| `src/shared/api.ts` | 桥的**类型契约**（`window.studyBoard` 的形状） |
+| `src/preload/index.ts` | 桥的实现（把调用转成 `ipcRenderer.invoke`） |
+
+新增「按 id 删一门课」的话，三处都要加。
+改完 `npm run typecheck` 会替你检查两侧是否对齐 —— 契约是共用的，
+漏改一侧编译不过。
 
 ### 第 5 步：渲染层
 
