@@ -31,7 +31,7 @@ import {
 } from './paths'
 import { dictionaryGaps } from '@shared/i18n'
 
-import { DATA_SCHEMA, readStamp } from './services/dataVersion'
+import { DATA_SCHEMA, migrateTimetableV1ToV2, readStamp } from './services/dataVersion'
 import { resolveNotesDir } from './services/settings'
 import { encodePng } from './services/png'
 import { logLine, mainLogPath } from './resilience'
@@ -148,6 +148,43 @@ const UPDATE_FAKE_VERSION = '9.9.9'
 const UPDATE_MARKER_NOTE = '升级前就有的笔记.md'
 
 /**
+ * v1 形状的老课表：迁移自检的靶子。
+ *
+ * 放在 `2:4`（第 2 节、周五）—— seed 用的是 1:0 / 1:1 / 3:2，
+ * 界面探针用的是 5:3 / 6:3，互不干扰。
+ */
+const LEGACY_TIMETABLE_KEY = '2:4'
+const LEGACY_TIMETABLE_COURSE = '线性代数'
+const LEGACY_TIMETABLE_TEACHER = '陈立'
+
+/**
+ * 一份 v1（0.3.0 及更早）形状的课表文件。
+ *
+ * `cells` 的值是**单个对象**——这正是 v1 与 v2 的唯一区别。
+ * 迁移必须把它包成单元素数组、补 id、补 `weeks: { kind: 'all' }`。
+ */
+function legacyTimetableJson(): string {
+  return JSON.stringify(
+    {
+      version: 1,
+      rows: [],
+      cells: {
+        [LEGACY_TIMETABLE_KEY]: {
+          courseName: LEGACY_TIMETABLE_COURSE,
+          teacher: LEGACY_TIMETABLE_TEACHER,
+          location: '教二-105',
+          duration: '45 分钟',
+          remark: '这是 v1 老数据'
+        }
+      },
+      images: []
+    },
+    null,
+    2
+  )
+}
+
+/**
  * 数据场景的数据准备。两个场景，分别对应闸口的两条分支：
  *
  *  - `update`：数据目录里躺着一份**更新的**版本写的印记 → 走降级保护；
@@ -174,6 +211,25 @@ export function prepareUpdateScenarioIfRequested(): void {
       JSON.stringify({ language: 'en-US' }, null, 2),
       'utf-8'
     )
+    return
+  }
+
+  /**
+   * 课表场景：**从一个 v1 数据目录开始**。
+   *
+   * 这样每次 `smoke:timetable` 都会真的走一遍「备份 → 迁移 → 再启动」，
+   * 后面的界面断言全部跑在迁移后的数据上。周次功能改的就是数据形状，
+   * 如果只在「全新安装」的数据上验界面，最危险的那条路径（老用户升级）
+   * 反而一次都没跑过。
+   */
+  if (scenario === 'timetable') {
+    const root = ensureDir(dataRoot(false))
+    writeFileSync(
+      join(root, 'data-version.json'),
+      JSON.stringify({ schema: 1, app: '0.3.0', writtenAt: new Date().toISOString() }, null, 2),
+      'utf-8'
+    )
+    writeFileSync(join(root, 'timetable.json'), legacyTimetableJson(), 'utf-8')
     return
   }
 
@@ -209,6 +265,101 @@ export function prepareUpdateScenarioIfRequested(): void {
     '# 升级前就有的笔记\n\n这段话必须原样出现在备份里。\n',
     'utf-8'
   )
+
+  // 顺带放一份 v1 形状的课表：升级路径上除了「笔记还在不在」，
+  // 也要验「课表格子的形状有没有被搬对」（见 verifyTimetableMigration）
+  writeFileSync(join(root, 'timetable.json'), legacyTimetableJson(), 'utf-8')
+}
+
+/**
+ * 课表 v1 → v2 迁移的磁盘级校验。
+ *
+ * 渲染层只能看到「界面上有没有课」，看不到形状、id、备份这三件事，
+ * 而它们恰恰是迁移最容易做错的地方：
+ *  - 形状没搬 → 界面照样能显示（存储读的是新形状，读不到就当作空）
+ *  - id 没补 → 那门课没法单独编辑 / 删除
+ *  - 备份没做 / 做晚了 → 出事时没有回头路
+ *
+ * 所以这一条**必须在主进程读文件断言**。
+ */
+export function verifyTimetableMigration(): boolean {
+  const file = context().timetable.filePath
+  const dataDir = dirname(file)
+
+  const readCells = (): Record<string, unknown> => {
+    try {
+      const raw = JSON.parse(readFileSync(file, 'utf-8')) as Record<string, unknown>
+      return (raw['cells'] ?? {}) as Record<string, unknown>
+    } catch {
+      return {}
+    }
+  }
+
+  const list = readCells()[LEGACY_TIMETABLE_KEY]
+  if (!Array.isArray(list)) {
+    console.error('[smoke] 迁移自检：课表格子没有变成数组')
+    return false
+  }
+  const legacy = list.find(
+    (item) => (item as Record<string, unknown> | null)?.['courseName'] === LEGACY_TIMETABLE_COURSE
+  ) as Record<string, unknown> | undefined
+  if (!legacy) {
+    console.error('[smoke] 迁移自检：老课程在迁移后不见了')
+    return false
+  }
+  if (JSON.stringify(legacy['weeks']) !== JSON.stringify({ kind: 'all' })) {
+    console.error('[smoke] 迁移自检：老课程的周次不是「每周」：', JSON.stringify(legacy['weeks']))
+    return false
+  }
+  const id = legacy['id']
+  if (typeof id !== 'string' || id.length === 0) {
+    console.error('[smoke] 迁移自检：老课程没有补上 id')
+    return false
+  }
+  if (legacy['teacher'] !== LEGACY_TIMETABLE_TEACHER) {
+    console.error('[smoke] 迁移自检：老课程的字段在迁移中变了')
+    return false
+  }
+
+  // 幂等：再跑一遍迁移，形状必须**不变**。再包一层会变成 [[{...}]]，
+  // 那是个静默的数据损坏（印记照写，课表全空）
+  migrateTimetableV1ToV2(dataDir)
+  const again = readCells()[LEGACY_TIMETABLE_KEY]
+  if (!Array.isArray(again) || again.length !== list.length || Array.isArray(again[0])) {
+    console.error('[smoke] 迁移自检：迁移不幂等，第二遍把格子又包了一层')
+    return false
+  }
+
+  // 备份必须是**迁移前**拍的：备份里那份还是 v1 的单对象形状。
+  // 只检查「备份目录存在」挡不住「备份发生在迁移之后」——
+  // 那种备份里存的已经是新数据，等于没有回头路
+  const backupRoot = join(dataRoot(false), '.backups')
+  if (!existsSync(backupRoot)) {
+    console.error('[smoke] 迁移自检：没有找到任何备份')
+    return false
+  }
+  let backupHasLegacyShape = false
+  for (const name of readdirSync(backupRoot)) {
+    const backupFile = join(backupRoot, name, 'timetable.json')
+    if (!existsSync(backupFile)) continue
+    try {
+      const raw = JSON.parse(readFileSync(backupFile, 'utf-8')) as Record<string, unknown>
+      const cells = (raw['cells'] ?? {}) as Record<string, unknown>
+      const cell = cells[LEGACY_TIMETABLE_KEY] as Record<string, unknown> | undefined
+      if (cell && !Array.isArray(cell) && cell['courseName'] === LEGACY_TIMETABLE_COURSE) {
+        backupHasLegacyShape = true
+        break
+      }
+    } catch {
+      /* 单个备份读不出来就跳过，不影响其它备份 */
+    }
+  }
+  if (!backupHasLegacyShape) {
+    console.error('[smoke] 迁移自检：备份里没有迁移前的课表（备份可能发生在迁移之后）')
+    return false
+  }
+
+  return true
 }
 
 /* ------------------------------------------------------------------ 造测试数据 */
@@ -917,6 +1068,117 @@ const TIMETABLE_PROBE = `(async () => {
   document.querySelector('.sb-tt-editor [data-role="cancel"]')?.click()
   await wait(200)
 
+  /* -------------------------------------------------- 周次规则：一格多课 */
+
+  const namesIn = (key) =>
+    Array.from(
+      document.querySelectorAll('.sb-timetable__cell[data-key="' + key + '"] .sb-ttcell__name')
+    ).map((el) => el.textContent)
+
+  const openCell = async (key) => {
+    const el = document.querySelector('.sb-timetable__cell[data-key="' + key + '"]')
+    if (el) el.dispatchEvent(new MouseEvent('dblclick', { bubbles: true, cancelable: true }))
+    await wait(250)
+  }
+
+  const fillName = (value) => {
+    const input = document.querySelector('.sb-tt-editor [data-field="courseName"]')
+    if (input) input.value = value
+  }
+
+  const setWeekRule = (kind) => {
+    const radio = document.querySelector(
+      '.sb-tt-editor input[name="sb-tt-week"][value="' + kind + '"]'
+    )
+    if (radio) {
+      radio.checked = true
+      radio.dispatchEvent(new Event('change', { bubbles: true }))
+    }
+  }
+
+  const clickRole = (role) => document.querySelector('.sb-tt-editor [data-role="' + role + '"]')?.click()
+
+  const pickWeek = async (value) => {
+    const select = document.querySelector('#current-week')
+    if (!select) return false
+    select.value = String(value)
+    select.dispatchEvent(new Event('change', { bubbles: true }))
+    await wait(350)
+    return true
+  }
+
+  /**
+   * 往 7:5 这一格放两门课：一门单周、一门双周。
+   *
+   * 用空格子从头搭，而不是改种子数据 —— 断言要盯的是「这一格里
+   * 两门课能不能并存」，靶子必须是我们自己刚写进去的东西。
+   */
+  const weekKey = '7:5'
+  await openCell(weekKey)
+  fillName('单周课')
+  setWeekRule('odd')
+  clickRole('save')
+  await wait(400)
+
+  const listAfterFirst = document.querySelectorAll('.sb-tt-editor .sb-tt-course').length
+
+  clickRole('add-course')
+  await wait(250)
+  fillName('双周课')
+  setWeekRule('even')
+  clickRole('save')
+  await wait(400)
+
+  const namesAfterTwo = namesIn(weekKey)
+  const multiOk =
+    namesAfterTwo.length === 2 &&
+    namesAfterTwo.includes('单周课') &&
+    namesAfterTwo.includes('双周课')
+
+  /* ------------------------------------------- 周次规则：编辑第一门别删第二门 */
+
+  await openCell(weekKey)
+  const editButtons = Array.from(
+    document.querySelectorAll('.sb-tt-editor [data-role="edit-course"]')
+  )
+  const listBeforeEdit = editButtons.length
+  if (editButtons[0]) editButtons[0].click()
+  await wait(250)
+
+  fillName('单周课改')
+  clickRole('save')
+  await wait(400)
+
+  const rowsAfterEdit = document.querySelectorAll('.sb-tt-editor .sb-tt-course').length
+  const namesAfterEdit = namesIn(weekKey)
+  // 这条直接盯着「数据层支持一格多课、UI 却按一格一门课读写」那个风险：
+  // 编辑第一门之后第二门要是没了，界面不会报任何错，用户只会发现课不见了
+  const noSilentDeleteOk =
+    listBeforeEdit === 2 &&
+    rowsAfterEdit === 2 &&
+    namesAfterEdit.length === 2 &&
+    namesAfterEdit.includes('单周课改') &&
+    namesAfterEdit.includes('双周课')
+
+  clickRole('close')
+  await wait(200)
+
+  /* ------------------------------------------------------- 周次过滤 */
+
+  await pickWeek(3)
+  const week3 = namesIn(weekKey)
+  await pickWeek(4)
+  const week4 = namesIn(weekKey)
+  await pickWeek(0)
+  const weekAll = namesIn(weekKey)
+
+  const filterOk =
+    week3.length === 1 &&
+    week3[0] === '单周课改' &&
+    week4.length === 1 &&
+    week4[0] === '双周课' &&
+    weekAll.length === 2
+
   // 切到图片模式，确认自定义协议与 CSP 都放行（naturalWidth 只有真的加载成功才不为 0）
   const imageRadio = document.querySelector('input[name="tt-mode"][value="image"]')
   if (imageRadio) {
@@ -944,12 +1206,17 @@ const TIMETABLE_PROBE = `(async () => {
     cells, filled, hasCourse, hasTime, shots, imageWidth, activeNav,
     paintedText, filledAfterEdit, shotHeight: Math.round(shotHeight),
     reuseOk, reuseOptionCount, nameAfterCopy,
+    // 一格多课 / 周次过滤 / 编辑一门不删另一门
+    listAfterFirst, namesAfterTwo, namesAfterEdit, listBeforeEdit, rowsAfterEdit,
+    week3, week4, weekAll,
+    multiOk, noSilentDeleteOk, filterOk,
     cellsOk: cells === 11 * 7,
-    filledOk: filled === 3,
+    // 4 门：迁移过来的 v1 老课（线性代数）加种子里那 3 门
+    filledOk: filled === 4,
     navOk: activeNav === 'timetable',
     editOk,
     // 保存一格之后，填过的格子数应该只增加 1，而不是整表被重画成别的样子
-    filledAfterEditOk: filledAfterEdit === 4,
+    filledAfterEditOk: filledAfterEdit === 5,
     imageOk: imageWidth > 0,
     imageFitsOk: imageFits
   })
@@ -1947,6 +2214,15 @@ export function runSmokeTestIfRequested(win: BrowserWindow): void {
                   parsed['filledAfterEditOk'] &&
                   // 连堂复用：能从「上一节」和「已录入的课程」里填内容
                   parsed['reuseOk'] &&
+                  // 一格多课：同一格里单周 / 双周两门并存
+                  parsed['multiOk'] &&
+                  // 周次过滤：第 3 周只显示单周那门，第 4 周只显示双周那门
+                  parsed['filterOk'] &&
+                  // 编辑第一门课，第二门必须还在（数据层与 UI 必须同批落地）
+                  parsed['noSilentDeleteOk'] &&
+                  // 迁移：v1 老数据变成 v2 形状、老课程还在、且备份拍在迁移之前。
+                  // 渲染层看不到形状与备份，必须在主进程读文件断言
+                  verifyTimetableMigration() &&
                   parsed['imageOk'] &&
                   parsed['imageFitsOk']
               )
@@ -2097,6 +2373,8 @@ export function runSmokeTestIfRequested(win: BrowserWindow): void {
                         // 关键：**老数据也必须先备份**。闸口把「有数据但没印记」
                         // 误判成「全新安装」的话，用户就会在没有备份的情况下被迁移
                         verifyUpdateBackup() &&
+                        // 课表格子 v1 → v2：形状、id、周次默认值、幂等、备份时机
+                        verifyTimetableMigration() &&
                         verifyStampIsCurrent()
                     )
                   : scenario === 'i18n'
