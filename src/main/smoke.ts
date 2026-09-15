@@ -875,6 +875,48 @@ const TIMETABLE_PROBE = `(async () => {
   const editOk = paintedText === '编译原理' && Boolean(paintedMeta && paintedMeta.textContent.includes('周芷若'))
   const filledAfterEdit = document.querySelectorAll('.sb-ttcell__name').length
 
+  /**
+   * 连堂复用。
+   *
+   * 5:3 刚存进「编译原理」，那 6:3 的「上一节」正好就是它 —— 拿一个
+   * **自己刚写进去的**值当靶子，不依赖种子数据里恰好有什么，断言才稳。
+   *
+   * 两件事一起验：按钮在（说明「上一节有内容」判对了）、点了真的把内容
+   * 填进来（说明取的不是别的格子）。只验按钮存在的话，取错格子照样过。
+   */
+  const nextCell = document.querySelector('.sb-timetable__cell[data-key="6:3"]')
+  if (nextCell) {
+    nextCell.dispatchEvent(new MouseEvent('dblclick', { bubbles: true, cancelable: true }))
+  }
+  await wait(250)
+
+  const copyButton = document.querySelector('.sb-tt-editor [data-role="copy-prev"]')
+  const reuseSelect = document.querySelector('.sb-tt-editor [data-role="reuse"]')
+  // 下拉第一项永远是占位项「选一门已录入的课…」，所以 > 1 才算有真课程
+  const reuseOptionCount = reuseSelect ? reuseSelect.options.length : 0
+
+  // 从下拉里选一项，确认它会把课程名填进去
+  let reusePickFilled = ''
+  if (reuseSelect) {
+    reuseSelect.value = '1'
+    reuseSelect.dispatchEvent(new Event('change', { bubbles: true }))
+    const el = document.querySelector('.sb-tt-editor [data-field="courseName"]')
+    reusePickFilled = el ? el.value : ''
+  }
+
+  // 清掉再点「复制上一节」，免得上面那次填充干扰
+  const nameField = document.querySelector('.sb-tt-editor [data-field="courseName"]')
+  if (nameField) nameField.value = ''
+  if (copyButton) copyButton.click()
+  const nameAfterCopy = nameField ? nameField.value : ''
+
+  const reuseOk =
+    Boolean(copyButton) && nameAfterCopy === '编译原理' && reuseOptionCount > 1 && reusePickFilled !== ''
+
+  // 收尾：关掉编辑器，别影响后面的断言
+  document.querySelector('.sb-tt-editor [data-role="cancel"]')?.click()
+  await wait(200)
+
   // 切到图片模式，确认自定义协议与 CSP 都放行（naturalWidth 只有真的加载成功才不为 0）
   const imageRadio = document.querySelector('input[name="tt-mode"][value="image"]')
   if (imageRadio) {
@@ -901,6 +943,7 @@ const TIMETABLE_PROBE = `(async () => {
   return JSON.stringify({
     cells, filled, hasCourse, hasTime, shots, imageWidth, activeNav,
     paintedText, filledAfterEdit, shotHeight: Math.round(shotHeight),
+    reuseOk, reuseOptionCount, nameAfterCopy,
     cellsOk: cells === 11 * 7,
     filledOk: filled === 3,
     navOk: activeNav === 'timetable',
@@ -1902,6 +1945,8 @@ export function runSmokeTestIfRequested(win: BrowserWindow): void {
                   parsed['hasTime'] &&
                   parsed['editOk'] &&
                   parsed['filledAfterEditOk'] &&
+                  // 连堂复用：能从「上一节」和「已录入的课程」里填内容
+                  parsed['reuseOk'] &&
                   parsed['imageOk'] &&
                   parsed['imageFitsOk']
               )

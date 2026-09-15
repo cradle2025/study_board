@@ -1,7 +1,7 @@
 import { MAX_TIMETABLE_IMAGES } from '@shared/limits'
 import type { CourseImage, TimetableCell, TimetableData } from '@shared/types'
 
-import { t } from '../lib/i18n'
+import { getLang, t } from '../lib/i18n'
 import { assetUrl } from '../lib/asset'
 import { escapeHtml } from '../lib/html'
 import { openLightbox, showFloating } from '../lib/overlay'
@@ -92,6 +92,35 @@ function describeKey(key: string, weekdays: readonly string[]): string {
   const column = Number(columnRaw)
   const weekday = weekdays[column + 1] ?? t('timetable.columnN', { n: column + 1 })
   return t('timetable.cellLabel', { period, weekday })
+}
+
+/**
+ * 已录入过的课程，按课程名去重。
+ *
+ * 用途是**连堂**：同一门课连着上两节（甚至三节），后面那几格不该再手打
+ * 一遍。老师/地点取第一次出现的那份 —— 同一门课在不同格子里老师一般
+ * 不会变；真变了用户手改一下就行，比要求他重复输入二十遍强。
+ *
+ * 排序按当前语言：英文界面里用中文的排序规则排英文课名会很怪。
+ */
+function knownCourses(cells: Record<string, TimetableCell>): TimetableCell[] {
+  const seen = new Map<string, TimetableCell>()
+  for (const cell of Object.values(cells)) {
+    const name = cell.courseName.trim()
+    if (name === '' || seen.has(name)) continue
+    seen.set(name, cell)
+  }
+  return [...seen.values()].sort((a, b) =>
+    a.courseName.localeCompare(b.courseName, getLang())
+  )
+}
+
+/** 下拉里那一行：「高等数学 A · 王海 · 三教 201」——空的部分不占位 */
+function courseOptionLabel(course: TimetableCell): string {
+  return [course.courseName, course.teacher, course.location]
+    .map((part) => part.trim())
+    .filter((part) => part !== '')
+    .join(' · ')
 }
 
 function cellLabel(key: string, content: TimetableCell | undefined, weekdays: readonly string[]): string {
@@ -203,6 +232,17 @@ export function createTimetablePanel(options: TimetablePanelOptions): TimetableP
       remark: ''
     }
 
+    /**
+     * 「上一节」= 同一个星期几的上一节课。连堂就长这样：同一天连着两节，
+     * 表格里是上下相邻的两格。
+     */
+    const [periodRaw, columnRaw] = key.split(':')
+    const previousKey = `${Number(periodRaw) - 1}:${columnRaw}`
+    const previous = data.cells[previousKey]
+    const canCopyPrevious = previous !== undefined && !isBlank(previous)
+
+    const courses = knownCourses(data.cells)
+
     const handle = showFloating({
       className: 'sb-tt-editor',
       anchor: cell.getBoundingClientRect(),
@@ -218,8 +258,26 @@ export function createTimetablePanel(options: TimetablePanelOptions): TimetableP
       <div class="sb-tt-editor__body">
         <label class="sb-field">
           <span>${escapeHtml(t('timetable.field.courseName'))}</span>
-          <input class="sb-input" data-field="courseName" maxlength="60" autocomplete="off" />
+          <input class="sb-input" data-field="courseName" maxlength="60" autocomplete="off"
+                 list="sb-tt-known-courses" />
         </label>
+        ${
+          courses.length === 0
+            ? ''
+            : `
+        <label class="sb-field">
+          <span>${escapeHtml(t('timetable.reuse'))}</span>
+          <select class="sb-select" data-role="reuse">
+            <option value="">${escapeHtml(t('timetable.reusePick'))}</option>
+            ${courses
+              .map(
+                (course, index) =>
+                  `<option value="${index}">${escapeHtml(courseOptionLabel(course))}</option>`
+              )
+              .join('')}
+          </select>
+        </label>`
+        }
         <div class="sb-tt-editor__pair">
           <label class="sb-field">
             <span>${escapeHtml(t('timetable.field.teacher'))}</span>
@@ -240,8 +298,17 @@ export function createTimetablePanel(options: TimetablePanelOptions): TimetableP
           <textarea class="sb-textarea" data-field="remark" rows="2" maxlength="300"></textarea>
         </label>
       </div>
+      <datalist id="sb-tt-known-courses">
+        ${courses.map((course) => `<option value="${escapeHtml(course.courseName)}"></option>`).join('')}
+      </datalist>
       <div class="sb-tt-editor__actions">
         <button class="sb-btn sb-btn--ghost" type="button" data-role="clear">${escapeHtml(t('common.clear'))}</button>
+        ${
+          canCopyPrevious
+            ? `<button class="sb-btn sb-btn--ghost" type="button" data-role="copy-prev"
+                       title="${escapeHtml(t('timetable.copyPrevHint'))}">${escapeHtml(t('timetable.copyPrev'))}</button>`
+            : ''
+        }
         <span class="sb-tt-editor__spacer"></span>
         <button class="sb-btn" type="button" data-role="cancel">${escapeHtml(t('common.cancel'))}</button>
         <button class="sb-btn sb-btn--primary" type="button" data-role="save">${escapeHtml(t('common.save'))}</button>
@@ -256,6 +323,39 @@ export function createTimetablePanel(options: TimetablePanelOptions): TimetableP
       inputs.set(field, input)
       const value = current[field as keyof TimetableCell]
       input.value = typeof value === 'string' ? value : ''
+    })
+
+    /**
+     * 把某个格子的内容填进表单。
+     *
+     * `fields` 决定填哪些：
+     *  - 从课程下拉里选：填「课程身份」——名称/老师/地点/时长。
+     *    **不填备注**，因为备注往往是这一格特有的（「小测」「调课」）。
+     *  - 复制上一节：**全填**。用户点的是「复制」，那就该是整格复制。
+     */
+    const fill = (source: TimetableCell, fields: readonly (keyof TimetableCell)[]): void => {
+      for (const field of fields) {
+        const input = inputs.get(field)
+        if (input) input.value = source[field]
+      }
+      inputs.get('courseName')?.focus()
+    }
+
+    const REUSE_FIELDS = ['courseName', 'teacher', 'location', 'duration'] as const
+    const COPY_FIELDS = ['courseName', 'teacher', 'location', 'duration', 'remark'] as const
+
+    handle.element
+      .querySelector<HTMLSelectElement>('[data-role="reuse"]')
+      ?.addEventListener('change', (event) => {
+        const select = event.target as HTMLSelectElement
+        const picked = courses[Number(select.value)]
+        if (picked) fill(picked, REUSE_FIELDS)
+        // 复位：不然再选同一个不会触发 change，用户会以为没反应
+        select.value = ''
+      })
+
+    handle.element.querySelector('[data-role="copy-prev"]')?.addEventListener('click', () => {
+      if (previous) fill(previous, COPY_FIELDS)
     })
 
     let busy = false
