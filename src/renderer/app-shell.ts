@@ -284,7 +284,7 @@ export class AppShell extends HTMLElement {
       <div class="sb-shell">
         <aside class="sb-sidebar">
           <div class="sb-brand">
-            <div class="sb-brand__mark">学</div>
+            <div class="sb-brand__mark">${escapeHtml(t('shell.brandMark'))}</div>
             <div>
               <div class="sb-brand__text">${escapeHtml(t('shell.brand'))}</div>
               <div class="sb-brand__sub" data-role="version">${escapeHtml(t('common.loading'))}</div>

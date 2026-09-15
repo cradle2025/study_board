@@ -54,6 +54,7 @@ export const EN: Record<string, string> = {
 
   /* -------------------------------------------------------- shell / nav */
   'shell.brand': 'StudyBoard',
+  'shell.brandMark': 'S',
   'shell.navLabel': 'Main navigation',
   'shell.footer': 'Local data · No network',
   'shell.dataDir': 'Data folder: {path}',

@@ -48,6 +48,7 @@ export const ZH: Record<string, string> = {
 
   /* ------------------------------------------------------ 外壳 / 导航 */
   'shell.brand': '学习看板',
+  'shell.brandMark': '学',
   'shell.navLabel': '主导航',
   'shell.footer': '本地数据 · 不联外网',
   'shell.dataDir': '数据目录：{path}',
