@@ -670,6 +670,18 @@ h4 {
   position: fixed;
   width: 340px;
   max-width: calc(100vw - 24px);
+  /*
+   * 高度上限 + 内部滚动。
+   *
+   * place() 只保证「尽量放进视口」；元素比视口还高时它把 top 夹在上边距处,
+   * 于是**底部的「保存」按钮被推出屏幕，点不到也滚不到**。
+   *
+   * 加了「复用已录入的课程」这一项之后编辑器更高了，撞上这条的概率明显
+   * 变大（小窗口、高 DPI 缩放、锚点靠下都会触发）。给个上限，超出部分
+   * 内部滚动，按钮就永远够得着。
+   */
+  max-height: calc(100vh - 24px);
+  overflow-y: auto;
   border: 1px solid var(--border-default);
   border-radius: var(--radius-md);
   background: var(--bg-surface);
