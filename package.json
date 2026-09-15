@@ -10,6 +10,7 @@
     "study",
     "offline-first"
   ],
+  "author": "salty",
   "license": "MIT",
   "private": false,
   "main": "./out/main/index.js",
