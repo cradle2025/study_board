@@ -1,4 +1,5 @@
 import { Editor } from '@tiptap/core'
+import { t } from '../i18n'
 import Highlight from '@tiptap/extension-highlight'
 import Image from '@tiptap/extension-image'
 import { TableKit } from '@tiptap/extension-table'
@@ -101,7 +102,7 @@ export function createRichTextEditor(options: RichTextEditorOptions): EditorHand
   editor.on('update', syncPlaceholder)
   editor.on('selectionUpdate', syncPlaceholder)
 
-  const placeholder = options.placeholder ?? '在这里写……'
+  const placeholder = options.placeholder ?? t('notes.editorPlaceholder')
   element.setAttribute('data-placeholder', placeholder)
 
   function chain(): ReturnType<Editor['chain']> {
@@ -153,8 +154,8 @@ export function createRichTextEditor(options: RichTextEditorOptions): EditorHand
         if (editor.isActive('link')) return chain().unsetLink().run()
         const previous = String(editor.getAttributes('link')['href'] ?? '')
         void promptText({
-          title: '插入链接',
-          label: '链接地址',
+          title: t('editor.link'),
+          label: t('editor.linkUrl'),
           value: previous || 'https://',
           placeholder: 'https://…'
         }).then((url) => {

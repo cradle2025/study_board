@@ -56,7 +56,7 @@ export function createEditorToolbar(options: ToolbarOptions): ToolbarHandle {
           (item) => `
             <button class="sb-editorbar__btn" type="button" data-command="${item.command}"
                     title="${escapeHtml(t(item.titleKey))}" aria-label="${escapeHtml(t(item.titleKey))}">
-              ${escapeHtml(item.label)}
+              ${escapeHtml(item.labelKey ? t(item.labelKey) : (item.label ?? ''))}
             </button>
           `
         )
@@ -103,7 +103,7 @@ export function createEditorToolbar(options: ToolbarOptions): ToolbarHandle {
 
     const done = handle.run(command)
     if (!done && options.onNotice) {
-      options.onNotice('这个格式在当前编辑模式下不支持')
+      options.onNotice(t('editor.notSupported'))
     }
     refresh()
   }

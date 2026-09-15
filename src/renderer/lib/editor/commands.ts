@@ -13,6 +13,8 @@
  * 与其假装支持然后在存盘时悄悄丢掉，不如直接不给点。
  */
 
+
+
 export type EditorCommand =
   /* 历史 */
   | 'undo'
@@ -91,8 +93,15 @@ export interface EditorHandle {
 
 export interface ToolbarItem {
   command: EditorCommand
-  /** 按钮上的字，尽量短——工具栏一行放得下十几个按钮 */
+  /**
+   * 按钮上的字，尽量短——工具栏一行放得下十几个按钮。
+   *
+   * 大多数是**图标字形**（↶ / B / H1 / ¶），两种语言下都一样，所以不翻。
+   * 少数几个是**文字**（+行 / +列 / −表），那类走 `labelKey`。
+   */
   label: string
+  /** 文字型按钮的文案 key；有它时优先用它，`label` 留空 */
+  labelKey?: string
   titleKey: string
   /** 同一组内的按钮挨着放，组与组之间加竖线 */
   group: number
@@ -136,9 +145,9 @@ export const TOOLBAR: readonly ToolbarItem[] = [
   { command: 'hr', label: '—', titleKey: 'editor.hr', group: 3 },
 
   { command: 'table', label: '▦', titleKey: 'editor.table', group: 4 },
-  { command: 'tableRow', label: '+行', titleKey: 'editor.tableRow', group: 4, richOnly: true },
-  { command: 'tableCol', label: '+列', titleKey: 'editor.tableCol', group: 4, richOnly: true },
-  { command: 'tableDelete', label: '−表', titleKey: 'editor.tableDelete', group: 4, richOnly: true },
+  { command: 'tableRow', label: '', labelKey: 'editor.tableRow.short', titleKey: 'editor.tableRow', group: 4, richOnly: true },
+  { command: 'tableCol', label: '', labelKey: 'editor.tableCol.short', titleKey: 'editor.tableCol', group: 4, richOnly: true },
+  { command: 'tableDelete', label: '', labelKey: 'editor.tableDelete.short', titleKey: 'editor.tableDelete', group: 4, richOnly: true },
 
   { command: 'alignLeft', label: '⇤', titleKey: 'editor.alignLeft', group: 5, richOnly: true },
   { command: 'alignCenter', label: '⇹', titleKey: 'editor.alignCenter', group: 5, richOnly: true },

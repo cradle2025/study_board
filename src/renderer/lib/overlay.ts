@@ -10,6 +10,9 @@
  * 所有浮层都挂在 document.body 上，避免被 `overflow: auto` 的容器裁掉。
  */
 
+import { t } from '../lib/i18n'
+
+
 const MARGIN = 8
 
 let layer: HTMLElement | null = null
@@ -239,7 +242,7 @@ export function showInfo(options: { title: string; message: string; confirmText?
     const confirmBtn = modal.card.querySelector<HTMLButtonElement>('[data-role="confirm"]')
     if (titleEl) titleEl.textContent = options.title
     if (messageEl) messageEl.textContent = options.message
-    if (confirmBtn) confirmBtn.textContent = options.confirmText ?? '知道了'
+    if (confirmBtn) confirmBtn.textContent = options.confirmText ?? t('common.gotIt')
 
     confirmBtn?.addEventListener('click', () => {
       modal.close()
@@ -271,9 +274,9 @@ export function confirmAction(options: ConfirmOptions): Promise<boolean> {
       messageEl.textContent = options.message ?? ''
       if (!options.message) messageEl.remove()
     }
-    if (cancelBtn) cancelBtn.textContent = options.cancelText ?? '取消'
+    if (cancelBtn) cancelBtn.textContent = options.cancelText ?? t('common.cancel')
     if (confirmBtn) {
-      confirmBtn.textContent = options.confirmText ?? '确定'
+      confirmBtn.textContent = options.confirmText ?? t('common.confirm')
       if (options.danger) confirmBtn.classList.add('sb-btn--danger')
       else confirmBtn.classList.add('sb-btn--primary')
     }
@@ -336,7 +339,7 @@ export function promptText(options: PromptOptions): Promise<string | null> {
       </div>
       <p class="sb-hint"></p>
       <div class="sb-modal__actions">
-        <button class="sb-btn" type="button" data-role="cancel">取消</button>
+        <button class="sb-btn" type="button" data-role="cancel">${t('common.cancel')}</button>
         <button class="sb-btn sb-btn--primary" type="button" data-role="confirm"></button>
       </div>
     `
@@ -359,8 +362,8 @@ export function promptText(options: PromptOptions): Promise<string | null> {
       input.value = options.value ?? ''
       if (options.placeholder) input.placeholder = options.placeholder
     }
-    if (cancelBtn) cancelBtn.textContent = '取消'
-    if (confirmBtn) confirmBtn.textContent = options.confirmText ?? '确定'
+    if (cancelBtn) cancelBtn.textContent = t('common.cancel')
+    if (confirmBtn) confirmBtn.textContent = options.confirmText ?? t('common.confirm')
 
     let settled = false
     const finish = (value: string | null): void => {
@@ -407,13 +410,13 @@ export function openLightbox(images: readonly LightboxImage[], startIndex = 0): 
   const overlay = document.createElement('div')
   overlay.className = 'sb-lightbox'
   overlay.innerHTML = `
-    <button class="sb-lightbox__nav sb-lightbox__nav--prev" type="button" aria-label="上一张">‹</button>
+    <button class="sb-lightbox__nav sb-lightbox__nav--prev" type="button" aria-label="${t('lightbox.prev')}">‹</button>
     <figure class="sb-lightbox__stage">
       <img alt="" />
       <figcaption></figcaption>
     </figure>
-    <button class="sb-lightbox__nav sb-lightbox__nav--next" type="button" aria-label="下一张">›</button>
-    <button class="sb-lightbox__close" type="button" aria-label="关闭">✕</button>
+    <button class="sb-lightbox__nav sb-lightbox__nav--next" type="button" aria-label="${t('lightbox.next')}">›</button>
+    <button class="sb-lightbox__close" type="button" aria-label="${t('common.close')}">✕</button>
   `
 
   const img = overlay.querySelector<HTMLImageElement>('img')

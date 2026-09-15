@@ -1,9 +1,10 @@
 import type { IpcResult } from '@shared/types'
+import { t } from '../lib/i18n'
 
 /** 渲染层的 IPC 门面：统一解包 IpcResult，失败时抛带可读信息的错误 */
 export function bridge(): Window['studyBoard'] {
   if (!window.studyBoard) {
-    throw new Error('preload 未注入，应用无法与主进程通信')
+    throw new Error(t('err.preloadMissing'))
   }
   return window.studyBoard
 }

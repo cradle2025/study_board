@@ -7,6 +7,7 @@ import {
 import { MAX_CARD_LEVEL, MAX_CARD_REASON, MAX_CARD_SEMESTER } from '@shared/limits'
 import type { CourseCard } from '@shared/types'
 
+import { t } from '../lib/i18n'
 import { escapeHtml } from '../lib/html'
 import { openModalCard } from '../lib/overlay'
 
@@ -37,80 +38,80 @@ const FORM_HTML = `
   <div class="sb-modal__title" data-role="title"></div>
 
   <div class="sb-field" data-role="picker-field" hidden>
-    <label for="card-picker">从课表带过来</label>
+    <label for="card-picker">${escapeHtml(t('cardForm.fromTimetable'))}</label>
     <select class="sb-select" id="card-picker" data-field="picker"></select>
   </div>
 
   <div class="sb-form-pair">
     <div class="sb-field">
-      <label for="card-name">课程名称</label>
+      <label for="card-name">${escapeHtml(t('timetable.field.courseName'))}</label>
       <input class="sb-input" id="card-name" data-field="courseName" type="text" maxlength="60" />
     </div>
     <div class="sb-field">
-      <label for="card-teacher">授课老师</label>
+      <label for="card-teacher">${escapeHtml(t('timetable.field.teacher'))}</label>
       <input class="sb-input" id="card-teacher" data-field="teacher" type="text" maxlength="60" />
     </div>
   </div>
 
   <div class="sb-form-pair">
     <div class="sb-field">
-      <label for="card-status">状态</label>
+      <label for="card-status">${escapeHtml(t('cardForm.status'))}</label>
       <select class="sb-select" id="card-status" data-field="status">
-        <option value="learning">在学</option>
-        <option value="wish">想学（愿望单）</option>
-        <option value="learned">已学（归档）</option>
+        <option value="learning">${escapeHtml(t('study.tab.learning'))}</option>
+        <option value="wish">${escapeHtml(t('cardForm.status.wish'))}</option>
+        <option value="learned">${escapeHtml(t('cardForm.status.learned'))}</option>
       </select>
     </div>
     <div class="sb-field">
-      <label for="card-semester" data-role="semester-label">学期</label>
+      <label for="card-semester" data-role="semester-label">${escapeHtml(t('cardForm.term'))}</label>
       <input class="sb-input" id="card-semester" data-field="semester" type="text"
-             maxlength="${MAX_CARD_SEMESTER}" list="card-semester-options" placeholder="2025-2026 秋" />
+             maxlength="${MAX_CARD_SEMESTER}" list="card-semester-options" placeholder="${escapeHtml(t('cardForm.termPlaceholder'))}" />
       <datalist id="card-semester-options"></datalist>
     </div>
   </div>
 
   <div class="sb-field">
-    <label for="card-reason" data-role="reason-label">想修的理由</label>
+    <label for="card-reason" data-role="reason-label">${escapeHtml(t('card.reasonTitle'))}</label>
     <textarea class="sb-textarea" id="card-reason" data-field="reason" rows="2"
               maxlength="${MAX_CARD_REASON}"
-              placeholder="为什么想修这门课？写给自己看就行"></textarea>
+              placeholder="${escapeHtml(t('cardForm.reasonPlaceholder'))}"></textarea>
   </div>
 
   <div class="sb-form-pair">
     <div class="sb-field">
-      <label for="card-score">打分</label>
-      <input class="sb-input" id="card-score" data-field="score" type="text" maxlength="60" placeholder="95 / A / 优秀" />
+      <label for="card-score">${escapeHtml(t('cardForm.score'))}</label>
+      <input class="sb-input" id="card-score" data-field="score" type="text" maxlength="60" placeholder="${escapeHtml(t('cardForm.scorePlaceholder'))}" />
     </div>
     <div class="sb-field">
-      <label for="card-difficulty">难度</label>
+      <label for="card-difficulty">${escapeHtml(t('card.difficulty'))}</label>
       <select class="sb-select" id="card-difficulty" data-field="difficulty"></select>
     </div>
     <div class="sb-field">
-      <label for="card-mastery">掌握程度</label>
+      <label for="card-mastery">${escapeHtml(t('cardForm.mastery'))}</label>
       <select class="sb-select" id="card-mastery" data-field="mastery"></select>
     </div>
   </div>
 
   <div class="sb-field">
-    <label for="card-grading">给分标准（背面，可空）</label>
+    <label for="card-grading">${escapeHtml(t('cardForm.grading'))}</label>
     <textarea class="sb-textarea" id="card-grading" data-field="gradingPolicy" rows="3"></textarea>
   </div>
   <div class="sb-field">
-    <label for="card-outline">课程大致结构（背面，可空）</label>
+    <label for="card-outline">${escapeHtml(t('cardForm.outline'))}</label>
     <textarea class="sb-textarea" id="card-outline" data-field="outline" rows="3"></textarea>
   </div>
 
   <p class="sb-hint" data-role="error" hidden></p>
   <div class="sb-modal__actions">
-    <button class="sb-btn" type="button" data-role="cancel">取消</button>
-    <button class="sb-btn sb-btn--primary" type="button" data-role="save">保存</button>
+    <button class="sb-btn" type="button" data-role="cancel">${escapeHtml(t('common.cancel'))}</button>
+    <button class="sb-btn sb-btn--primary" type="button" data-role="save">${escapeHtml(t('common.save'))}</button>
   </div>
 `
 
 function fillLevels(select: HTMLSelectElement | null): void {
   if (!select) return
   select.innerHTML = [
-    '<option value="0">未填</option>',
+    `<option value="0">${escapeHtml(t('card.unset'))}</option>`,
     ...Array.from({ length: MAX_CARD_LEVEL }, (_, i) => `<option value="${i + 1}">${i + 1}</option>`)
   ].join('')
 }
@@ -166,7 +167,7 @@ export function openCardForm(
     }
 
     const isEdit = existing !== null
-    if (title) title.textContent = isEdit ? '修改课程卡片' : '新建课程卡片'
+    if (title) title.textContent = t(isEdit ? 'cardForm.editTitle' : 'cardForm.createTitle')
     if (nameInput && existing) nameInput.value = existing.courseName
     if (teacherInput && existing) teacherInput.value = existing.teacher
     if (scoreInput && existing) scoreInput.value = existing.score
@@ -198,8 +199,8 @@ export function openCardForm(
       autoSemester = next
 
       // 同一句「理由」在两个阶段问的其实是同一件事，标签就换一种说法
-      if (semesterLabel) semesterLabel.textContent = currentStatus === 'wish' ? '计划学期' : '学期'
-      if (reasonLabel) reasonLabel.textContent = currentStatus === 'wish' ? '想修的理由' : '当初为什么修它'
+      if (semesterLabel) semesterLabel.textContent = t(currentStatus === 'wish' ? 'cardForm.plannedTerm' : 'cardForm.term')
+      if (reasonLabel) reasonLabel.textContent = t(currentStatus === 'wish' ? 'card.reasonTitle' : 'cardForm.reasonPast')
     }
     syncStatusFields()
 
@@ -213,7 +214,7 @@ export function openCardForm(
     if (pickerField && picker && canPick) {
       pickerField.hidden = false
       picker.innerHTML = [
-        '<option value="">— 手动填写 —</option>',
+        `<option value="">${escapeHtml(t('cardForm.manual'))}</option>`,
         ...courses.map(
           (course, index) =>
             `<option value="${index}">${escapeHtml(
@@ -248,7 +249,7 @@ export function openCardForm(
     function submit(): void {
       const courseName = (nameInput?.value ?? '').replace(/\s+/g, ' ').trim()
       if (courseName.length === 0) {
-        showError('请填写课程名称')
+        showError(t('cardForm.nameRequired'))
         nameInput?.focus()
         return
       }

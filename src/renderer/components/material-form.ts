@@ -1,6 +1,7 @@
 import { MATERIAL_KIND_LABEL, isImageExtension, isMaterialExtension } from '@shared/materials'
 import type { MaterialInboxCandidate, MaterialItem } from '@shared/types'
 
+import { t } from '../lib/i18n'
 import { escapeHtml } from '../lib/html'
 import { openModalCard } from '../lib/overlay'
 
@@ -31,7 +32,7 @@ function formatBytes(bytes: number): string {
 
 function courseOptionsHtml(cards: readonly MaterialCourseCard[]): string {
   return [
-    '<option value="">未归类（以后再整理）</option>',
+    `<option value="">${escapeHtml(t('materials.unfiledOption'))}</option>`,
     ...cards.map(
       (card) => `<option value="${escapeHtml(card.id)}">${escapeHtml(card.courseName)}</option>`
     )
@@ -69,9 +70,9 @@ export function openMaterialImportDialog(
   return new Promise((resolve) => {
     const modal = openModalCard({ className: 'sb-modal__card--form' })
     modal.card.innerHTML = `
-      <div class="sb-modal__title">导入课程资料</div>
-      <p class="sb-hint">这些文件会**复制**进资料库并按课程命名；${
-        '下载目录里的原件保持不动。'
+      <div class="sb-modal__title">${escapeHtml(t('materialForm.importTitle'))}</div>
+      <p class="sb-hint">${escapeHtml(t('materialForm.importHint'))}${
+        escapeHtml(t('materialForm.importHint2'))
       }</p>
       <ul class="sb-material-pick">
         ${entries
@@ -83,7 +84,7 @@ export function openMaterialImportDialog(
               <li class="sb-material-pick__item${ok ? '' : ' sb-material-pick__item--bad'}">
                 <span class="sb-material-pick__name" title="${escapeHtml(entry.name)}">${escapeHtml(entry.name)}</span>
                 <span class="sb-material-pick__meta">
-                  ${ok ? escapeHtml(MATERIAL_KIND_LABEL[ext as keyof typeof MATERIAL_KIND_LABEL]) : '不支持的类型'}
+                  ${ok ? escapeHtml(MATERIAL_KIND_LABEL[ext as keyof typeof MATERIAL_KIND_LABEL]) : escapeHtml(t('materialForm.unsupported'))}
                   · ${formatBytes(entry.bytes)}
                 </span>
               </li>
@@ -92,20 +93,20 @@ export function openMaterialImportDialog(
           .join('')}
       </ul>
       <div class="sb-field">
-        <label for="material-course">归属课程</label>
+        <label for="material-course">${escapeHtml(t('materialForm.course'))}</label>
         <select class="sb-select" id="material-course" data-field="course"></select>
       </div>
       ${
         entries.length === 1
           ? `<div class="sb-field">
-               <label for="material-title">资料名（选填，默认用原文件名）</label>
+               <label for="material-title">${escapeHtml(t('materialForm.title'))}</label>
                <input class="sb-input" id="material-title" data-field="title" type="text" maxlength="80" />
              </div>`
           : ''
       }
       <div class="sb-modal__actions">
-        <button class="sb-btn" type="button" data-role="cancel">取消</button>
-        <button class="sb-btn sb-btn--primary" type="button" data-role="save">导入</button>
+        <button class="sb-btn" type="button" data-role="cancel">${escapeHtml(t('common.cancel'))}</button>
+        <button class="sb-btn sb-btn--primary" type="button" data-role="save">${escapeHtml(t('materialForm.doImport'))}</button>
       </div>
     `
 
@@ -141,15 +142,15 @@ export function openMaterialRenameDialog(item: MaterialItem): Promise<string | n
   return new Promise((resolve) => {
     const modal = openModalCard({ className: 'sb-modal__card--form' })
     modal.card.innerHTML = `
-      <div class="sb-modal__title">重命名资料</div>
+      <div class="sb-modal__title">${escapeHtml(t('materialForm.renameTitle'))}</div>
       <div class="sb-field">
-        <label for="material-rename">资料名</label>
+        <label for="material-rename">${escapeHtml(t('materialForm.name'))}</label>
         <input class="sb-input" id="material-rename" data-field="title" type="text" maxlength="80" />
-        <p class="sb-hint">文件名会跟着改（保留扩展名与课程前缀）。</p>
+        <p class="sb-hint">${escapeHtml(t('materialForm.renameHint'))}</p>
       </div>
       <div class="sb-modal__actions">
-        <button class="sb-btn" type="button" data-role="cancel">取消</button>
-        <button class="sb-btn sb-btn--primary" type="button" data-role="save">保存</button>
+        <button class="sb-btn" type="button" data-role="cancel">${escapeHtml(t('common.cancel'))}</button>
+        <button class="sb-btn sb-btn--primary" type="button" data-role="save">${escapeHtml(t('common.save'))}</button>
       </div>
     `
     const input = modal.card.querySelector<HTMLInputElement>('[data-field="title"]')
@@ -182,15 +183,15 @@ export function openMaterialCourseDialog(
   return new Promise((resolve) => {
     const modal = openModalCard({ className: 'sb-modal__card--form' })
     modal.card.innerHTML = `
-      <div class="sb-modal__title">改归属课程</div>
-      <p class="sb-hint">「${escapeHtml(item.title)}」归属到哪门课？</p>
+      <div class="sb-modal__title">${escapeHtml(t('materialForm.moveTitle'))}</div>
+      <p class="sb-hint">${escapeHtml(t('materialForm.moveHint', { name: item.title }))}</p>
       <div class="sb-field">
-        <label for="material-course-move">课程</label>
+        <label for="material-course-move">${escapeHtml(t('materialForm.course'))}</label>
         <select class="sb-select" id="material-course-move" data-field="course"></select>
       </div>
       <div class="sb-modal__actions">
-        <button class="sb-btn" type="button" data-role="cancel">取消</button>
-        <button class="sb-btn sb-btn--primary" type="button" data-role="save">保存</button>
+        <button class="sb-btn" type="button" data-role="cancel">${escapeHtml(t('common.cancel'))}</button>
+        <button class="sb-btn sb-btn--primary" type="button" data-role="save">${escapeHtml(t('common.save'))}</button>
       </div>
     `
     const course = modal.card.querySelector<HTMLSelectElement>('[data-field="course"]')
@@ -226,19 +227,19 @@ export function openMaterialPickDialog(
       : items
     const modal = openModalCard({ className: 'sb-modal__card--form' })
     modal.card.innerHTML = `
-      <div class="sb-modal__title">${options.imagesOnly ? '插入图片' : '插入资料引用'}</div>
+      <div class="sb-modal__title">${escapeHtml(t(options.imagesOnly ? 'materialForm.insertImage' : 'materialForm.insertRef'))}</div>
       <p class="sb-hint">${
         options.imagesOnly
-          ? '图片以 Markdown 语法插入，在编辑器和导出的文档里都会直接显示。'
-          : '引用以 Obsidian 语法插入，Obsidian 里能直接预览 PDF 和图片。'
+          ? t('materialForm.insertImageHint')
+          : t('materialForm.insertRefHint')
       }</p>
       <div class="sb-field">
-        <label for="material-pick">选择资料</label>
+        <label for="material-pick">${escapeHtml(t('materialForm.pick'))}</label>
         <select class="sb-select" id="material-pick" data-field="pick"></select>
       </div>
       <div class="sb-modal__actions">
-        <button class="sb-btn" type="button" data-role="cancel">取消</button>
-        <button class="sb-btn sb-btn--primary" type="button" data-role="save">插入</button>
+        <button class="sb-btn" type="button" data-role="cancel">${escapeHtml(t('common.cancel'))}</button>
+        <button class="sb-btn sb-btn--primary" type="button" data-role="save">${escapeHtml(t('materialForm.doInsert'))}</button>
       </div>
     `
     const pick = modal.card.querySelector<HTMLSelectElement>('[data-field="pick"]')
@@ -249,10 +250,10 @@ export function openMaterialPickDialog(
         `<option value="${escapeHtml(item.id)}">${escapeHtml(item.fileName)}</option>`
       pick.innerHTML = [
         ...(preferred.length > 0
-          ? ['<optgroup label="本课资料">', ...preferred.map(option), '</optgroup>']
+          ? [`<optgroup label="${escapeHtml(t('materialForm.thisCourse'))}">`, ...preferred.map(option), '</optgroup>']
           : []),
         ...(rest.length > 0
-          ? ['<optgroup label="全部资料">', ...rest.map(option), '</optgroup>']
+          ? [`<optgroup label="${escapeHtml(t('materialForm.allFiles'))}">`, ...rest.map(option), '</optgroup>']
           : [])
       ].join('')
       if (pick.options.length === 0) {

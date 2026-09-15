@@ -1,4 +1,5 @@
 import { closeBrackets, closeBracketsKeymap } from '@codemirror/autocomplete'
+import { t } from '../i18n'
 import {
   defaultKeymap,
   history,
@@ -442,7 +443,7 @@ export function createMarkdownEditor(options: MarkdownEditorOptions): EditorHand
         return toggleWrap(view, '[', '](https://)')
       case 'table':
         // 光标落在第一个表头单元格里，用户直接打字就能填
-        return insertBlock(view, '| 列 1 | 列 2 |\n| --- | --- |\n|  |  |\n', 2)
+        return insertBlock(view, t('editor.tableTemplate'), 2)
       default:
         // 下划线 / 高亮 / 对齐这些 Markdown 表达不了的，工具栏已经禁用了；
         // 万一被调到也直接拒绝，而不是假装成功
