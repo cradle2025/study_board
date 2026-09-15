@@ -602,6 +602,118 @@ export interface NotionTestResult {
   name: string
 }
 
+/* ------------------------------------------------------------------ 日历 / 日程 */
+
+/**
+ * 日程的重复规则。
+ *
+ * 刻意**不做课表那套「单双周」**：单双周是国内教务系统表达「这门课
+ * 隔周上」的方式，属于课表；日程要的是「每周三开会」「每月 1 号交作业」
+ * 这类日常重复，两者不是一回事。给日程也摆上「单周 / 双周」只会让
+ * 用户在写「每周」的时候多犹豫一次。
+ */
+export type CalendarRepeat =
+  /** 只发生一次 */
+  | 'once'
+  /** 每周同一天 */
+  | 'weekly'
+  /** 每月同一号（该月没有这一号时跳过，不顺延） */
+  | 'monthly'
+
+export interface CalendarEvent {
+  id: string
+  title: string
+  /** 首次发生的日期，`YYYY-MM-DD`（本地时区） */
+  date: string
+  /** 开始时间 `HH:mm`；空串 = 全天 */
+  start: string
+  /** 结束时间 `HH:mm`；空串 = 未填 */
+  end: string
+  location: string
+  note: string
+  repeat: CalendarRepeat
+  /** 提前多少分钟提醒；0 = 到点提醒；-1 = 不提醒 */
+  remindBefore: number
+  createdAt: string
+  updatedAt: string
+}
+
+export interface CalendarEventInput {
+  /** 带 id 则替换那一条；不带则新增 */
+  id?: string
+  title: string
+  date: string
+  start?: string
+  end?: string
+  location?: string
+  note?: string
+  repeat?: CalendarRepeat
+  remindBefore?: number
+}
+
+/**
+ * 日历存储。
+ *
+ * **不塞进 `timetable.json`，也不塞进 `config.json`**：
+ *  - 日程是独立模块（用户自己加的作业 / 考试 / 社团活动），
+ *    与课表的生命周期无关；
+ *  - 单独一个文件 = 纯新增，不动任何既有模块的读写格式。
+ */
+export interface CalendarData {
+  /**
+   * 第 1 周的周一（`YYYY-MM-DD`）。
+   *
+   * 课表只记「第几周有哪些课」，没有「第 1 周是哪一天」这个信息，
+   * 所以日历要显示课表事件就必须先知道开学日。空串 = 未设置，
+   * 此时**只显示用户自己的日程**，课表事件一条都不显示（而不是
+   * 猜一个日期猜错了把课铺到错误的星期上）。
+   */
+  semesterStart: string
+  events: CalendarEvent[]
+}
+
+export interface CalendarSaveInput {
+  /** `YYYY-MM-DD`；传空串表示清除 */
+  semesterStart?: string
+}
+
+/** 一条到点的提醒 */
+export interface CalendarReminder {
+  eventId: string
+  title: string
+  /** 事件发生的那一天 `YYYY-MM-DD` */
+  date: string
+  /** 提醒时刻（ISO 8601，含时区） */
+  at: string
+  location: string
+  /** 事件本身的开始时间 `HH:mm`；空串 = 全天 */
+  start: string
+}
+
+/**
+ * 系统通知的能力与回执。
+ *
+ * `lastOutcome` 里那个 `unverified` 是**实测逼出来的**：Windows 上
+ * 没给应用注册 AppUserModelID 时，Electron 的 `show()` 既不报错、
+ * 也不发 `failed`，通知就那么没了。所以「没收到回执」必须和
+ * 「系统说失败」分开报，否则界面会理直气壮地说「已提醒」而用户
+ * 什么都没看到。实测方法与结论见 `DECISIONS.md` D-012。
+ */
+export interface CalendarNotificationInfo {
+  /** 系统是否报告支持通知（注意：这只反映平台能力，不反映用户的勿扰设置） */
+  supported: boolean
+  /** 本进程内收到 `show` 回执的条数 */
+  delivered: number
+  /** 本进程内被系统拒掉的条数 */
+  failed: number
+  /** 最近一次提醒的时刻（含没发成功的），界面用它显示「提醒确实触发过」 */
+  lastAt: string | null
+  lastTitle: string
+  lastOutcome: 'none' | 'delivered' | 'failed' | 'unsupported' | 'unverified'
+  /** 失败原因等补充说明，正常时为空串 */
+  lastDetail: string
+}
+
 /* ------------------------------------------------------------------ 事件 */
 
 /**
@@ -626,4 +738,5 @@ export interface LibraryChangedEvent {
 
 export interface IpcEvents {
   LIBRARY_CHANGED: LibraryChangedEvent
+  CALENDAR_REMINDER: CalendarReminder
 }

@@ -3,6 +3,11 @@ import type {
   AiCompleteResult,
   AppInfo,
   AppSettings,
+  CalendarData,
+  CalendarEventInput,
+  CalendarNotificationInfo,
+  CalendarReminder,
+  CalendarSaveInput,
   CourseCard,
   CourseCardInput,
   CourseStatusInput,
@@ -89,6 +94,18 @@ export interface StudyBoardApi {
     setCells(input: TimetableSetCellsInput): Promise<IpcResult<TimetableData>>
     addImages(paths: string[]): Promise<IpcResult<TimetableImageImportResult>>
     removeImage(id: string): Promise<IpcResult<TimetableData>>
+  }
+
+  calendar: {
+    get(): Promise<IpcResult<CalendarData>>
+    /** 学期开学日：日历靠它把课表事件铺到具体日期上 */
+    save(input: CalendarSaveInput): Promise<IpcResult<CalendarData>>
+    upsertEvent(event: CalendarEventInput): Promise<IpcResult<CalendarData>>
+    removeEvent(id: string): Promise<IpcResult<CalendarData>>
+    /** 系统通知到底能不能用、最近一次发出去的结果 */
+    notifyInfo(): Promise<IpcResult<CalendarNotificationInfo>>
+    /** 立刻发一条测试通知（用户在自己机器上确认通知通不通的唯一办法） */
+    testNotification(): Promise<IpcResult<CalendarNotificationInfo>>
   }
 
   portal: {
@@ -181,6 +198,8 @@ export interface StudyBoardApi {
     onSettingsChanged(listener: (payload: AppSettings) => void): () => void
     /** 收件箱出现新的候选资料（浏览器扩展的下载落点） */
     onMaterialsInbox(listener: (payload: { files: MaterialInboxCandidate[] }) => void): () => void
+    /** 日程提醒到点。系统通知之外的兜底，见 CHANNELS 里的说明 */
+    onCalendarReminder(listener: (payload: CalendarReminder) => void): () => void
   }
 }
 

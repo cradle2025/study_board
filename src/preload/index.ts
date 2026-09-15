@@ -7,6 +7,11 @@ import type {
   AppSettings,
   AiCompleteRequest,
   AiCompleteResult,
+  CalendarData,
+  CalendarEventInput,
+  CalendarNotificationInfo,
+  CalendarReminder,
+  CalendarSaveInput,
   CourseCard,
   CourseCardInput,
   CourseStatusInput,
@@ -115,6 +120,16 @@ const api = {
     removeImage: (id: string) => invoke<TimetableData>(CHANNELS.TIMETABLE_REMOVE_IMAGE, id)
   },
 
+  calendar: {
+    get: () => invoke<CalendarData>(CHANNELS.CALENDAR_GET),
+    save: (input: CalendarSaveInput) => invoke<CalendarData>(CHANNELS.CALENDAR_SAVE, input),
+    upsertEvent: (event: CalendarEventInput) =>
+      invoke<CalendarData>(CHANNELS.CALENDAR_UPSERT_EVENT, event),
+    removeEvent: (id: string) => invoke<CalendarData>(CHANNELS.CALENDAR_REMOVE_EVENT, id),
+    notifyInfo: () => invoke<CalendarNotificationInfo>(CHANNELS.CALENDAR_NOTIFY_INFO),
+    testNotification: () => invoke<CalendarNotificationInfo>(CHANNELS.CALENDAR_TEST_NOTIFICATION)
+  },
+
   portal: {
     list: () => invoke<PortalSite[]>(CHANNELS.PORTAL_LIST),
     upsert: (site: PortalSiteInput) => invoke<PortalSite[]>(CHANNELS.PORTAL_UPSERT, site),
@@ -200,7 +215,9 @@ const api = {
     onSettingsChanged: (listener: (payload: AppSettings) => void) =>
       subscribe<AppSettings>(CHANNELS.EVENT_SETTINGS_CHANGED, listener),
     onMaterialsInbox: (listener: (payload: { files: MaterialInboxCandidate[] }) => void) =>
-      subscribe<{ files: MaterialInboxCandidate[] }>(CHANNELS.EVENT_MATERIALS_INBOX, listener)
+      subscribe<{ files: MaterialInboxCandidate[] }>(CHANNELS.EVENT_MATERIALS_INBOX, listener),
+    onCalendarReminder: (listener: (payload: CalendarReminder) => void) =>
+      subscribe<CalendarReminder>(CHANNELS.EVENT_CALENDAR_REMINDER, listener)
   },
 
   /**

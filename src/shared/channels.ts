@@ -48,6 +48,17 @@ export const CHANNELS = {
   TIMETABLE_ADD_IMAGES: 'timetable:add-images',
   TIMETABLE_REMOVE_IMAGE: 'timetable:remove-image',
 
+  /* 日历 / 日程 */
+  CALENDAR_GET: 'calendar:get',
+  /** 学期开学日（日历靠它把课表事件铺到具体日期上） */
+  CALENDAR_SAVE: 'calendar:save',
+  CALENDAR_UPSERT_EVENT: 'calendar:upsert-event',
+  CALENDAR_REMOVE_EVENT: 'calendar:remove-event',
+  /** 系统通知的能力与最近一次回执，界面用来如实告诉用户能不能弹 */
+  CALENDAR_NOTIFY_INFO: 'calendar:notify-info',
+  /** 立刻发一条测试通知，让用户在自己的机器上确认通知到底通不通 */
+  CALENDAR_TEST_NOTIFICATION: 'calendar:test-notification',
+
   /* 网站门户 */
   PORTAL_LIST: 'portal:list',
   PORTAL_UPSERT: 'portal:upsert',
@@ -112,7 +123,16 @@ export const CHANNELS = {
   EVENT_LIBRARY_CHANGED: 'event:library-changed',
   EVENT_SETTINGS_CHANGED: 'event:settings-changed',
   /** 收件箱里出现了新的候选资料，渲染层弹归属对话框 */
-  EVENT_MATERIALS_INBOX: 'event:materials-inbox'
+  EVENT_MATERIALS_INBOX: 'event:materials-inbox',
+  /**
+   * 一条日程提醒到点了。
+   *
+   * 系统通知之外**额外**推一份给界面：实测发现 Windows 上应用没注册
+   * AppUserModelID 时通知会被静默丢掉（见 DECISIONS.md D-012），
+   * 那时候窗口里这一条就是用户唯一的提醒。成本只有几行，
+   * 而「提醒丢了」的代价是用户错过作业截止。
+   */
+  EVENT_CALENDAR_REMINDER: 'event:calendar-reminder'
 } as const
 
 export type ChannelName = (typeof CHANNELS)[keyof typeof CHANNELS]
@@ -121,5 +141,6 @@ export type ChannelName = (typeof CHANNELS)[keyof typeof CHANNELS]
 export const EVENT_CHANNELS: readonly ChannelName[] = [
   CHANNELS.EVENT_LIBRARY_CHANGED,
   CHANNELS.EVENT_SETTINGS_CHANGED,
-  CHANNELS.EVENT_MATERIALS_INBOX
+  CHANNELS.EVENT_MATERIALS_INBOX,
+  CHANNELS.EVENT_CALENDAR_REMINDER
 ] as const

@@ -127,6 +127,16 @@ const LEGACY_DATA_ENTRIES = new Set([
   'cards.json',
   'portal.json',
   'timetable.json',
+  /**
+   * 日历 / 日程（0.5.0 新增）。
+   *
+   * **新增一个存储文件时，必须同时登记到这里。** 漏了的话，一个
+   * 「只记了日程、没别的文件」的数据目录会被判成全新安装 ——
+   * 于是闸口不备份就写印记，用户的老数据直接失去回头路。
+   * 这个坑项目里踩过一次（HANDOFF 坑位区），所以自检里专门有一条
+   * 断言盯着它：`smoke:calendar` 会造一份只有 calendar.json 的目录。
+   */
+  'calendar.json',
   'notes_library',
   'timetable_images',
   'icons_cache'

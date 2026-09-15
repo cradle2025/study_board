@@ -1,5 +1,6 @@
 import { MAX_TIMETABLE_IMAGES, MAX_WEEK_COUNT } from '@shared/limits'
 import type { CourseImage, TimetableCell, TimetableData, WeekRule } from '@shared/types'
+import { visibleCourses } from '@shared/weekRule'
 
 import { getLang, t } from '../lib/i18n'
 import { assetUrl } from '../lib/asset'
@@ -79,31 +80,13 @@ function formatBytes(bytes: number): string {
 /* ------------------------------------------------------------ 周次规则 */
 
 /**
- * 这门课在第 week 周上不上。
+ * 周次判定已经搬到 `@shared/weekRule`：日历也要用同一套判据
+ * （「这一周有哪些课」），两边共用一个函数才不会各自演化出
+ * 两种「什么算单周」。
  *
- * `week <= 0` 表示「不按周次过滤」（看全部），此时一律算上——
- * 「全部」是一个视图状态，不是一种周次规则，所以在这里短路，
- * 而不是往 WeekRule 里再加一个 kind。
+ * 这里重新导出，是为了不改动既有的引用方（课表面板是它原来的家）。
  */
-export function weeksInclude(rule: WeekRule, week: number): boolean {
-  if (week <= 0) return true
-  switch (rule.kind) {
-    case 'all':
-      return true
-    case 'odd':
-      return week % 2 === 1
-    case 'even':
-      return week % 2 === 0
-    case 'list':
-      return rule.weeks.includes(week)
-  }
-}
-
-/** 这一格里在当前查看周次下应该显示的课 */
-export function visibleCourses(list: readonly TimetableCell[] | undefined, week: number): TimetableCell[] {
-  if (!list) return []
-  return list.filter((cell) => weeksInclude(cell.weeks, week))
-}
+export { visibleCourses, weeksInclude } from '@shared/weekRule'
 
 /** 角标上的短文案。规则是「每周」时不显示角标，保持格子干净 */
 function weekBadge(rule: WeekRule): string {

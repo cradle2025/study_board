@@ -68,6 +68,7 @@ export const ZH: Record<string, string> = {
   'nav.group.system': '系统',
   'nav.home': '概览',
   'nav.timetable': '课程表',
+  'nav.calendar': '日历日程',
   'nav.portal': '网站门户',
   'nav.study': '课程与学习',
   'nav.archived': '已学库',
@@ -669,5 +670,83 @@ export const ZH: Record<string, string> = {
   'settings.apiKeySaved': '密钥已保存到系统钥匙串',
   'settings.apiKeyCleared': '密钥已清除',
   'settings.about.packages':
-    '安装包：Windows 只有 64 位（x64）版本；macOS 提供 Apple 芯片（arm64）与 Intel（x64）两个版本。'
+    '安装包：Windows 只有 64 位（x64）版本；macOS 提供 Apple 芯片（arm64）与 Intel（x64）两个版本。',
+
+  /* ------------------------------------------------------------ 日历 / 日程 */
+  'calendar.desc':
+    '把课表按周次铺到日历上，也可以自己加日程（作业截止、考试、社团活动）。到点会弹系统通知提醒。',
+  'calendar.prevMonth': '上个月',
+  'calendar.nextMonth': '下个月',
+  'calendar.today': '今天',
+  'calendar.jump': '跳到某天',
+  'calendar.jumpGo': '跳转',
+  'calendar.monthLabel': '{year} 年 {month} 月',
+  'calendar.monthMeta': '本月 {count} 项',
+  /* 一周七天各一条，而不是「周{0}」这种模板：中文是「周一…周日」，
+     英文是「Mon…Sun」，两边都不是「前缀 + 数字」能拼出来的 */
+  'calendar.weekday.1': '周一',
+  'calendar.weekday.2': '周二',
+  'calendar.weekday.3': '周三',
+  'calendar.weekday.4': '周四',
+  'calendar.weekday.5': '周五',
+  'calendar.weekday.6': '周六',
+  'calendar.weekday.7': '周日',
+  'calendar.day': '{date} 的安排',
+  'calendar.dayEmpty': '这一天还没有安排。下面可以新建一条日程。',
+  'calendar.itemCount': '{count} 项',
+  'calendar.moreItems': '还有 {count} 项',
+  'calendar.allDay': '全天',
+  'calendar.fromTimetable': '来自课表',
+
+  'calendar.semesterStart': '开学第一天（第 1 周的周一）',
+  'calendar.semesterStartHint':
+    '课表只记「第几周有哪些课」，日历要靠这个日期才知道第 1 周是哪一天。不填的话日历只显示你自己加的日程。',
+  'calendar.saveSemester': '保存开学日',
+  'calendar.semesterUnset': '未设置开学日：课表事件不会出现在日历上。',
+  'calendar.semesterSet': '开学日：{date}（第 1 周从这里开始）',
+  'calendar.semesterSaved': '开学日已保存',
+
+  'calendar.newEvent': '新建日程',
+  'calendar.editEvent': '编辑日程',
+  'calendar.field.title': '标题',
+  'calendar.field.date': '日期',
+  'calendar.field.start': '开始时间（留空 = 全天）',
+  'calendar.field.end': '结束时间',
+  'calendar.field.location': '地点',
+  'calendar.field.note': '备注',
+  'calendar.field.repeat': '重复',
+  'calendar.field.remind': '提醒',
+
+  'calendar.repeat.once': '仅一次',
+  'calendar.repeat.weekly': '每周',
+  'calendar.repeat.monthly': '每月',
+
+  'calendar.remind.off': '不提醒',
+  'calendar.remind.atTime': '到点提醒',
+  'calendar.remind.minutes': '提前 {n} 分钟',
+  'calendar.remind.hour': '提前 1 小时',
+  'calendar.remind.day': '提前 1 天',
+
+  'calendar.needTitle': '请填一个日程标题',
+  'calendar.needDate': '请选一个日期',
+  'calendar.saved': '日程已保存',
+  'calendar.removed': '日程已删除',
+  'calendar.saveFailed': '保存失败：{reason}',
+  'calendar.loadFailed': '日历加载失败：{reason}',
+
+  'calendar.reminder': '系统通知',
+  'calendar.notifyHint':
+    '提醒到点时会弹一条系统通知；窗口开着的时候，界面里也会同时显示一条，免得系统把通知拦掉之后你什么都不知道。',
+  'calendar.notify.badgeOn': '可用',
+  'calendar.notify.badgeOff': '不可用',
+  'calendar.notify.supported': '系统报告支持通知。',
+  'calendar.notify.unsupported': '这个系统不支持通知，只会用应用内提醒。',
+  'calendar.notify.delivered': '上一条已交给系统显示。',
+  'calendar.notify.failed': '上一条被系统拒绝了：{reason}',
+  'calendar.notify.unverified':
+    '上一条交出去了，但系统没有回执——通知很可能没显示出来。开发态运行或未安装的应用会出现这种情况；装好之后再用下面的按钮试一次。',
+  'calendar.notify.notSupported': '上一条没能发出去：系统不支持通知。',
+  'calendar.notify.lastAt': '最近一次：{title}（已成功 {count} 条）',
+  'calendar.testNotification': '测试提醒',
+  'calendar.reminderToast': '日程提醒：{title}'
 }

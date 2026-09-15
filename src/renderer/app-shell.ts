@@ -7,6 +7,7 @@ import { mark } from './lib/perf'
 import { describeArch, describeOs } from './lib/platform'
 import { applyTheme, watchSystemTheme } from './lib/theme'
 import { createArchivedView } from './views/archived-view'
+import { createCalendarView } from './views/calendar-view'
 import { createHomeView } from './views/home-view'
 import { createMaterialsView } from './views/materials-view'
 import { createNotesView } from './views/notes-view'
@@ -18,6 +19,7 @@ import { createTimetableEditorView } from './views/timetable-editor-view'
 export type RouteId =
   | 'home'
   | 'timetable'
+  | 'calendar'
   | 'portal'
   | 'study'
   | 'archived'
@@ -75,6 +77,16 @@ const ROUTES: readonly RouteDef[] = [
     groupKey: 'nav.group.module1',
     icon: '▦',
     factory: createTimetableEditorView
+  },
+  {
+    // 日历是**独立一页**，不并进课表页：两者回答的是不同的问题
+    // （课表 = 这学期每周怎么上；日历 = 某一天有什么），
+    // 塞进同一页只会让两边都变窄
+    id: 'calendar',
+    labelKey: 'nav.calendar',
+    groupKey: 'nav.group.module1',
+    icon: '▥',
+    factory: createCalendarView
   },
   {
     id: 'portal',

@@ -74,6 +74,7 @@ export const EN: Record<string, string> = {
   'nav.group.system': 'System',
   'nav.home': 'Overview',
   'nav.timetable': 'Timetable',
+  'nav.calendar': 'Calendar',
   'nav.portal': 'Web portal',
   'nav.study': 'Courses & study',
   'nav.archived': 'Archive',
@@ -682,5 +683,81 @@ export const EN: Record<string, string> = {
   'settings.apiKeySaved': 'Key saved to the system keychain',
   'settings.apiKeyCleared': 'Key cleared',
   'settings.about.packages':
-    'Packages: Windows ships a 64-bit (x64) build only; macOS ships both Apple silicon (arm64) and Intel (x64) builds.'
+    'Packages: Windows ships a 64-bit (x64) build only; macOS ships both Apple silicon (arm64) and Intel (x64) builds.',
+
+  /* ------------------------------------------------------------ Calendar */
+  'calendar.desc':
+    'Lays your timetable onto a calendar by week rules, and lets you add your own entries (deadlines, exams, club events). Reminders pop up as system notifications.',
+  'calendar.prevMonth': 'Previous month',
+  'calendar.nextMonth': 'Next month',
+  'calendar.today': 'Today',
+  'calendar.jump': 'Jump to a date',
+  'calendar.jumpGo': 'Go',
+  'calendar.monthLabel': '{month}/{year}',
+  'calendar.monthMeta': '{count} in this month',
+  'calendar.weekday.1': 'Mon',
+  'calendar.weekday.2': 'Tue',
+  'calendar.weekday.3': 'Wed',
+  'calendar.weekday.4': 'Thu',
+  'calendar.weekday.5': 'Fri',
+  'calendar.weekday.6': 'Sat',
+  'calendar.weekday.7': 'Sun',
+  'calendar.day': 'Schedule for {date}',
+  'calendar.dayEmpty': 'Nothing scheduled for this day. You can add one below.',
+  'calendar.itemCount': '{count} items',
+  'calendar.moreItems': '{count} more',
+  'calendar.allDay': 'All day',
+  'calendar.fromTimetable': 'From timetable',
+
+  'calendar.semesterStart': 'First day of term (Monday of week 1)',
+  'calendar.semesterStartHint':
+    'The timetable only records which weeks a course runs in; the calendar needs this date to know when week 1 begins. Leave it empty and only your own entries are shown.',
+  'calendar.saveSemester': 'Save term start',
+  'calendar.semesterUnset': 'No term start set: timetable events will not appear on the calendar.',
+  'calendar.semesterSet': 'Term starts {date} (week 1 begins here)',
+  'calendar.semesterSaved': 'Term start saved',
+
+  'calendar.newEvent': 'New entry',
+  'calendar.editEvent': 'Edit entry',
+  'calendar.field.title': 'Title',
+  'calendar.field.date': 'Date',
+  'calendar.field.start': 'Start time (empty = all day)',
+  'calendar.field.end': 'End time',
+  'calendar.field.location': 'Location',
+  'calendar.field.note': 'Note',
+  'calendar.field.repeat': 'Repeat',
+  'calendar.field.remind': 'Remind',
+
+  'calendar.repeat.once': 'Once',
+  'calendar.repeat.weekly': 'Weekly',
+  'calendar.repeat.monthly': 'Monthly',
+
+  'calendar.remind.off': 'No reminder',
+  'calendar.remind.atTime': 'On time',
+  'calendar.remind.minutes': '{n} min before',
+  'calendar.remind.hour': '1 hour before',
+  'calendar.remind.day': '1 day before',
+
+  'calendar.needTitle': 'Give the entry a title',
+  'calendar.needDate': 'Pick a date',
+  'calendar.saved': 'Entry saved',
+  'calendar.removed': 'Entry deleted',
+  'calendar.saveFailed': 'Could not save: {reason}',
+  'calendar.loadFailed': 'Could not load the calendar: {reason}',
+
+  'calendar.reminder': 'System notifications',
+  'calendar.notifyHint':
+    'When a reminder is due, a system notification pops up. While the window is open you also get an in-app notice, so you are not left in the dark if the system drops the notification.',
+  'calendar.notify.badgeOn': 'Available',
+  'calendar.notify.badgeOff': 'Unavailable',
+  'calendar.notify.supported': 'The system reports notification support.',
+  'calendar.notify.unsupported': 'This system does not support notifications; in-app notices only.',
+  'calendar.notify.delivered': 'The last one was handed to the system for display.',
+  'calendar.notify.failed': 'The system rejected the last one: {reason}',
+  'calendar.notify.unverified':
+    'The last one was handed over but the system gave no receipt, so it most likely never appeared. This happens when running unpackaged; try the button below again after installing.',
+  'calendar.notify.notSupported': 'The last one could not be sent: notifications are unsupported.',
+  'calendar.notify.lastAt': 'Most recent: {title} ({count} delivered)',
+  'calendar.testNotification': 'Test notification',
+  'calendar.reminderToast': 'Reminder: {title}'
 }

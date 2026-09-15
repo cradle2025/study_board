@@ -1,4 +1,5 @@
 import { registerAiHandlers } from './ai'
+import { registerCalendarHandlers } from './calendar'
 import { registerCardsHandlers } from './cards'
 import { registerExportHandlers } from './export'
 import { assertAllChannelsRegistered } from './index'
@@ -21,6 +22,7 @@ export function registerIpcHandlers(): void {
   registerSettingsHandlers()
   registerSecretHandlers()
   registerTimetableHandlers()
+  registerCalendarHandlers()
   registerPortalHandlers()
   registerNotesHandlers()
   registerCardsHandlers()

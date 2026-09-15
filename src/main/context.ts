@@ -1,4 +1,5 @@
 import {
+  calendarFile,
   cardsFile,
   detectPortableMode,
   ensureDir,
@@ -9,11 +10,13 @@ import {
   timetableImagesDir
 } from './paths'
 import type { AssetBuckets } from './services/assetProtocol'
+import { CalendarStore } from './services/calendar'
 import { CardsStore } from './services/cards'
 import { DATA_SCHEMA, prepareDataDir, readStamp, type PrepareResult } from './services/dataVersion'
 import { MaterialsStore } from './services/materials'
 import { NotesStore } from './services/notes'
 import { PortalStore } from './services/portal'
+import { ReminderService } from './services/reminders'
 import { SecretsStore } from './services/secrets'
 import { resolveNotesDir, SettingsStore } from './services/settings'
 import { TimetableStore } from './services/timetable'
@@ -34,6 +37,13 @@ export interface AppContext {
   materials: MaterialsStore
   /** 密钥存储。只有主进程能拿到，渲染层只能读到布尔值 */
   secrets: SecretsStore
+  /** 日历 / 日程。纯新增的独立存储，不动任何既有文件的格式 */
+  calendar: CalendarStore
+  /**
+   * 日程提醒。跟着日历存储走，所以放在这里而不是模块级单例——
+   * 换数据目录（便携模式）之后提醒要读的是新目录里的日程。
+   */
+  reminders: ReminderService
 }
 
 let current: AppContext | null = null
@@ -94,6 +104,7 @@ export function initContext(): AppContext {
   const notes = new NotesStore(resolveNotesDir(snapshot))
   const materials = new MaterialsStore(resolveNotesDir(snapshot))
   const secrets = new SecretsStore(snapshot.portableMode)
+  const calendar = new CalendarStore(calendarFile(snapshot.portableMode))
 
   // 密钥的存在状态回填进内存态（不落盘）：设置页与笔记页都靠它决定
   // 「AI 能不能用」。hasApiKey 永远只是一个布尔，密钥本体不出主进程
@@ -108,7 +119,9 @@ export function initContext(): AppContext {
     cards,
     notes,
     materials,
-    secrets
+    secrets,
+    calendar,
+    reminders: new ReminderService(calendar)
   }
   return current
 }

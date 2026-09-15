@@ -9,6 +9,7 @@ import { mark } from './metrics'
 import { installMainProcessGuards, logLine } from './resilience'
 import { installAssetProtocol } from './services/assetProtocol'
 import { reportDataWarning } from './services/dataVersion'
+import { configureAppIdentity } from './services/reminders'
 import {
   hardenBeforeReady,
   installSessionHardening,
@@ -28,6 +29,16 @@ mark('main:index-start')
 // 必须先于 app ready：注册自有协议、开启渲染进程沙箱
 hardenBeforeReady()
 mark('main:hardened')
+
+/**
+ * 把应用身份告诉 Windows。
+ *
+ * 必须**在任何通知之前**调，而且要与 electron-builder.yml 的 appId 一致 ——
+ * Windows 只认「已注册过 AppUserModelID」的应用发的 toast，不设的话
+ * `show()` 既不报错也不发 `failed`，通知直接消失（实测见 DECISIONS.md D-012）。
+ * 放在这里而不是窗口起来之后：提醒可能在任何时刻到点。
+ */
+configureAppIdentity()
 
 // 自动化运行（冒烟 / 基准）跑在临时数据目录里，绝不碰用户真实数据
 prepareIsolatedDataDir()
@@ -77,6 +88,15 @@ if (!app.requestSingleInstanceLock()) {
       const win = createMainWindow()
       mark('window:created')
       logLine('start', `v${app.getVersion()} ${process.platform}/${process.arch} electron=${process.versions['electron']}`)
+
+      /**
+       * 日程提醒调度。
+       *
+       * 放在窗口之后启动：它是后台的定时检查，跟首屏显示没有任何关系，
+       * 排在前面只会让启动路径多一件事。晚启动的代价是「启动后 30 秒内
+       * 到点的提醒会在下一次检查时才发」，可以接受。
+       */
+      context().reminders.start()
 
       /**
        * 数据版本不匹配的警告，等窗口起来之后再说。

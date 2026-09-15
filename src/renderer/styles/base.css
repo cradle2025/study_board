@@ -2890,3 +2890,141 @@ h4 {
   padding: 10px 14px;
   border-top: 1px solid var(--border-default);
 }
+
+/* ---------------------------------------------------------------- 日历 / 日程 */
+
+.sb-cal {
+  margin-top: 12px;
+}
+
+.sb-cal__grid {
+  display: grid;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+  gap: 4px;
+}
+
+.sb-cal__head {
+  padding: 4px 6px;
+  font-size: 12px;
+  color: var(--text-tertiary);
+  text-align: center;
+}
+
+/* 格子是 button 而不是 div：键盘用户要能 Tab 过去、回车选中，
+   日历本来就是一个「选日期」的控件，用 div 得自己补一整套无障碍语义 */
+.sb-cal__day {
+  display: block;
+  width: 100%;
+  min-height: 78px;
+  padding: 4px 6px;
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-sm);
+  background: var(--bg-surface);
+  color: var(--text-primary);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  overflow: hidden;
+}
+
+.sb-cal__day:hover {
+  background: var(--bg-hover);
+}
+
+.sb-cal__day--out {
+  opacity: 0.42;
+}
+
+.sb-cal__day--today {
+  border-color: var(--color-accent);
+}
+
+.sb-cal__day--selected {
+  background: var(--color-accent-soft);
+  border-color: var(--color-accent);
+}
+
+.sb-cal__num {
+  display: block;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.sb-cal__week {
+  display: block;
+  font-size: 10px;
+  color: var(--text-tertiary);
+}
+
+.sb-cal__list {
+  display: block;
+  margin-top: 2px;
+}
+
+.sb-cal__item {
+  display: block;
+  padding: 1px 4px;
+  margin-bottom: 2px;
+  border-radius: 4px;
+  font-size: 11px;
+  line-height: 1.5;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.sb-cal__item--course {
+  background: var(--color-accent-soft);
+  color: var(--color-accent-text);
+}
+
+.sb-cal__item--event {
+  background: var(--bg-subtle);
+  color: var(--text-primary);
+  border: 1px solid var(--border-default);
+}
+
+.sb-cal__more {
+  display: block;
+  font-size: 10px;
+  color: var(--text-tertiary);
+}
+
+.sb-cal__items {
+  margin-bottom: 12px;
+}
+
+.sb-cal__row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px;
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-sm);
+  background: var(--bg-surface);
+  margin-bottom: 6px;
+}
+
+.sb-cal__row-time {
+  flex: 0 0 96px;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.sb-cal__row-main {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.sb-cal__row-title {
+  display: block;
+  font-size: 13px;
+  color: var(--text-primary);
+  word-break: break-word;
+}
+
+.sb-cal__row-meta {
+  display: block;
+  font-size: 11px;
+  color: var(--text-tertiary);
+}

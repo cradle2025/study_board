@@ -164,6 +164,11 @@ export function cardsFile(portable: boolean): string {
   return join(dataRoot(portable), 'cards.json')
 }
 
+/** 日历 / 日程（含学期开学日与用户自己加的日程） */
+export function calendarFile(portable: boolean): string {
+  return join(dataRoot(portable), 'calendar.json')
+}
+
 export function tempDir(portable: boolean): string {
   return join(dataRoot(portable), 'temp')
 }

@@ -31,6 +31,36 @@ export const MAX_TIMETABLE_IMAGES = 3
 export const DEFAULT_WEEK_COUNT = 16
 export const MAX_WEEK_COUNT = 30
 
+/* ------------------------------------------------------------------ 日历 / 日程 */
+
+/**
+ * 日程条数上限。
+ *
+ * 一学期几十条（作业截止、考试、社团活动）是常态；给到 500 是为了
+ * 「四年都记在一个文件里」也能用。再往上就该考虑分文件了，而这个
+ * 存储是整份 JSON 重写的，条数太多会拖慢每次保存。
+ */
+export const MAX_CALENDAR_EVENTS = 500
+
+/** 日程标题长度上限 */
+export const MAX_EVENT_TITLE = 80
+/** 地点长度上限 */
+export const MAX_EVENT_LOCATION = 60
+/** 备注长度上限 */
+export const MAX_EVENT_NOTE = 500
+
+/**
+ * 提前提醒的分钟数上限：一天。
+ *
+ * 上限直接决定调度器每次要回看多久（见 `dueReminders`）。放开到
+ * 「提前一周」听起来更灵活，实际没人会给一条日程设七天前提醒，
+ * 却会让每次检查都多扫一周的数据。
+ */
+export const MAX_REMIND_MINUTES = 1440
+
+/** 界面上可选的提前量（分钟）。-1 = 不提醒 */
+export const REMIND_OPTIONS: readonly number[] = Object.freeze([-1, 0, 5, 10, 15, 30, 60, 1440])
+
 /* ------------------------------------------------------------------ 网站门户 */
 
 /** 门户站点数量上限：够放得下全部常用学习站点，又不至于无限堆 */
