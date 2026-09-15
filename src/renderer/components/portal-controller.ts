@@ -1,5 +1,6 @@
 import type { PortalSite, PortalSiteInput } from '@shared/types'
 
+import { t, tm } from '../lib/i18n'
 import { bridge, formatError, toast, unwrap } from '../lib/ipc'
 import { createPortalGrid, type PortalGridHandle } from './portal-grid'
 
@@ -46,7 +47,7 @@ export function createPortalController(options: PortalControllerOptions): Portal
       void bridge()
         .app.openExternal(site.url)
         .then((result) => {
-          if (!result.ok) toast(`打不开链接：${result.error}`, 'error')
+          if (!result.ok) toast(t('portal.openLinkFailed', { reason: tm(result.error ?? '') }), 'error')
         })
     },
 
@@ -71,16 +72,16 @@ export function createPortalController(options: PortalControllerOptions): Portal
           )
         )
       } catch (error) {
-        toast(`操作失败：${formatError(error)}`, 'error')
+        toast(t('portal.actionFailed', { reason: tm(formatError(error)) }), 'error')
       }
     },
 
     async onRemove(site) {
       try {
         apply(await unwrap(bridge().portal.remove(site.id)))
-        toast(`已删除「${site.name}」`, 'success')
+        toast(t('portal.removed', { name: site.name }), 'success')
       } catch (error) {
-        toast(`删除失败：${formatError(error)}`, 'error')
+        toast(t('portal.removeFailed', { reason: tm(formatError(error)) }), 'error')
       }
     }
   })
@@ -90,11 +91,11 @@ export function createPortalController(options: PortalControllerOptions): Portal
     fetching = true
     try {
       apply(await unwrap(bridge().portal.fetchIcon(site.id)))
-      toast(`已更新「${site.name}」的图标`, 'success')
+      toast(t('portal.iconUpdated', { name: site.name }), 'success')
     } catch (error) {
       // 抓不到是常态（离线、站点反爬），明确告诉用户并说明退路，
       // 别让人对着一个色块不知道是该重试还是该放弃
-      toast(`图标没抓到：${formatError(error)}，先用色块顶着`, 'error')
+      toast(t('portal.iconFailed', { reason: tm(formatError(error)) }), 'error')
     } finally {
       fetching = false
     }
@@ -107,7 +108,7 @@ export function createPortalController(options: PortalControllerOptions): Portal
       try {
         apply(await unwrap(bridge().portal.list()))
       } catch (error) {
-        toast(`门户加载失败：${formatError(error)}`, 'error')
+        toast(t('portal.loadFailed', { reason: tm(formatError(error)) }), 'error')
       }
       return sites
     },
@@ -115,7 +116,7 @@ export function createPortalController(options: PortalControllerOptions): Portal
       try {
         const next = await unwrap(bridge().portal.upsert(input))
         apply(next)
-        toast(input.id ? '已保存' : `已添加「${input.name}」`, 'success')
+        toast(input.id ? t('card.saved') : t('portal.added', { name: input.name }), 'success')
       } catch (error) {
         // 抛回去让表单继续开着：用户输入错了网址，不该因为一次失败就白填
         throw new Error(formatError(error))

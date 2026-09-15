@@ -1,6 +1,7 @@
 import { displayHost, initialOf } from '@shared/portal'
 import type { PortalSite } from '@shared/types'
 
+import { t } from '../lib/i18n'
 import { escapeHtml } from '../lib/html'
 
 /**
@@ -60,10 +61,10 @@ function iconHtml(site: PortalSite): string {
 function actionsHtml(site: PortalSite): string {
   return `
     <span class="sb-portal__actions">
-      <button class="sb-iconbtn" type="button" data-act="edit" title="编辑" aria-label="编辑 ${escapeHtml(site.name)}">✎</button>
-      <button class="sb-iconbtn" type="button" data-act="icon" title="重新抓取图标" aria-label="重新抓取 ${escapeHtml(site.name)} 的图标">⟳</button>
-      <button class="sb-iconbtn" type="button" data-act="hide" title="${site.hidden ? '显示' : '隐藏'}" aria-label="${site.hidden ? '显示' : '隐藏'} ${escapeHtml(site.name)}">${site.hidden ? '◌' : '◉'}</button>
-      <button class="sb-iconbtn sb-iconbtn--danger" type="button" data-act="remove" title="${site.builtin ? '内置站点不能删除' : '删除'}" aria-label="${site.builtin ? '内置站点不能删除' : `删除 ${escapeHtml(site.name)}`}" ${site.builtin ? 'disabled' : ''}>✕</button>
+      <button class="sb-iconbtn" type="button" data-act="edit" title="${escapeHtml(t('common.edit'))}" aria-label="${escapeHtml(t('portal.editLabel', { name: site.name }))}">✎</button>
+      <button class="sb-iconbtn" type="button" data-act="icon" title="${escapeHtml(t('portal.refetchIcon'))}" aria-label="${escapeHtml(t('portal.refetchIconLabel', { name: site.name }))}">⟳</button>
+      <button class="sb-iconbtn" type="button" data-act="hide" title="${escapeHtml(t(site.hidden ? 'portal.show' : 'portal.hide'))}" aria-label="${escapeHtml(t(site.hidden ? 'portal.show' : 'portal.hide'))} ${escapeHtml(site.name)}">${site.hidden ? '◌' : '◉'}</button>
+      <button class="sb-iconbtn sb-iconbtn--danger" type="button" data-act="remove" title="${escapeHtml(t(site.builtin ? 'portal.builtinNoRemove' : 'common.delete'))}" aria-label="${escapeHtml(site.builtin ? t('portal.builtinNoRemove') : t('portal.removeLabel', { name: site.name }))}" ${site.builtin ? 'disabled' : ''}>✕</button>
     </span>
   `
 }
@@ -96,8 +97,8 @@ export function createPortalGrid(options: PortalGridOptions): PortalGridHandle {
   const empty = document.createElement('p')
   empty.className = 'sb-empty'
   empty.textContent = options.editable
-    ? '还没有任何站点，点右上角「添加网站」开始。'
-    : '还没有任何站点，去「网站门户」页添加。'
+    ? t('portal.emptyWithAction')
+    : t('portal.empty')
   empty.hidden = true
   element.appendChild(empty)
 

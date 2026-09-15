@@ -1,8 +1,10 @@
 import { normalizeSiteName, normalizeSiteUrl } from '@shared/portal'
+import { escapeHtml } from '../lib/html'
 import type { PortalSite } from '@shared/types'
 
 import type { ViewContext, ViewInstance } from '../app-shell'
 import { createPortalController } from '../components/portal-controller'
+import { t } from '../lib/i18n'
 import { toast } from '../lib/ipc'
 import { confirmAction, openModalCard } from '../lib/overlay'
 
@@ -26,21 +28,21 @@ interface FormResult {
 const FORM_HTML = `
   <div class="sb-modal__title" data-role="title"></div>
   <div class="sb-field">
-    <label for="site-name">名称</label>
-    <input class="sb-input" id="site-name" data-field="name" type="text" maxlength="40" placeholder="例如：中国大学 MOOC" />
+    <label for="site-name">${escapeHtml(t('portal.name'))}</label>
+    <input class="sb-input" id="site-name" data-field="name" type="text" maxlength="40" placeholder="${escapeHtml(t('portal.namePlaceholder'))}" />
   </div>
   <div class="sb-field">
-    <label for="site-url">网址</label>
-    <input class="sb-input" id="site-url" data-field="url" type="text" placeholder="icourse163.org 或 https://..." />
+    <label for="site-url">${escapeHtml(t('portal.url'))}</label>
+    <input class="sb-input" id="site-url" data-field="url" type="text" placeholder="${escapeHtml(t('portal.urlPlaceholder'))}" />
   </div>
   <label class="sb-portal__check">
     <input type="checkbox" data-field="fetchIcon" />
-    <span>保存后尝试抓取网站图标（需要联网）</span>
+    <span>${escapeHtml(t('portal.fetchIconNote'))}</span>
   </label>
   <p class="sb-hint" data-role="error" hidden></p>
   <div class="sb-modal__actions">
-    <button class="sb-btn" type="button" data-role="cancel">取消</button>
-    <button class="sb-btn sb-btn--primary" type="button" data-role="save">保存</button>
+    <button class="sb-btn" type="button" data-role="cancel">${escapeHtml(t('common.cancel'))}</button>
+    <button class="sb-btn sb-btn--primary" type="button" data-role="save">${escapeHtml(t('common.save'))}</button>
   </div>
 `
 
@@ -59,10 +61,10 @@ function openSiteForm(existing: PortalSite | null): Promise<FormResult | null> {
     const saveBtn = modal.card.querySelector<HTMLButtonElement>('[data-role="save"]')
 
     const isEdit = existing !== null
-    if (title) title.textContent = isEdit ? '编辑站点' : '添加网站'
+    if (title) title.textContent = t(isEdit ? 'portal.editSite' : 'portal.addSite')
     if (nameInput && existing) nameInput.value = existing.name
     if (urlInput && existing) urlInput.value = existing.url
-    if (saveBtn) saveBtn.textContent = isEdit ? '保存' : '添加'
+    if (saveBtn) saveBtn.textContent = t(isEdit ? 'common.save' : 'common.add')
     // 编辑已有站点时默认不勾：用户只是改个名字的话，不该顺带发一次网络请求
     if (iconCheck) iconCheck.checked = !isEdit
 
@@ -84,7 +86,7 @@ function openSiteForm(existing: PortalSite | null): Promise<FormResult | null> {
     function submit(): void {
       const name = normalizeSiteName(nameInput?.value)
       if (name.length === 0) {
-        showError('请填写站点名称')
+        showError(t('portal.nameRequired'))
         nameInput?.focus()
         return
       }
@@ -120,24 +122,23 @@ export function createPortalView(_ctx: ViewContext): ViewInstance {
   element.innerHTML = `
     <div class="sb-view__head">
       <div>
-        <h1 class="sb-view__title">网站门户</h1>
-        <p class="sb-view__desc">把常用的学习网站放在一起，点一下就打开。默认自带慕课、B站、知网。</p>
+        <h1 class="sb-view__title">${escapeHtml(t('nav.portal'))}</h1>
+        <p class="sb-view__desc">${escapeHtml(t('portal.desc'))}</p>
       </div>
       <div class="sb-toolbar">
-        <button class="sb-btn" type="button" data-action="fetch-all">补齐图标</button>
-        <button class="sb-btn sb-btn--primary" type="button" data-action="add">添加网站</button>
+        <button class="sb-btn" type="button" data-action="fetch-all">${escapeHtml(t('portal.fetchAll'))}</button>
+        <button class="sb-btn sb-btn--primary" type="button" data-action="add">${escapeHtml(t('portal.addSite'))}</button>
       </div>
     </div>
 
     <section class="sb-section">
       <div class="sb-section__head">
-        <h2 class="sb-section__title">全部站点</h2>
-        <span class="sb-badge" data-role="meta">模块二</span>
+        <h2 class="sb-section__title">${escapeHtml(t('portal.all'))}</h2>
+        <span class="sb-badge" data-role="meta">${escapeHtml(t('nav.group.module2'))}</span>
       </div>
       <div data-role="grid"></div>
       <p class="sb-hint">
-        图标只在点「补齐图标」或单个站点上的 ⟳ 时才联网抓取，其余时候本应用不发任何网络请求。
-        抓取失败会退回色块加首字，不影响站点本身使用。
+        ${escapeHtml(t('portal.hint'))}
       </p>
     </section>
   `
@@ -150,7 +151,7 @@ export function createPortalView(_ctx: ViewContext): ViewInstance {
     onData(list) {
       if (!meta) return
       const hidden = list.filter((site) => site.hidden).length
-      meta.textContent = hidden > 0 ? `${list.length} 个 · 隐藏 ${hidden} 个` : `${list.length} 个`
+      meta.textContent = hidden > 0 ? t('portal.countHidden', { total: list.length, hidden }) : t('portal.count', { total: list.length })
     },
     onEdit(site) {
       void openSiteForm(site).then(async (result) => {
@@ -188,14 +189,14 @@ export function createPortalView(_ctx: ViewContext): ViewInstance {
   element.querySelector('[data-action="fetch-all"]')?.addEventListener('click', () => {
     const missing = controller.current().filter((site) => !site.iconFile)
     if (missing.length === 0) {
-      toast('所有站点都已经有图标了', 'info')
+      toast(t('portal.allHaveIcons'), 'info')
       return
     }
 
     void confirmAction({
-      title: `补齐 ${missing.length} 个站点的图标？`,
-      message: '会依次访问这些站点抓取图标，需要联网。抓取期间可以继续使用其它功能。',
-      confirmText: '开始抓取'
+      title: t('portal.fetchTitle', { count: missing.length }),
+      message: t('portal.fetchBody'),
+      confirmText: t('portal.fetchStart')
     }).then((confirmed) => {
       if (!confirmed) return
       // 串行而不是并发：一次只发一个请求，既不给对方站点压力，
@@ -206,7 +207,7 @@ export function createPortalView(_ctx: ViewContext): ViewInstance {
           await controller.refetchIcon(site)
           done += 1
         }
-        toast(`图标抓取结束：处理了 ${done} 个站点`, 'info')
+        toast(t('portal.fetchDone', { count: done }), 'info')
       })()
     })
   })
