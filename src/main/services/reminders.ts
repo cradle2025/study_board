@@ -13,25 +13,31 @@ import type { CalendarStore } from './calendar'
  * ## 为什么必须先设 AppUserModelID（实测，不是照文档抄的）
  *
  * Windows 上 toast 通知要求进程有一个**已注册的 AppUserModelID**。
- * 实测四种情况（Electron 44.3.0 / Windows 11，方法见 DECISIONS.md D-012）：
+ * 实测三种情况（Electron 44.3.0 / Windows 11，未签名构建，方法见
+ * DECISIONS.md D-012）：
  *
  * | 设置 | Electron 的 show 事件 | 进了系统通知库 |
  * |---|---|---|
- * | 不设 | 不发 | 否 |
- * | 设成 exe 路径 | 不发 | 否 |
- * | 设成一个没注册过的 AUMID | **发了** | **否** |
- * | 设成安装包注册过的 AUMID | 发了 | 是 |
+ * | 不设 | **发** | 否 |
+ * | 设成一个没注册过的 AUMID | **发** | 否 |
+ * | 设成安装包注册过的 AUMID | 发 | **是** |
+ *
+ * 判据不是 `show` 事件，而是注册表里有没有留下痕迹：Windows 收下一条
+ * toast 时会写
+ * `HKCU\Software\Microsoft\Windows\CurrentVersion\Notifications\Settings\<AUMID>`
+ * 的 `LastNotificationAddedTime`；被丢掉的那两次，这个键**根本没出现**。
  *
  * 两件事因此必须写进代码：
  *  1. **AUMID 一定要设**，且要与 `electron-builder.yml` 的 `appId` 一致。
  *     安装包会创建带这个 AUMID 的开始菜单快捷方式，Windows 才认账。
- *     不设的话 `show()` 既不报错也不发 `failed`，通知直接消失。
- *  2. **不能拿 `show` 事件当「用户看到了」的证据** —— 第三行证明了它
+ *  2. **不能拿 `show` 事件当「用户看到了」的证据** —— 上表前两行证明了它
  *     会在通知根本没被系统收下的时候照样触发。所以下面把「没收到任何
  *     回执」单独记成 `unverified`，界面才能如实说话。
  *
- * 未签名的**安装版**能正常弹（实测通过）；开发态 / 免安装直接跑 exe
- * 时通知会被丢掉，因为那种跑法没有开始菜单快捷方式去注册 AUMID。
+ * **真正的门槛是「这台机器上装过没有」，不是签名。** 实测那次成功的，
+ * 跑的是 `node_modules` 里没签名的 `electron.exe`，只是 AUMID 对上了
+ * 安装包注册过的那个。反过来，开发态 / 免安装直接跑 exe 时通知会被丢掉，
+ * 因为那种跑法没有开始菜单快捷方式去注册 AUMID。
  *
  * ## 调度
  *

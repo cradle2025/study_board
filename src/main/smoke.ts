@@ -2285,13 +2285,27 @@ const CALENDAR_PROBE = `(async () => {
   ${PROBE_HELPERS}
   const out = {}
 
-  const calendarNav = document.querySelector('[data-route="calendar"]')
-  if (!calendarNav) return JSON.stringify({ navOk: false })
+  // 导航按钮是**异步**渲染的，不能直接 querySelector。
+  //
+  // app-shell 的 connectedCallback 只画骨架，侧栏里那几个按钮要等
+  // bootstrap() 里两个 IPC（应用信息、设置）回来之后才由 renderNav() 写进去。
+  // 而探针是在 did-finish-load 那一刻注入的 —— 那时导航还是空的。
+  // 直接查会稳定拿到 null，探针当场早退成 navOk:false，后面一条断言都跑不到。
+  // 其它场景的探针都是先 waitFor 再点，这一条当初漏了这一步。
+  const calendarNav = await waitFor('[data-route="calendar"]', 15000)
+  if (!calendarNav) {
+    // 等不到就把当时到底有哪些路由倒出来，下次不用再猜
+    return JSON.stringify({
+      navOk: false,
+      routes: Array.from(document.querySelectorAll('[data-route]')).map(function (b) {
+        return b.getAttribute('data-route')
+      })
+    })
+  }
   calendarNav.click()
-  // 选择器要对着**真实 DOM**：日历视图渲染出来的是 .sb-cal__grid 里的
-  // .sb-cal__num（日号）。原来写的是 .sb-cal__day —— 那个类不存在，
-  // 于是断言永远等不到，把一个正常的页面判成失败。
-  out.navOk = Boolean(await waitFor('.sb-cal__grid .sb-cal__num', 15000))
+  // 判据用日历格子本身：.sb-cal__day 是日期格子（data-date 挂在它身上），
+  // 类名见 calendar-view.ts 里拼 classes 的那一段。
+  out.navOk = Boolean(await waitFor('.sb-cal__grid .sb-cal__day', 15000))
 
   out.semesterOk = await waitForValue('#semester-start', '${CAL_SEMESTER_START}', 10000)
 
@@ -4816,6 +4830,27 @@ function verifyCalendarPersistence(): boolean {
     console.error('[smoke] 日历自检：重新读盘后一次性日程的日期不对：', once?.date)
     return false
   }
+  // 光有标题和日期不够：用户填的**每一个**字段都得原样回来。
+  // 只比对标题的话，一个把 repeat 写丢、把提醒写成「不提醒」的存储
+  // 照样能过 —— 而那正是用户下次打开时会发现「我设的东西没了」的地方。
+  if (once.repeat !== 'once' || once.start !== '23:00' || once.remindBefore !== -1) {
+    console.error(
+      '[smoke] 日历自检：重新读盘后一次性日程的字段对不上：',
+      JSON.stringify({ repeat: once.repeat, start: once.start, remindBefore: once.remindBefore })
+    )
+    return false
+  }
+  // 重复日程的规则也要能过一遍重启，否则「每周」退化成「一次性」查不出来
+  const weekly = reopened.events.find((event) => event.title === CAL_WEEKLY_TITLE)
+  if (!weekly || weekly.repeat !== 'weekly') {
+    console.error('[smoke] 日历自检：重新读盘后每周重复的规则丢了：', weekly?.repeat)
+    return false
+  }
+  const monthly = reopened.events.find((event) => event.title === CAL_MONTHLY_TITLE)
+  if (!monthly || monthly.repeat !== 'monthly') {
+    console.error('[smoke] 日历自检：重新读盘后每月重复的规则丢了：', monthly?.repeat)
+    return false
+  }
 
   return true
 }
@@ -4842,11 +4877,18 @@ function verifyCalendarReminders(): boolean {
     console.error('[smoke] 日历自检：靶子日程算不出提醒时刻')
     return false
   }
-  const expected = new Date(atMs)
-  if (expected.getHours() !== 10 || expected.getMinutes() !== 45) {
+  // 期望值从第一性原理算一遍，而不是写死「9 点 45 分」这类数字：
+  // 原来写的是 `getHours() !== 10`，跟它自己那句「应为 09:45」互相矛盾
+  // （10:00 提前 15 分钟是 09:45，不是 10:45），于是这条断言永远为假。
+  // 现在用「当天 10:00 的本地时间戳 - 提前分钟数」当靶子，改分钟数也不会失效。
+  const baseMs = new Date(2030, 0, 15, 10, 0, 0, 0).getTime()
+  const wantMs = baseMs - CAL_REMIND_BEFORE * 60_000
+  if (atMs !== wantMs) {
     console.error(
-      `[smoke] 日历自检：提醒时刻算错了（10:00 提前 ${CAL_REMIND_BEFORE} 分钟应为 09:45）：`,
-      expected.toISOString()
+      '[smoke] 日历自检：提醒时刻算错了（应为本地 ' +
+        new Date(wantMs).toLocaleString() +
+        '）：',
+      new Date(atMs).toLocaleString()
     )
     return false
   }
@@ -5065,9 +5107,13 @@ async function runSyncScenario(win: BrowserWindow): Promise<boolean> {
  * 顺序是先切到英文再逐页走，每页等一会儿（重绘是异步的）。
  */
 async function captureLocalizedScreens(win: BrowserWindow): Promise<void> {
+  // 顺序跟着侧栏走。**新增页面必须加进来** —— 漏一页就等于那一页的
+  // 漏翻永远没人看得见（grep 只能证明源码里没中文，证明不了界面上没有）。
+  // 日历当初就是这么漏掉的：功能上了，79 条新词条一条都没被截过图。
   const routes = [
     'home',
     'timetable',
+    'calendar',
     'portal',
     'study',
     'archived',

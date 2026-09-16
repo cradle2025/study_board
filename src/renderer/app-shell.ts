@@ -354,10 +354,22 @@ export class AppShell extends HTMLElement {
 
       this.#applyChrome()
       this.renderNav()
-      await this.go('home')
-      mark('sb:shell-ready')
 
-      // 订阅要留着句柄，元素被卸载时才能退订
+      /**
+       * 订阅必须在**第一次挂载视图之前**注册。
+       *
+       * `go('home')` 要 await 首页的 `onEnter()`（拉卡片、拉设置），中间是
+       * 一段真实的异步窗口。订阅挂在它后面的话，这段时间里主进程广播的
+       * 设置变更**没有收件人**——preload 的 subscribe 就是一层裸的
+       * `ipcRenderer.on`，不缓冲、不重放。事件一丢，界面就永远停在旧文案上。
+       *
+       * 表现是 `npm run smoke` 里那条「切语言界面必须真的变」的断言
+       * 时灵时不灵（冷启动首页更慢，命中概率更高）：配置已经改了、语言
+       * 也真的换了，但侧栏一个字都没动。用户手动切语言时同样会撞上，
+       * 只是他多半会以为「这软件得重启一次才生效」。
+       *
+       * 订阅要留着句柄，元素被卸载时才能退订
+       */
       this.#unwatchSettings = bridge().events.onSettingsChanged((next) => {
         const languageChanged = next.language !== this.#settings?.language
         this.#settings = next
@@ -367,6 +379,9 @@ export class AppShell extends HTMLElement {
       this.#unwatchInbox = bridge().events.onMaterialsInbox((payload) => {
         void this.#handleInbox(payload.files ?? [])
       })
+
+      await this.go('home')
+      mark('sb:shell-ready')
     } catch (error) {
       this.showFatal(formatError(error))
     }
