@@ -47,6 +47,7 @@ npm run package:mac    # 打 macOS（未签名，产物不可用，见下）
 # 自检（核心保障，见下）
 npm run smoke                  # 基础场景
 npm run smoke:timetable        # 课表：单格编辑、增量重绘、图片模式
+npm run smoke:calendar         # 日历：课表事件按周次出现 + 自建日程 + 重复 + 提醒 + 持久化
 npm run smoke:portal           # 网站门户
 npm run smoke:cards            # 课程卡片三态（在学/想学/已学）
 npm run smoke:notes            # 笔记：编辑器、图片预览、导出

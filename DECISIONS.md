@@ -349,3 +349,142 @@ UI 还按「一格一门课」读写的话，用户双击编辑再保存会**静
 2. 打包 0.4.0（用户明确说本轮不做）
 3. 实机验一次「0.3.0 装好录课 → 0.4.0 覆盖安装 → 课都在」——
    自动化只验到文件层面，这一步得人工确认
+
+---
+
+## D-011 · 日历做成「独立一页 + 独立存储」，课表事件按周次铺到日期上
+
+**做了什么**
+用户原话：「我还想给这个软件再集成一个日程功能（以日历为基础）」。
+在 `feat/calendar` 上落了四件事：
+
+- **独立一页**：新路由 `calendar` + 侧栏入口，`src/renderer/views/calendar-view.ts`
+- **独立存储** `calendar.json`：`semesterStart`（开学第一天）+ `events[]`；
+  日程字段 `id / title / date / start / end / location / note / repeat / remindBefore`
+- **课表事件**：靠 `semesterStart` 把课表的「第几周第几列」换算成具体日期，
+  再按 `WeekRule` 过滤（`@shared/weekRule` 的 `weeksInclude`）
+- **自建日程**：重复规则只做 `once / weekly / monthly`；
+  到点提醒走主进程 `Notification` + 窗口开着时另发一条应用内提醒作兜底
+
+**为什么这么选**
+- **独立一页，不并进课表页**：两者回答的是不同的问题 —— 课表 = 这学期每周
+  怎么上；日历 = 某一天有什么。塞进同一页只会让两边都变窄。
+- **独立文件，不塞进 `timetable.json` / `settings.json`**：日程与课表的
+  生命周期不同（课表一学期一换，日程是长流水），混在一起会让两边都难迁移。
+- **`DATA_SCHEMA` 保持 2**：这是纯新增文件，**没有改动任何既有存储的读写
+  格式**，按 D-001 立的判据不构成一次 schema 变更。为了加一条日历就升 schema，
+  会把所有老用户推上「备份 + 迁移」的重路径，换不到任何保护。
+- **但必须在 `LEGACY_DATA_ENTRIES` 里登记 `calendar.json`**：`hasUserData()`
+  靠这个清单判「全新安装」还是「老数据」。漏登记的话，一个**只记了日程、
+  没有别的文件**的数据目录会被判成全新安装 —— 于是不备份就写印记，
+  用户的老日程直接失去回头路。这个坑项目里踩过一次。
+- **`weeksInclude` / `visibleCourses` 从 `timetable-panel` 搬到 `@shared/weekRule`**：
+  日历要算「这一周有哪些课」，判据必须与课表**完全一致**。各写一套迟早会对
+  「什么算单周」产生分歧，而且两边都不报错，只是显示的东西不一样。
+  课表页的既有引用改成从 shared 引，行为不变（`smoke:timetable` 的
+  `filterOk` 盯着这条）。
+- **重复规则只做三种**：课表那套「单双周」是课表特有的表达（教务系统按周排课），
+  日程用不上。「每年」等更复杂的规则等有人真的提再说。
+- **没填开学日就只显示自建日程，课表事件一律不显示**：猜一个开学日猜错了，
+  会把课铺到错误的星期上 —— 那比不显示更糟，用户不会发现。
+- **提醒回执分 `delivered / failed / unverified` 三态**：理由见 D-012。
+  另外给了一个「测试提醒」按钮，让用户在自己机器上当场确认。
+
+**否掉了哪些方案**
+- **并进课表页当一个 Tab**：两边都会变窄，且「今天有什么」和「这学期怎么排」
+  的操作频率完全不同。
+- **把日历事件塞进 `timetable.json` 或 `settings.json`**：见上。
+- **渲染层直接用 Web Notification API**：`security.ts` 里对渲染层的通知权限
+  是**一律拒绝**的，那条红线不动。改走主进程。
+- **每月重复遇到没有 31 号的月份就顺延到下月 1 号**：会让「每月 31 号」在
+  2 月变成 3 月 1 日，与「每月 1 号」的日程撞在同一天。改成**跳过那个月**。
+- **补发应用没运行时错过的提醒**：补发一堆「三天前的课要上了」除了打扰
+  没有别的用处。启动时 `fromMs` 就是启动时刻，之前的一律落在窗口外。
+- **把 `calendar.json` 的 schema 也升一级**：见上，纯新增不动 schema。
+
+**结果如何**
+`npm run smoke:calendar` 全绿（首跑即过）。渲染层断言：
+`navOk` / `semesterOk`（开学日回填）/
+`week1AllOk` + `week1OddOk` + `week1EvenAbsentOk`（第 1 周：全周课在、单周课在、
+双周课不在）/ `week4AllOk` + `week4EvenOk` + `oddAbsentInWeek4Ok`（第 4 周反向）/
+`weeklyOk`（每周重复连续三周都在）/ `monthlyThisMonthOk` + `monthlyNextMonthOk` +
+`monthlyExactOk`（跨月，且月底那两天不串）/ `onceOk` + `onceNotElsewhereOk` +
+`onceInDayListOk`（界面新建的一次性日程只落在当天）/ `notifyOk` / `persistOk`。
+主进程断言：`verifyCalendarLegacyRecognized()`（备份里找得到升级前那条日程，
+证明 `hasUserData()` 认了新文件）、`verifyCalendarPersistence()`（磁盘一份 +
+新 store 重读一份，且 `repeat` / `start` / `remindBefore` 都原样回来）、
+`verifyCalendarReminders()`（到点判定 + 左开右闭不重复挑）。
+
+> 断言全部落在**格子里的实际文字**上，不是「元素在不在」：日历最容易出的错是
+> 「日期算错了」—— 课照样渲染、格子照样在，只是摆到了错误的星期上。
+> 日期一律用写死的靶子（开学日 2026-09-07 是周一），不靠「今天」定位。
+
+**下一步依赖什么**
+1. 用户审 `feat/calendar` 后决定是否合并（**没有合并回 `master`**）
+2. 打包（用户明确说本轮不做）
+3. 通知那条见 D-012 —— 这是唯一一处「自动化验不到、需要用户在真机上确认」的能力
+
+---
+
+## D-012 · 通知能不能弹，取决于「这台机器上装过没有」，不是签名
+
+**做了什么**
+用独立探针实测了 Windows Toast 的连通性，而不是照文档推断。
+**结论先写：未签名的安装版能正常弹；开发态 / 免安装直接跑 exe 弹不出来。
+门槛是 AUMID 有没有被注册，跟签名无关。**
+
+**怎么实测的（可复现）**
+环境：Electron 44.3.0 / Windows 11 / **未签名**构建。
+探针是一个最小 Electron app，只做三件事：按环境变量 `setAppUserModelId` →
+`new Notification(...).show()` → 落盘 Electron 侧的 `show` / `failed` 回执。
+
+**判据不看 `show` 事件，看注册表。** Windows 把一条 toast 收下时会在
+`HKCU\Software\Microsoft\Windows\CurrentVersion\Notifications\Settings\<AUMID>`
+下写 `LastNotificationAddedTime`；被静默丢掉的 toast **不会留下这个键**。
+三组对照：
+
+| 设置 | Electron 的 `show` | 注册表留下 `LastNotificationAddedTime` |
+|---|---|---|
+| 不设 AUMID | **发了** | 否 |
+| 设成没注册过的 AUMID（`io.github.studyboard.probe3`） | **发了** | 否 |
+| 设成安装包注册过的 AUMID（`io.github.studyboard.app`） | 发了 | **是**（2026-09-16 12:05:03） |
+
+第三组跑的是 `node_modules` 里那个**没签名**的 `electron.exe`，AUMID 对上
+安装包（NSIS）建的那条开始菜单快捷方式之后，通知就真的进了系统通知库。
+反过来说，前两组的 `show` 都触发了 —— **`show` 事件不能当作「用户看到了」的证据**。
+
+**为什么这么选**
+- **代码里必须 `app.setAppUserModelId()`，且要与 `electron-builder.yml` 的
+  `appId` 一致**（两边现在都是 `io.github.studyboard.app`）。不一致的话，
+  安装版也会掉进第二行那种「发了但被丢掉」的形态。
+- **回执分三态如实上报**：`delivered`（收到 `show`）/ `failed`（收到 `failed`
+  或构造抛错）/ `unverified`（1.5 秒内既没 `show` 也没 `failed`）。
+  `unverified` 就是上表前两行的形态，不能算成功。
+- **给一个「测试提醒」按钮**：通知通不通还取决于用户那台机器的勿扰设置，
+  程序猜不出来。与其让用户等一条可能永远不来的提醒，不如让他当场试一次。
+- **窗口开着时另发一条应用内提醒兜底**：系统通知被拦掉时，用户不至于
+  什么都不知道。
+
+**否掉了哪些方案**
+- **拿 `show` 事件当成功**：实测证明它会在通知根本没被系统收下时照样触发。
+- **渲染层用 Web Notification API**：`security.ts` 对渲染层的通知权限一律拒绝。
+- **给免安装版也补一条注册**（首次运行时写
+  `HKCU\Software\Classes\AppUserModelId\<AUMID>`，这是未打包应用注册 AUMID 的
+  官方机制）：**没做**。它要动用户注册表，属于得用户拍板的事。
+  如果将来要支持「便携版也能弹提醒」，这就是那条路。
+- **弹窗自己画一个提醒框**：不是系统通知，用户不在应用里时看不到，
+  等于把「到点提醒」这个功能砍掉一半。
+
+**结果如何**
+`smoke:calendar` 里**不真的发通知**（自动化测试不该往用户桌面上弹东西），
+只断言 `reminders.info()` 的形状合法、`supported` 是布尔值，以及用纯函数
+`dueReminders` 把「到点判定 + 左开右闭」钉死。真正的投递只能在真机上人工确认 ——
+`verifyCalendarReminders()` 的注释里写明了这一点。
+
+**下一步依赖什么**
+1. **用户在真机上点一次「测试提醒」**：装 0.4.0 之后确认到底弹不弹，
+   以及弹出来的是不是「StudyBoard」这个身份（而不是 electron.app.Electron）。
+   自动化到不了这一步。
+2. 如果用户要求「免安装版也能弹」，再回头做上面那条 AUMID 注册（要用户同意动注册表）。
+3. 代码里那张实测表原来有一行写错了（「不设 → `show` 不发」），
+   实测是不设也会发。**已就地更正** —— 那张表是给人做判断用的，写错比不写更坏。
