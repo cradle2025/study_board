@@ -120,6 +120,7 @@ export default defineConfig(({ command }) => {
       build: {
         target: 'node20',
         sourcemap: false,
+        emptyOutDir: false,
         rollupOptions: {
           output: { format: 'cjs', entryFileNames: '[name].js' }
         }
@@ -131,6 +132,7 @@ export default defineConfig(({ command }) => {
       build: {
         target: 'node20',
         sourcemap: false,
+        emptyOutDir: false,
         rollupOptions: {
           output: { format: 'cjs', entryFileNames: '[name].js' }
         }
@@ -143,6 +145,7 @@ export default defineConfig(({ command }) => {
       build: {
         target: 'chrome128',
         sourcemap: false,
+        emptyOutDir: false,
         // file:// 场景下 modulepreload 提示没有意义，反而多出一次资源请求
         modulePreload: false,
         chunkSizeWarningLimit: 900,

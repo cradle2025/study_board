@@ -8,6 +8,7 @@
  * 用法：
  *   npm run smoke            基础自检：主进程起得来、preload 注得进去、界面挂得上
  *   npm run smoke:timetable  课程表端到端：写入单元格 + 图片导入 + 渲染 + 截图
+ *   npm run smoke:calendar   日历端到端：课表事件按周次出现 + 自建日程 + 重复 + 提醒 + 持久化
  *   npm run smoke:portal     网站门户端到端：内置站点 + 图标显示 + 增删改隐藏
  *   npm run smoke:cards      课程卡片端到端：翻转 + 课表带过课程 + 自动建笔记
  *   npm run smoke:notes      笔记编辑器端到端：双模式切换 + 工具栏 + md 往返
@@ -37,7 +38,7 @@ const electronPath = require('electron')
 
 const requested = process.argv[2] ?? ''
 const bench = requested === 'bench'
-const scenario = ['timetable', 'portal', 'cards', 'notes', 'sync', 'export', 'ai', 'notion', 'security', 'materials', 'update', 'migrate', 'i18n'].includes(requested)
+const scenario = ['timetable', 'calendar', 'portal', 'cards', 'notes', 'sync', 'export', 'ai', 'notion', 'security', 'materials', 'update', 'migrate', 'i18n'].includes(requested)
   ? requested
   : 'basic'
 const label = bench ? 'bench' : scenario
@@ -135,7 +136,7 @@ if (!TEST_BUILD && bundleSource.includes(MARKER)) {
 }
 
 console.log(`[${label}] 启动 Electron…`)
-const child = spawn(electronPath, ['.'], { stdio: 'inherit', env })
+const child = spawn(electronPath, ['.', '--disable-gpu'], { stdio: 'inherit', env })
 
 const timer = setTimeout(() => {
   console.error(`[${label}] 超过 ${TIMEOUT_MS / 1000} 秒未完成，强制结束`)

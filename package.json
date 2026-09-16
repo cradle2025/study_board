@@ -25,6 +25,7 @@
     "verify": "npm run typecheck && npm run build",
     "smoke": "node scripts/smoke.mjs",
     "smoke:timetable": "node scripts/smoke.mjs timetable",
+    "smoke:calendar": "node scripts/smoke.mjs calendar",
     "smoke:portal": "node scripts/smoke.mjs portal",
     "smoke:cards": "node scripts/smoke.mjs cards",
     "smoke:notes": "node scripts/smoke.mjs notes",

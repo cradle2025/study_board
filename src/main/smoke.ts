@@ -15,6 +15,7 @@ import { dirname, extname, join } from 'node:path'
 import { inflateRawSync } from 'node:zlib'
 
 import { NOTION_HASH_KEY, NOTION_ID_KEY, parseNotionId, pushFingerprint } from '@shared/notion'
+import { dueReminders, reminderAtMs } from '@shared/calendar'
 import { EXPORT_EXTENSIONS } from '@shared/limits'
 import { MATERIALS_DIRNAME } from '@shared/materials'
 import type { ExportFormat } from '@shared/types'
@@ -31,6 +32,7 @@ import {
 } from './paths'
 import { dictionaryGaps } from '@shared/i18n'
 
+import { CalendarStore } from './services/calendar'
 import { DATA_SCHEMA, migrateTimetableV1ToV2, readStamp } from './services/dataVersion'
 import { resolveNotesDir } from './services/settings'
 import { encodePng } from './services/png'
@@ -79,6 +81,7 @@ import { SecretsStore } from './services/secrets'
 export type SmokeScenario =
   | 'basic'
   | 'timetable'
+  | 'calendar'
   | 'portal'
   | 'cards'
   | 'notes'
@@ -99,6 +102,7 @@ export function smokeEnabled(): boolean {
 export function smokeScenario(): SmokeScenario {
   const value = process.env['STUDY_BOARD_SMOKE_SCENARIO']
   if (value === 'timetable') return 'timetable'
+  if (value === 'calendar') return 'calendar'
   if (value === 'portal') return 'portal'
   if (value === 'cards') return 'cards'
   if (value === 'notes') return 'notes'
@@ -156,6 +160,60 @@ const UPDATE_MARKER_NOTE = '升级前就有的笔记.md'
 const LEGACY_TIMETABLE_KEY = '2:4'
 const LEGACY_TIMETABLE_COURSE = '线性代数'
 const LEGACY_TIMETABLE_TEACHER = '陈立'
+
+/* ------------------------------------------------ 日历场景的固定靶子 */
+
+/**
+ * 开学日：**2026-09-07 是周一**，所以它是第 1 周的周一。
+ *
+ * 写死一个绝对日期而不是「本周一」：日历断言要落在确定的日期上，
+ * 用相对日期的话，测试明天跑、下个月跑都会得到不同的期望值，
+ * 而那种失败看起来像功能坏了。
+ *
+ * 由此推出的几个关键日期（都是周一，即课表第 0 列）：
+ *   第 1 周 → 09-07   第 2 周 → 09-14   第 3 周 → 09-21
+ *   第 4 周 → 09-28   第 5 周 → 10-05
+ */
+const CAL_SEMESTER_START = '2026-09-07'
+const CAL_WEEK1_MONDAY = '2026-09-07'
+const CAL_WEEK4_MONDAY = '2026-09-28'
+
+/** 每周都上的课 */
+const CAL_COURSE_ALL = '高等数学 A'
+/** **只在单周上**的课 —— 「第 4 周不该出现」这条断言盯的就是它 */
+const CAL_COURSE_ODD = '线性代数'
+/** 只在双周上的课 —— 反向对照，证明过滤不是「把所有课都藏了」 */
+const CAL_COURSE_EVEN = '大学物理'
+
+/** 一次性日程：由界面表单新建，日期在 9 月的第 2 周 */
+const CAL_ONCE_TITLE = '交作业'
+const CAL_ONCE_DATE = '2026-09-16'
+/** 一次性日程**不该**出现的那一天，紧挨着它 */
+const CAL_ONCE_OTHER_DATE = '2026-09-17'
+
+/** 每周重复：连着三周都要出现 */
+const CAL_WEEKLY_TITLE = '社团例会'
+const CAL_WEEKLY_DATE = '2026-09-15'
+const CAL_WEEKLY_DATES = ['2026-09-15', '2026-09-22', '2026-09-29']
+/** 每月重复：跨月也要出现 */
+const CAL_MONTHLY_TITLE = '交房租'
+const CAL_MONTHLY_DATE = '2026-09-30'
+const CAL_MONTHLY_NEXT = '2026-10-30'
+
+/**
+ * 提醒逻辑的靶子：放在很远的未来，且**只有它**配了提醒。
+ *
+ * 这样 `smoke:calendar` 跑起来不会真的弹一条系统通知到用户屏幕上
+ * （自动化测试不该在别人桌面上留东西），而提醒的判定逻辑照样能被
+ * 确定性地断言 —— 用显式的时间窗去问纯函数，不依赖真实时钟。
+ */
+const CAL_REMIND_TITLE = '期末复习提醒'
+const CAL_REMIND_DATE = '2030-01-15'
+const CAL_REMIND_AT = '10:00'
+const CAL_REMIND_BEFORE = 15
+
+/** 升级前就有的那条日程。备份里必须找得到它 */
+const LEGACY_CALENDAR_TITLE = '升级前就有的日程'
 
 /**
  * 一份 v1（0.3.0 及更早）形状的课表文件。
@@ -230,6 +288,50 @@ export function prepareUpdateScenarioIfRequested(): void {
       'utf-8'
     )
     writeFileSync(join(root, 'timetable.json'), legacyTimetableJson(), 'utf-8')
+    return
+  }
+
+  /**
+   * 日历场景：**数据目录里只有 `calendar.json`，没有印记**。
+   *
+   * 这一条专门盯 `hasUserData()`：它决定「全新安装」还是「老数据」，
+   * 而判据是 `LEGACY_DATA_ENTRIES` 里有没有这个文件名。日历是新增的
+   * 存储，忘了登记的话，一个只记了日程的数据目录会被判成全新安装 ——
+   * 于是**不备份**就写印记，用户的老日程直接失去回头路。
+   * 这个坑项目里踩过一次（HANDOFF 坑位区），所以这里造的就是那个形状。
+   *
+   * 走到 `upgrade` 分支之后，`verifyCalendarLegacyRecognized()` 会去
+   * 备份里找那条日程 —— 找得到，才说明判对了。
+   */
+  if (scenario === 'calendar') {
+    const root = ensureDir(dataRoot(false))
+    writeFileSync(
+      join(root, 'calendar.json'),
+      JSON.stringify(
+        {
+          version: 1,
+          semesterStart: '',
+          events: [
+            {
+              id: 'legacy-calendar-event',
+              title: LEGACY_CALENDAR_TITLE,
+              date: '2026-01-05',
+              start: '08:00',
+              end: '09:00',
+              location: '教三-101',
+              note: '这是升级前就有的日程',
+              repeat: 'once',
+              remindBefore: -1,
+              createdAt: '2026-01-01T00:00:00.000Z',
+              updatedAt: '2026-01-01T00:00:00.000Z'
+            }
+          ]
+        },
+        null,
+        2
+      ),
+      'utf-8'
+    )
     return
   }
 
@@ -363,6 +465,85 @@ export function verifyTimetableMigration(): boolean {
 }
 
 /* ------------------------------------------------------------------ 造测试数据 */
+
+/**
+ * 日历场景的数据准备。
+ *
+ * 这里只种两样东西：
+ *  1. **带周次规则的课表** —— 日历要把它们按周次铺到具体日期上，
+ *     而「单周那门在第 4 周不出现」是本场景最要紧的一条断言；
+ *  2. **学期开学日 + 两条重复日程**（每周 / 每月）—— 重复展开是纯逻辑，
+ *     从主进程种进去最直接。
+ *
+ * 一次性日程**刻意不在这里种**：那条要走界面表单新建，
+ * 否则「用户能自己加日程」这件事就一次都没被真的验过。
+ *
+ * 所有日程的 `remindBefore` 都是 -1（不提醒），只有那条 2030 年的
+ * 靶子配了提醒。原因见 CAL_REMIND_TITLE 的注释。
+ */
+function seedCalendar(): void {
+  const { timetable, calendar } = context()
+
+  timetable.setWeekSettings({ weekCount: 16, currentWeek: 0 })
+  timetable.setRows([
+    { index: 1, start: '08:00', end: '08:45' },
+    { index: 2, start: '08:55', end: '09:40' },
+    { index: 3, start: '10:00', end: '10:45' }
+  ])
+
+  // 列 0 = 周一，所以这三门课都落在每周一
+  timetable.setCell('1:0', {
+    courseName: CAL_COURSE_ALL,
+    teacher: '张启明',
+    location: '教三-201',
+    duration: '45 分钟',
+    remark: '',
+    weeks: { kind: 'all' }
+  })
+  timetable.setCell('2:0', {
+    courseName: CAL_COURSE_ODD,
+    teacher: '陈立',
+    location: '教二-105',
+    duration: '45 分钟',
+    remark: '',
+    weeks: { kind: 'odd' }
+  })
+  timetable.setCell('3:0', {
+    courseName: CAL_COURSE_EVEN,
+    teacher: '周敏',
+    location: '理科楼 302',
+    duration: '45 分钟',
+    remark: '',
+    weeks: { kind: 'even' }
+  })
+
+  calendar.setSemesterStart(CAL_SEMESTER_START)
+
+  calendar.upsertEvent({
+    title: CAL_WEEKLY_TITLE,
+    date: CAL_WEEKLY_DATE,
+    start: '19:00',
+    end: '20:30',
+    location: '活动中心',
+    repeat: 'weekly',
+    remindBefore: -1
+  })
+  calendar.upsertEvent({
+    title: CAL_MONTHLY_TITLE,
+    date: CAL_MONTHLY_DATE,
+    start: '',
+    location: '',
+    repeat: 'monthly',
+    remindBefore: -1
+  })
+  calendar.upsertEvent({
+    title: CAL_REMIND_TITLE,
+    date: CAL_REMIND_DATE,
+    start: CAL_REMIND_AT,
+    repeat: 'once',
+    remindBefore: CAL_REMIND_BEFORE
+  })
+}
 
 /** 画一张有明显色块的图，方便截图里一眼看出图片链路通没通 */
 function makeTestPng(width: number, height: number): Buffer {
@@ -2089,6 +2270,87 @@ function i18nProbe(): string {
 
 /* ------------------------------------------------------------------ 主流程 */
 
+/**
+ * 日历场景的界面探针。
+ *
+ * 断言全部落在**格子里的实际文字**上，而不是「元素在不在」：
+ * 日历最容易出的错是「日期算错了」——课照样渲染、格子照样在，
+ * 只是摆到了错误的星期上。只有读出那一天的文字才能发现。
+ *
+ * 日期一律用写死的靶子（见 CAL_SEMESTER_START 一带的常量），
+ * 并且用「跳到某天」把月份定死，所以**哪天跑结果都一样**。
+ * 靠「今天」来定位的话，这个测试明天就会自己失败。
+ */
+const CALENDAR_PROBE = `(async () => {
+  ${PROBE_HELPERS}
+  const out = {}
+
+  const calendarNav = document.querySelector('[data-route="calendar"]')
+  if (!calendarNav) return JSON.stringify({ navOk: false })
+  calendarNav.click()
+  // 选择器要对着**真实 DOM**：日历视图渲染出来的是 .sb-cal__grid 里的
+  // .sb-cal__num（日号）。原来写的是 .sb-cal__day —— 那个类不存在，
+  // 于是断言永远等不到，把一个正常的页面判成失败。
+  out.navOk = Boolean(await waitFor('.sb-cal__grid .sb-cal__num', 15000))
+
+  out.semesterOk = await waitForValue('#semester-start', '${CAL_SEMESTER_START}', 10000)
+
+  const jump = document.querySelector('[data-role="jump-date"]')
+  if (jump) jump.value = '${CAL_WEEK1_MONDAY}'
+  document.querySelector('[data-action="jump"]').click()
+  await wait(500)
+
+  const dayText = (date) => {
+    const cell = document.querySelector('[data-date="' + date + '"]')
+    return cell ? cell.textContent : ''
+  }
+
+  const w1 = dayText('${CAL_WEEK1_MONDAY}')
+  out.week1AllOk = w1.indexOf('${CAL_COURSE_ALL}') >= 0
+  out.week1OddOk = w1.indexOf('${CAL_COURSE_ODD}') >= 0
+  out.week1EvenAbsentOk = w1.indexOf('${CAL_COURSE_EVEN}') < 0
+
+  const w4 = dayText('${CAL_WEEK4_MONDAY}')
+  out.week4AllOk = w4.indexOf('${CAL_COURSE_ALL}') >= 0
+  out.week4EvenOk = w4.indexOf('${CAL_COURSE_EVEN}') >= 0
+  out.oddAbsentInWeek4Ok = w4.indexOf('${CAL_COURSE_ODD}') < 0
+
+  out.weeklyOk = ${JSON.stringify(CAL_WEEKLY_DATES)}.every(function (date) {
+    return dayText(date).indexOf('${CAL_WEEKLY_TITLE}') >= 0
+  })
+  out.monthlyThisMonthOk = dayText('${CAL_MONTHLY_DATE}').indexOf('${CAL_MONTHLY_TITLE}') >= 0
+
+  document.querySelector('[data-action="new-event"]').click()
+  document.querySelector('[data-role="ev-title"]').value = '${CAL_ONCE_TITLE}'
+  document.querySelector('[data-role="ev-date"]').value = '${CAL_ONCE_DATE}'
+  document.querySelector('[data-role="ev-start"]').value = '23:00'
+  document.querySelector('[data-role="ev-remind"]').value = '-1'
+  document.querySelector('[data-action="save-event"]').click()
+  await wait(800)
+
+  out.onceOk = dayText('${CAL_ONCE_DATE}').indexOf('${CAL_ONCE_TITLE}') >= 0
+  out.onceNotElsewhereOk = dayText('${CAL_ONCE_OTHER_DATE}').indexOf('${CAL_ONCE_TITLE}') < 0
+  out.onceInDayListOk = (function () {
+    const host = document.querySelector('[data-role="day-items"]')
+    return Boolean(host) && host.textContent.indexOf('${CAL_ONCE_TITLE}') >= 0
+  })()
+
+  document.querySelector('[data-action="next-month"]').click()
+  await wait(500)
+  out.monthlyNextMonthOk = dayText('${CAL_MONTHLY_NEXT}').indexOf('${CAL_MONTHLY_TITLE}') >= 0
+  out.monthlyExactOk = dayText('2026-10-31').indexOf('${CAL_MONTHLY_TITLE}') < 0
+
+  const notify = await window.studyBoard.calendar.notifyInfo()
+  out.notifyOk = notify.ok === true && typeof notify.data.supported === 'boolean'
+  out.notifyOutcome = notify.ok === true ? String(notify.data.lastOutcome) : ''
+
+  const after = await window.studyBoard.calendar.get()
+  out.persistOk =
+    after.ok === true && after.data.events.some(function (e) { return e.title === '${CAL_ONCE_TITLE}' })
+
+  return JSON.stringify(out)
+})()`
+
 export function runSmokeTestIfRequested(win: BrowserWindow): void {
   // 自证：能执行到这一行，就说明包里的是**真身**而不是生产替身。
   //
@@ -2110,7 +2372,9 @@ export function runSmokeTestIfRequested(win: BrowserWindow): void {
   const probe =
     scenario === 'timetable'
       ? TIMETABLE_PROBE
-      : scenario === 'portal'
+      : scenario === 'calendar'
+        ? CALENDAR_PROBE
+        : scenario === 'portal'
         ? PORTAL_PROBE
         : scenario === 'cards'
           ? CARDS_PROBE
@@ -2226,6 +2490,41 @@ export function runSmokeTestIfRequested(win: BrowserWindow): void {
                   parsed['imageOk'] &&
                   parsed['imageFitsOk']
               )
+              : scenario === 'calendar'
+              ? Boolean(
+                  // 日历是独立一页：先确认导航项在、能点进去
+                  parsed['navOk'] &&
+                    parsed['semesterOk'] &&
+                    // 第 1 周周一：全周课和单周课都在，双周课不该出现
+                    parsed['week1AllOk'] &&
+                    parsed['week1OddOk'] &&
+                    parsed['week1EvenAbsentOk'] &&
+                    // 第 4 周周一：全周课和双周课都在，单周课不该出现
+                    // ——「单周课不能出现在第 4 周」是周次规则接得对不对的硬判据
+                    parsed['week4AllOk'] &&
+                    parsed['week4EvenOk'] &&
+                    parsed['oddAbsentInWeek4Ok'] &&
+                    // 每周重复：连续三周都要看到同一条日程
+                    parsed['weeklyOk'] &&
+                    parsed['monthlyThisMonthOk'] &&
+                    // 一次性日程：只在当天出现，别处不能有
+                    parsed['onceOk'] &&
+                    parsed['onceNotElsewhereOk'] &&
+                    parsed['onceInDayListOk'] &&
+                    // 每月重复：下个月同一天还在，月底那两天不能串
+                    parsed['monthlyNextMonthOk'] &&
+                    parsed['monthlyExactOk'] &&
+                    // 通知能力必须报得出来（哪怕是「不支持」也要如实说）
+                    parsed['notifyOk'] &&
+                    // 界面说自己存了不算数，得重新读盘核一遍
+                    parsed['persistOk'] &&
+                    // 新文件必须被 hasUserData() 认出来，否则全新安装会被当成老数据白备份一次
+                    verifyCalendarLegacyRecognized() &&
+                    // 重启后日程还在：磁盘一份 + 新 store 重读一份
+                    verifyCalendarPersistence() &&
+                    // 提醒到点判定：左开右闭，不重复挑
+                    verifyCalendarReminders()
+                )
               : scenario === 'portal'
                 ? Boolean(
                     parsed['builtinsOk'] &&
@@ -2527,6 +2826,25 @@ export function runSmokeTestIfRequested(win: BrowserWindow): void {
         } else if (scenario === 'security') {
           // 安全场景收尾停在概览页，截图里能看到「页面本身没被攻击搞坏」
           await captureIfRequested(win, 'security.png')
+        } else if (scenario === 'calendar') {
+          // 探针收尾停在「下个月」那一页，截图里看不出课表事件。
+          // 先跳回开学第 1 周，让截图里同时有课程和自建日程
+          await win.webContents
+            .executeJavaScript(
+              `(async () => {
+                 const wait = (ms) => new Promise((r) => setTimeout(r, ms))
+                 document.querySelector('[data-route="calendar"]')?.click()
+                 await wait(600)
+                 const jump = document.querySelector('[data-role="jump-date"]')
+                 if (jump) jump.value = '${CAL_WEEK1_MONDAY}'
+                 document.querySelector('[data-action="jump"]')?.click()
+                 await wait(900)
+                 return 'ok'
+               })()`,
+              true
+            )
+            .catch(() => undefined)
+          await captureIfRequested(win, 'calendar.png')
         } else if (scenario === 'materials') {
           // 收尾停在资料页，截图里能看到按课程分组的列表
           await win.webContents
@@ -2562,6 +2880,7 @@ export async function prepareSmokeDataIfRequested(): Promise<void> {
   if (!smokeEnabled()) return
   const scenario = smokeScenario()
   if (scenario === 'timetable') await seedTimetable()
+  else if (scenario === 'calendar') seedCalendar()
   else if (scenario === 'portal') seedPortal()
   else if (scenario === 'cards') seedCards()
   else if (scenario === 'notes') seedNotes()
@@ -4402,6 +4721,164 @@ function verifyStampPreserved(): boolean {
  * 不写的话，下次启动会把同一批数据再迁一遍、再备份一遍 ——
  * 备份目录会一次比一次多，而用户什么都没做。
  */
+/**
+ * 日历场景：`hasUserData()` 认不认得新增的 `calendar.json`。
+ *
+ * 造的数据目录里**只有 `calendar.json`、没有印记**，所以闸口只有两条路：
+ *  - 认得这个文件名 → `upgrade` → 先整目录备份再写印记；
+ *  - 不认得 → `fresh` → 直接写印记，**没有备份**。
+ *
+ * 判据就是「备份里有没有那条老日程」：形状本身就是「拍在什么时候」的
+ * 证据，不用额外记时间戳（K-007 的同一套思路）。
+ */
+function verifyCalendarLegacyRecognized(): boolean {
+  const backups = join(dataRoot(false), '.backups')
+  if (!existsSync(backups)) {
+    console.error('[smoke] 日历自检：没有备份 —— hasUserData() 多半没认 calendar.json')
+    return false
+  }
+
+  let found = false
+  for (const name of readdirSync(backups)) {
+    const file = join(backups, name, 'calendar.json')
+    if (!existsSync(file)) continue
+    try {
+      const raw = JSON.parse(readFileSync(file, 'utf-8')) as Record<string, unknown>
+      const events = Array.isArray(raw['events']) ? raw['events'] : []
+      if (events.some((item) => (item as Record<string, unknown>)['title'] === LEGACY_CALENDAR_TITLE)) {
+        found = true
+        break
+      }
+    } catch {
+      /* 单个备份读不出来就跳过 */
+    }
+  }
+  if (!found) {
+    console.error('[smoke] 日历自检：备份里找不到升级前那条日程')
+    return false
+  }
+  return true
+}
+
+/**
+ * 持久化：重启之后日程还在不在。
+ *
+ * 分两层验，缺一不可：
+ *  1. **磁盘上真的有一份对得上的 JSON** —— 界面说保存成功不算数；
+ *  2. **用一个新的 `CalendarStore` 重新读一遍那个文件** —— 这正是
+ *     重启时构造函数走的那条路（读盘 → 校验 → 建内存态）。
+ *     只读原始 JSON 的话，`sanitizeContent` 里那种「读进来又被丢掉」
+ *     的毛病就查不出来：文件明明有，界面重启后却是空的。
+ */
+function verifyCalendarPersistence(): boolean {
+  const file = context().calendar.filePath
+
+  let raw: Record<string, unknown>
+  try {
+    raw = JSON.parse(readFileSync(file, 'utf-8')) as Record<string, unknown>
+  } catch (error) {
+    console.error('[smoke] 日历自检：日程文件读不出来：', error)
+    return false
+  }
+
+  const titlesOf = (events: unknown): string[] =>
+    Array.isArray(events)
+      ? events.map((item) => String((item as Record<string, unknown>)['title'] ?? ''))
+      : []
+
+  const onDisk = titlesOf(raw['events'])
+  for (const title of [CAL_ONCE_TITLE, CAL_WEEKLY_TITLE, CAL_MONTHLY_TITLE, CAL_REMIND_TITLE]) {
+    if (!onDisk.includes(title)) {
+      console.error(`[smoke] 日历自检：磁盘上没有这条日程：${title}`)
+      return false
+    }
+  }
+  if (raw['semesterStart'] !== CAL_SEMESTER_START) {
+    console.error('[smoke] 日历自检：磁盘上的开学日不对：', raw['semesterStart'])
+    return false
+  }
+
+  // 模拟一次重启：全新的 store，走的是与启动完全相同的读盘路径
+  const reopened = new CalendarStore(file).get()
+  if (reopened.semesterStart !== CAL_SEMESTER_START) {
+    console.error('[smoke] 日历自检：重新读盘后开学日丢了')
+    return false
+  }
+  const afterRestart = reopened.events.map((event) => event.title)
+  for (const title of [CAL_ONCE_TITLE, CAL_WEEKLY_TITLE, CAL_MONTHLY_TITLE]) {
+    if (!afterRestart.includes(title)) {
+      console.error(`[smoke] 日历自检：重新读盘后这条日程不见了：${title}`)
+      return false
+    }
+  }
+  const once = reopened.events.find((event) => event.title === CAL_ONCE_TITLE)
+  if (!once || once.date !== CAL_ONCE_DATE) {
+    console.error('[smoke] 日历自检：重新读盘后一次性日程的日期不对：', once?.date)
+    return false
+  }
+
+  return true
+}
+
+/**
+ * 提醒的到点判定。
+ *
+ * 不真的发通知：自动化测试不该往用户桌面上弹东西，而且 `show` 事件
+ * 在通知根本没被系统收下时照样会触发（实测见 D-012），拿它当断言
+ * 本身就是错的。这里直接问纯函数 `dueReminders`，用显式时间窗把
+ * 「左开右闭」这个语义钉死 —— 那正是「同一条提醒不会被检查两次」
+ * 的依据。
+ */
+function verifyCalendarReminders(): boolean {
+  const events = context().calendar.get().events
+  const target = events.find((event) => event.title === CAL_REMIND_TITLE)
+  if (!target) {
+    console.error('[smoke] 日历自检：提醒靶子日程不见了')
+    return false
+  }
+
+  const atMs = reminderAtMs(target, CAL_REMIND_DATE)
+  if (atMs === null) {
+    console.error('[smoke] 日历自检：靶子日程算不出提醒时刻')
+    return false
+  }
+  const expected = new Date(atMs)
+  if (expected.getHours() !== 10 || expected.getMinutes() !== 45) {
+    console.error(
+      `[smoke] 日历自检：提醒时刻算错了（10:00 提前 ${CAL_REMIND_BEFORE} 分钟应为 09:45）：`,
+      expected.toISOString()
+    )
+    return false
+  }
+
+  const hit = dueReminders(events, atMs - 60_000, atMs)
+  if (hit.length !== 1 || hit[0]?.title !== CAL_REMIND_TITLE) {
+    console.error('[smoke] 日历自检：到点的提醒没有被挑出来：', JSON.stringify(hit))
+    return false
+  }
+
+  // 左开右闭：紧接着再查一次（窗口起点正好是上次的终点）不能重复挑出来
+  const again = dueReminders(events, atMs, atMs + 60_000)
+  if (again.length !== 0) {
+    console.error('[smoke] 日历自检：同一条提醒被挑出来两次：', JSON.stringify(again))
+    return false
+  }
+
+  // 调度器要能起来、能报出自己的能力，且这一刻不该有任何东西到点
+  const info = context().reminders.info()
+  if (typeof info.supported !== 'boolean') {
+    console.error('[smoke] 日历自检：通知能力信息不合法')
+    return false
+  }
+  const fired = context().reminders.tick()
+  if (fired.length !== 0) {
+    console.error('[smoke] 日历自检：不该有提醒到点，却触发了：', JSON.stringify(fired))
+    return false
+  }
+
+  return true
+}
+
 /**
  * 中英词条是否一一对应。
  *
