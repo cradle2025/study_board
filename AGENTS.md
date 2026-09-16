@@ -81,6 +81,18 @@ npm run smoke:i18n             # 以英文启动 + 逐页截图（肉眼核对�
 4. **失败先怀疑测试，再怀疑产品。** 但两种可能都要走到底 ——
    历史上两类都出现过（见 `HANDOFF.md` 坑位区）。
 5. **别为了通过而放宽断言。** 放宽断言等于把闸门拆了。
+6. **验「生产包里有没有混进测试代码」要查符号，不要查中文。**
+   曾经用「`out/main/index.js` 里『自检』出现 0 次」当判据 ——
+   那是个**坏代理**：生产代码里正常写的中文注释（解释某段逻辑为什么
+   这么设计）也会命中，于是给出假警报。
+   正确判据是查**测试代码的符号**，全应为 0：
+
+   ```bash
+   for sym in smokeEnabled smokeScenario STUDY_BOARD_SMOKE runSmoke SMOKE_PROBE; do
+     printf "%-24s %s
+" "$sym" "$(grep -c "$sym" out/main/index.js)"
+   done
+   ```
 
 ### 环境注意事项（会浪费你很多时间，先看）
 
