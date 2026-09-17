@@ -15,7 +15,7 @@
 课程卡片三态、网站门户、课程资料库、AI 助手、Notion 同步。
 Electron 44 + 原生 TypeScript + Web Components，**零前端框架**。
 
-仓库 `D:\ambigulous_ideas\study-board`，版本 0.1.0。
+仓库 `study-board`，版本 0.1.0。
 
 ---
 
