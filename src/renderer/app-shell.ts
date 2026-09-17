@@ -337,20 +337,6 @@ export class AppShell extends HTMLElement {
        */
       this.render()
 
-      /**
-       * 语言确定之后**把外壳重画一遍**。
-       *
-       * `render()` 是在 `connectedCallback()` 里跑的，那时还没读到设置，
-       * 语言是模块默认的 `zh-CN` —— 于是品牌名、导航 aria-label、
-       * 页脚这些**在 render() 里拼出来的文案全是中文**。
-       *
-       * 之前没暴露，是因为「先以中文启动、再手动切英文」会走
-       * `#relocalize()` 重建一遍。而**以英文启动**（配置里就是 en-US）
-       * 不会触发那条路径，中文就一直留在那儿了。
-       *
-       * 此刻还没有挂任何视图，重画是安全的。
-       */
-      this.render()
 
       this.#applyChrome()
       this.renderNav()
