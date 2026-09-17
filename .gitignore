@@ -34,3 +34,6 @@ desktop.ini
 coverage/
 *.tsbuildinfo
 .eslintcache
+
+# 交接文档：给接手 agent 看的战术状态，不对外发布
+HANDOFF.md

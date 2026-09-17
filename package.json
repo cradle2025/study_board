@@ -11,6 +11,14 @@
     "offline-first"
   ],
   "author": "salty",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/cradle2025/study_board.git"
+  },
+  "homepage": "https://github.com/cradle2025/study_board#readme",
+  "bugs": {
+    "url": "https://github.com/cradle2025/study_board/issues"
+  },
   "license": "MIT",
   "private": false,
   "main": "./out/main/index.js",
